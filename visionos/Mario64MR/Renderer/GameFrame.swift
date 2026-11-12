@@ -1,5 +1,6 @@
 import Metal
 import os
+import simd
 
 /// One frame of the game's draw calls, copied out of SM64Game on the game thread so the renderer can draw it while
 /// the game goes on to the next one.
@@ -13,6 +14,16 @@ struct GameFrame {
         var depthTest, depthWrite, decal, blend: Bool
         var viewport: SIMD4<Int32>  // x, y, width, height in the game's window, OpenGL's origin at the bottom left
         var scissor: SIMD4<Int32>
+        var kind: Kind
+        /// The projection the game drew it with (as simd reads the game's row-vector matrix: clip = projection * v)
+        var projection: simd_float4x4
+    }
+
+    /// What a draw is, for drawing it in the room (ImmersiveRenderer)
+    enum Kind: UInt32 {
+        case world = 0   // the level, in perspective
+        case sky = 1     // the sky (orthographic, before the level)
+        case screen = 2  // the HUD (tag 3), dialogs, menus, fades (orthographic, after the level)
     }
 
     /// Filtering and wrapping as sm64ex's set_sampler_parameters gets them (G_TX_MIRROR 1, G_TX_CLAMP 2)
@@ -23,6 +34,8 @@ struct GameFrame {
 
     var vertices: MTLBuffer?
     var draws: [Draw]
+    /// The game camera (world to view, as simd reads it) of the frame
+    var camera: simd_float4x4
     var size: SIMD2<Int32>  // the window the game draws for (1280×720 in the 60 fps build)
     var number: UInt32
 }
@@ -46,7 +59,14 @@ final class GameFrameMaker {
         var draws: [GameFrame.Draw] = []
         if let batches = sm64unity_batches(&batchCount), buffer != nil {
             draws.reserveCapacity(Int(batchCount))
-            for b in UnsafeBufferPointer(start: batches, count: Int(batchCount)) where b.triangle_count > 0 {
+            let projections = sm64unity_projections(), tags = sm64unity_tags()
+            var levelDrawn = false
+            for (i, b) in UnsafeBufferPointer(start: batches, count: Int(batchCount)).enumerated()
+            where b.triangle_count > 0 {
+                let projection = projections.map { matrix($0 + i * 16) } ?? matrix_identity_float4x4
+                let orthographic = projection.columns.2.w == 0  // (guPerspective's -1 there, guOrtho's 0)
+                let kind: GameFrame.Kind = tags?[i] == 3 ? .screen : !orthographic ? .world : levelDrawn ? .screen : .sky
+                levelDrawn = levelDrawn || kind == .world
                 draws.append(GameFrame.Draw(
                     shaderId: b.shader_id,
                     firstFloat: Int(b.first_float),
@@ -57,12 +77,21 @@ final class GameFrameMaker {
                     depthTest: b.depth_test != 0, depthWrite: b.depth_write != 0,
                     decal: b.decal != 0, blend: b.blend != 0,
                     viewport: SIMD4(b.viewport.0, b.viewport.1, b.viewport.2, b.viewport.3),
-                    scissor: SIMD4(b.scissor.0, b.scissor.1, b.scissor.2, b.scissor.3)))
+                    scissor: SIMD4(b.scissor.0, b.scissor.1, b.scissor.2, b.scissor.3),
+                    kind: kind, projection: projection))
             }
         }
         number &+= 1
         let size = sm64unity_interpolates() == 1 ? SIMD2<Int32>(1280, 720) : SIMD2<Int32>(320, 240)
-        return GameFrame(vertices: buffer, draws: draws, size: size, number: number)
+        let camera = sm64unity_camera().map { matrix($0) } ?? matrix_identity_float4x4
+        return GameFrame(vertices: buffer, draws: draws, camera: camera, size: size, number: number)
+    }
+
+    /// The game's Mat4 (row vectors: v' = v * M) as simd's column-major matrix, which is then M transposed:
+    /// v' = matrix * v
+    private func matrix(_ m: UnsafePointer<Float>) -> simd_float4x4 {
+        simd_float4x4(SIMD4(m[0], m[1], m[2], m[3]), SIMD4(m[4], m[5], m[6], m[7]),
+                      SIMD4(m[8], m[9], m[10], m[11]), SIMD4(m[12], m[13], m[14], m[15]))
     }
 
     private func texture(_ id: UInt32) -> MTLTexture? {

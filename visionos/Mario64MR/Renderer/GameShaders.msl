@@ -5,6 +5,7 @@
 using namespace metal;
 
 constant uint shaderId [[function_constant(0)]];
+constant bool opaque [[function_constant(1)]];  // (in the room: not blended, so covering the passthrough)
 
 // gfx_cc.h: four 3-bit items per formula (colour, then alpha), then the options
 constant bool optAlpha = (shaderId & (1u << 24)) != 0;
@@ -40,17 +41,21 @@ struct Varyings {
     float2 uv;
     float4 fog;
     float4 input1, input2, input3, input4;
+    float3 room;  // (in the room only) where it is in the room, in metres
 };
 
-// The vertex as gfx_pc.c writes it: position (clip space, OpenGL depth), uv, fog, then the combiner's inputs
-vertex Varyings game_vertex(uint vid [[vertex_id]], const device float *floats [[buffer(0)]]) {
+// The vertex as gfx_pc.c writes it: position (the game's clip space, OpenGL depth), uv, fog, then the combiner's
+// inputs. Returns the vertex with everything but its position; `clip` is the game's position.
+static Varyings readVertex(uint vid, const device float *floats, thread float4 &clip) {
     const bool textured = usesTexture(0) || usesTexture(1);
     const uint inputs = inputCount(), inputSize = optAlpha ? 4 : 3;
     const uint stride = 4 + (textured ? 2 : 0) + (optFog ? 4 : 0) + inputs * inputSize;
     const device float *v = floats + vid * stride;
 
     Varyings out;
-    out.position = float4(v[0], v[1], (v[2] + v[3]) * 0.5, v[3]);  // (OpenGL's -w..w depth to Metal's 0..w)
+    clip = float4(v[0], v[1], v[2], v[3]);
+    out.position = 0;
+    out.room = 0;
     uint k = 4;
     out.uv = 0;
     if (textured) { out.uv = float2(v[k], v[k + 1]); k += 2; }
@@ -62,6 +67,71 @@ vertex Varyings game_vertex(uint vid [[vertex_id]], const device float *floats [
         k += inputSize;
     }
     out.input1 = in[0]; out.input2 = in[1]; out.input3 = in[2]; out.input4 = in[3];
+    return out;
+}
+
+// In a flat view: the game's picture as it drew it
+vertex Varyings game_vertex(uint vid [[vertex_id]], const device float *floats [[buffer(0)]]) {
+    float4 clip;
+    Varyings out = readVertex(vid, floats, clip);
+    out.position = float4(clip.xy, (clip.z + clip.w) * 0.5, clip.w);  // (OpenGL's -w..w depth to Metal's 0..w)
+    return out;
+}
+
+// ---------------------------------------------------------------- In the room (ImmersiveRenderer)
+// The game camera's view space is placed in the room behind a window: the level is unprojected from the game's
+// clip space into that view space, and drawn from each eye. The sky goes on a dome round the camera; the HUD and
+// the game's other flat pictures on the window itself.
+
+struct RoomDraw {
+    float4x4 roomFromClip;  // the draw's projection undone, then the game camera's view space into the room
+    uint4 kind;             // x: GameFrame.Kind
+};
+
+struct RoomEye {
+    float4x4 viewProjection;  // the room to this eye's clip space
+    float4x4 roomFromView;    // the game camera's view space (game units) into the room (metres)
+    float4x4 roomFromWindow;  // the window's own space (metres; x right, y up, z towards the room) into the room
+    float4x4 windowFromRoom;
+    float4 eye;               // xyz: the eye in the window's space
+    float4 window;            // xy: the opening's half size (metres), z: the sky's distance (game units)
+    float4 up;                // xyz: the game's up in the game camera's view space
+};
+
+// The sky's tiles as skybox.c lays them out (SCREEN_WIDTH 320 wide, 1280 units round, 4 units a degree up and
+// down), turned into a direction from the camera: the picture's centre is where the camera looks
+static float3 skyDirection(float2 ndc, float3 up) {
+    float yaw = ndc.x * 160.0 * (M_PI_F / 2) / 320.0;  // (x half width: 160 units of the panorama)
+    float pitch = ndc.y * 120.0 / 4.0 * (M_PI_F / 180);
+    float3 forward = float3(0, 0, -1);
+    float3 level = normalize(forward - dot(forward, up) * up);
+    float3 right = cross(level, up);
+    float3 turned = cos(yaw) * level + sin(yaw) * right;
+    float p = asin(clamp(dot(forward, up), -1.0, 1.0)) + pitch;
+    p = clamp(p, -M_PI_F / 2, M_PI_F / 2);  // (the extra rows past straight up or down stay at the pole, not folded over)
+    return cos(p) * turned + sin(p) * up;
+}
+
+vertex Varyings game_vertex_room(uint vid [[vertex_id]], const device float *floats [[buffer(0)]],
+                                 constant RoomDraw &draw [[buffer(1)]], constant RoomEye &eye [[buffer(2)]]) {
+    float4 clip;
+    Varyings out = readVertex(vid, floats, clip);
+    float4 room;
+    if (draw.kind.x == 0) {         // the level: back into the game camera's view space, and on into the room
+        room = draw.roomFromClip * clip;
+    } else if (draw.kind.x == 1) {  // the sky: far away, round the camera
+        float3 direction = skyDirection(clip.xy / clip.w, normalize(eye.up.xyz));
+        room = eye.roomFromView * float4(direction * eye.window.z, 1);
+    } else {                        // flat pictures: on the window
+        float2 ndc = clip.xy / clip.w;
+        room = eye.roomFromWindow * float4(ndc * eye.window.xy, 0.002, 1);
+    }
+    room /= room.w;
+    out.room = room.xyz;
+    out.position = eye.viewProjection * float4(room.xyz, 1);
+    // The sky's depth: just short of infinitely far (about 100 km, reversed depth), so the level is always in front of
+    // it but it isn't the clear's 0, which the headset's compositor shows the room through
+    if (draw.kind.x == 1) out.position.z = out.position.w * 1e-6;
     return out;
 }
 
@@ -108,10 +178,8 @@ static float random(float3 value) {
     return fract(sin(r) * 143758.5453);
 }
 
-fragment float4 game_fragment(Varyings in [[stage_in]],
-                              texture2d<float> texture0 [[texture(0)]], texture2d<float> texture1 [[texture(1)]],
-                              sampler sampler0 [[sampler(0)]], sampler sampler1 [[sampler(1)]],
-                              constant uint &frame [[buffer(0)]]) {
+static float4 shade(Varyings in, texture2d<float> texture0, texture2d<float> texture1, sampler sampler0,
+                    sampler sampler1, uint frame) {
     Sources s;
     s.texel0 = usesTexture(0) ? texture0.sample(sampler0, in.uv) : 0;
     s.texel1 = usesTexture(1) ? texture1.sample(sampler1, in.uv) : 0;
@@ -125,4 +193,33 @@ fragment float4 game_fragment(Varyings in [[stage_in]],
     if (optFog) rgb = mix(rgb, in.fog.rgb, in.fog.a);
     if (optAlpha && optNoise) alpha *= floor(random(floor(float3(in.position.xy, float(frame)))) + 0.5);
     return float4(rgb, alpha);
+}
+
+fragment float4 game_fragment(Varyings in [[stage_in]],
+                              texture2d<float> texture0 [[texture(0)]], texture2d<float> texture1 [[texture(1)]],
+                              sampler sampler0 [[sampler(0)]], sampler sampler1 [[sampler(1)]],
+                              constant uint &frame [[buffer(0)]]) {
+    return shade(in, texture0, texture1, sampler0, sampler1, frame);
+}
+
+// In the room the level is seen only through the window's opening: from outside, what's behind the window and seen
+// through the opening; from inside (the head past the window), everything but the room seen back through it.
+// The output is linear, as the layer's sRGB colour wants it.
+fragment float4 game_fragment_room(Varyings in [[stage_in]],
+                                   texture2d<float> texture0 [[texture(0)]], texture2d<float> texture1 [[texture(1)]],
+                                   sampler sampler0 [[sampler(0)]], sampler sampler1 [[sampler(1)]],
+                                   constant uint &frame [[buffer(0)]], constant RoomEye &eye [[buffer(1)]],
+                                   constant RoomDraw &draw [[buffer(2)]]) {
+    if (draw.kind.x != 2) {
+        float3 p = (eye.windowFromRoom * float4(in.room, 1)).xyz, e = eye.eye.xyz;
+        bool crosses = (e.z > 0) != (p.z > 0);
+        float2 at = mix(e.xy, p.xy, e.z / (e.z - p.z));
+        bool throughOpening = crosses && all(abs(at) <= eye.window.xy);
+        bool inside = e.z <= 0;
+        if (inside ? (p.z > 0 && throughOpening) : !throughOpening) discard_fragment();
+    }
+    float4 color = shade(in, texture0, texture1, sampler0, sampler1, frame);
+    float3 c = saturate(color.rgb);
+    float3 linear = select(pow((c + 0.055) / 1.055, 2.4), c / 12.92, c <= 0.04045);
+    return float4(linear, opaque ? 1.0 : color.a);
 }

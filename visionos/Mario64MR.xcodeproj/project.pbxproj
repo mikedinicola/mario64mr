@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		013CAAED820D1DF245539143 /* ARKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2FCD3075E68D6C4E2FE208A9 /* ARKit.framework */; };
 		0E1E0BE81B551B9D3EE2199C /* Goddard.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF89F80560168B2528B592A0 /* Goddard.xcframework */; };
 		298FA2EF6B354440718A3722 /* AVFAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3726FFC0B162C03EAA65575F /* AVFAudio.framework */; };
 		301321DCC8B3AE931605EB37 /* LibSM64.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4F445DB5C6F9AD8667114E35 /* LibSM64.xcframework */; };
@@ -24,6 +25,9 @@
 		9EF802231B650D7D91AC5154 /* Data in Resources */ = {isa = PBXBuildFile; fileRef = 943F5996D2653E5553963EF2 /* Data */; };
 		9F73F930B2142512EF197BD9 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C17BF3C984C3F4C5803FE34B /* Metal.framework */; };
 		B6D61905B2673091F5C50683 /* Mario64MRApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B76ACB4BACE212A1D0E7938D /* Mario64MRApp.swift */; };
+		CCD398FFD74F9D436621B6C3 /* ImmersiveRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E201BEFE8AF929559A79171F /* ImmersiveRenderer.swift */; };
+		E093D695B090A938A776B98E /* CompositorServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CB1DD4AB1EC0CE1344AA1712 /* CompositorServices.framework */; };
+		E7D6770BB438D204A732EEAF /* RoomPlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F7340C8F92D6C1C7DB67773 /* RoomPlacement.swift */; };
 		F645B840CD83BE01F20CDBF5 /* GameRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F43AEDE2DB291E5E35525CD /* GameRenderer.swift */; };
 		FD9C9C52B1BB6920FEF587FD /* GameView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DE37540EB0552146DC22291 /* GameView.swift */; };
 /* End PBXBuildFile section */
@@ -47,6 +51,7 @@
 /* Begin PBXFileReference section */
 		106C8D9566DE1035288922AF /* GamePad.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GamePad.swift; sourceTree = "<group>"; };
 		294CA9B017B6EA2F7E38A37C /* GameFrame.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameFrame.swift; sourceTree = "<group>"; };
+		2FCD3075E68D6C4E2FE208A9 /* ARKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ARKit.framework; path = System/Library/Frameworks/ARKit.framework; sourceTree = SDKROOT; };
 		3726FFC0B162C03EAA65575F /* AVFAudio.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFAudio.framework; path = System/Library/Frameworks/AVFAudio.framework; sourceTree = SDKROOT; };
 		463CC69BAD9D784A8981F455 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		4CC3BA56A75143E46A326E16 /* Mario64MR.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mario64MR.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -56,6 +61,7 @@
 		6DE37540EB0552146DC22291 /* GameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameView.swift; sourceTree = "<group>"; };
 		7ACFB0947ABEBB5BE4664230 /* GameShaders.msl */ = {isa = PBXFileReference; lastKnownFileType = text; path = GameShaders.msl; sourceTree = "<group>"; };
 		7D08E37159B83E89B4908AFA /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = System/Library/Frameworks/GameController.framework; sourceTree = SDKROOT; };
+		7F7340C8F92D6C1C7DB67773 /* RoomPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomPlacement.swift; sourceTree = "<group>"; };
 		943F5996D2653E5553963EF2 /* Data */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Data; path = Build/Data; sourceTree = SOURCE_ROOT; };
 		9804ACE3F4CB94673186F407 /* GameHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameHost.swift; sourceTree = "<group>"; };
 		9DD4CFD5E67B1A2DED671C72 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
@@ -63,8 +69,10 @@
 		BE83807C8E67A0F0C77270C6 /* SM64Game.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = SM64Game.xcframework; path = Build/Frameworks/SM64Game.xcframework; sourceTree = "<group>"; };
 		BF89F80560168B2528B592A0 /* Goddard.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Goddard.xcframework; path = Build/Frameworks/Goddard.xcframework; sourceTree = "<group>"; };
 		C17BF3C984C3F4C5803FE34B /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		CB1DD4AB1EC0CE1344AA1712 /* CompositorServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CompositorServices.framework; path = System/Library/Frameworks/CompositorServices.framework; sourceTree = SDKROOT; };
+		E201BEFE8AF929559A79171F /* ImmersiveRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImmersiveRenderer.swift; sourceTree = "<group>"; };
 		FB1BEFCF61DEC99C3DA05E63 /* Mario64MR-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Mario64MR-Bridging-Header.h"; sourceTree = "<group>"; };
-		"TEMP_28857DD6-A0BB-4B15-860D-24F8B9B6B4F8" /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
+		"TEMP_EF9F4A92-2CD2-40E4-8D49-5D613D493118" /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -79,6 +87,8 @@
 				298FA2EF6B354440718A3722 /* AVFAudio.framework in Frameworks */,
 				9F73F930B2142512EF197BD9 /* Metal.framework in Frameworks */,
 				43E1013DAAA260DEE0D418C6 /* MetalKit.framework in Frameworks */,
+				E093D695B090A938A776B98E /* CompositorServices.framework in Frameworks */,
+				013CAAED820D1DF245539143 /* ARKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -88,7 +98,9 @@
 		1D77E2B7C008BC6803418B18 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				2FCD3075E68D6C4E2FE208A9 /* ARKit.framework */,
 				3726FFC0B162C03EAA65575F /* AVFAudio.framework */,
+				CB1DD4AB1EC0CE1344AA1712 /* CompositorServices.framework */,
 				7D08E37159B83E89B4908AFA /* GameController.framework */,
 				BF89F80560168B2528B592A0 /* Goddard.xcframework */,
 				4F445DB5C6F9AD8667114E35 /* LibSM64.xcframework */,
@@ -155,6 +167,8 @@
 				5F43AEDE2DB291E5E35525CD /* GameRenderer.swift */,
 				7ACFB0947ABEBB5BE4664230 /* GameShaders.msl */,
 				6DE37540EB0552146DC22291 /* GameView.swift */,
+				E201BEFE8AF929559A79171F /* ImmersiveRenderer.swift */,
+				7F7340C8F92D6C1C7DB67773 /* RoomPlacement.swift */,
 			);
 			path = Renderer;
 			sourceTree = "<group>";
@@ -162,7 +176,7 @@
 		EBE1C43830A6C0FB004720B7 /* Recovered References */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_28857DD6-A0BB-4B15-860D-24F8B9B6B4F8" /* Signing.xcconfig */,
+				"TEMP_EF9F4A92-2CD2-40E4-8D49-5D613D493118" /* Signing.xcconfig */,
 			);
 			name = "Recovered References";
 			sourceTree = "<group>";
@@ -246,7 +260,9 @@
 				42460A2B357519EDF80BE817 /* GamePad.swift in Sources */,
 				F645B840CD83BE01F20CDBF5 /* GameRenderer.swift in Sources */,
 				FD9C9C52B1BB6920FEF587FD /* GameView.swift in Sources */,
+				CCD398FFD74F9D436621B6C3 /* ImmersiveRenderer.swift in Sources */,
 				B6D61905B2673091F5C50683 /* Mario64MRApp.swift in Sources */,
+				E7D6770BB438D204A732EEAF /* RoomPlacement.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -305,7 +321,7 @@
 		};
 		6B6E954D46A5765CD201A233 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_28857DD6-A0BB-4B15-860D-24F8B9B6B4F8" /* Signing.xcconfig */;
+			baseConfigurationReference = "TEMP_EF9F4A92-2CD2-40E4-8D49-5D613D493118" /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -364,7 +380,7 @@
 		};
 		D7D7EEBEE6D2867210D52EDC /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_28857DD6-A0BB-4B15-860D-24F8B9B6B4F8" /* Signing.xcconfig */;
+			baseConfigurationReference = "TEMP_EF9F4A92-2CD2-40E4-8D49-5D613D493118" /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;

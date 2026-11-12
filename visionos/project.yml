@@ -43,6 +43,8 @@ targets:
       - sdk: AVFAudio.framework
       - sdk: Metal.framework
       - sdk: MetalKit.framework
+      - sdk: CompositorServices.framework
+      - sdk: ARKit.framework
     info:
       path: Mario64MR/Info.plist
       properties:
