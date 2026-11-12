@@ -1,0 +1,421 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0E1E0BE81B551B9D3EE2199C /* Goddard.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BF89F80560168B2528B592A0 /* Goddard.xcframework */; };
+		298FA2EF6B354440718A3722 /* AVFAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3726FFC0B162C03EAA65575F /* AVFAudio.framework */; };
+		301321DCC8B3AE931605EB37 /* LibSM64.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4F445DB5C6F9AD8667114E35 /* LibSM64.xcframework */; };
+		42460A2B357519EDF80BE817 /* GamePad.swift in Sources */ = {isa = PBXBuildFile; fileRef = 106C8D9566DE1035288922AF /* GamePad.swift */; };
+		49758A8AF61B65E3303DC9BA /* AudioOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68CB7AAC7557608A6803DF2B /* AudioOutput.swift */; };
+		5624D0B90790FD7FD31EDD56 /* SM64Game.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BE83807C8E67A0F0C77270C6 /* SM64Game.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		786CA4ED2C07B599D71568B4 /* GameHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9804ACE3F4CB94673186F407 /* GameHost.swift */; };
+		7F41B5B7BE6DBCD6350DE9B2 /* SM64Game.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BE83807C8E67A0F0C77270C6 /* SM64Game.xcframework */; };
+		7FE158CC201E4051FE234B60 /* GameController.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D08E37159B83E89B4908AFA /* GameController.framework */; };
+		882431449D7AE670809B380F /* Goddard.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF89F80560168B2528B592A0 /* Goddard.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		9E4A2B12AC8D5B6F8B735FB7 /* LibSM64.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 4F445DB5C6F9AD8667114E35 /* LibSM64.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		9EF802231B650D7D91AC5154 /* Data in Resources */ = {isa = PBXBuildFile; fileRef = 943F5996D2653E5553963EF2 /* Data */; };
+		B6D61905B2673091F5C50683 /* Mario64MRApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B76ACB4BACE212A1D0E7938D /* Mario64MRApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		3F6716F571FFB3263A98797C /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				5624D0B90790FD7FD31EDD56 /* SM64Game.xcframework in Embed Frameworks */,
+				882431449D7AE670809B380F /* Goddard.xcframework in Embed Frameworks */,
+				9E4A2B12AC8D5B6F8B735FB7 /* LibSM64.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		106C8D9566DE1035288922AF /* GamePad.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GamePad.swift; sourceTree = "<group>"; };
+		3726FFC0B162C03EAA65575F /* AVFAudio.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFAudio.framework; path = System/Library/Frameworks/AVFAudio.framework; sourceTree = SDKROOT; };
+		463CC69BAD9D784A8981F455 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		4CC3BA56A75143E46A326E16 /* Mario64MR.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mario64MR.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4F445DB5C6F9AD8667114E35 /* LibSM64.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = LibSM64.xcframework; path = Build/Frameworks/LibSM64.xcframework; sourceTree = "<group>"; };
+		68CB7AAC7557608A6803DF2B /* AudioOutput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioOutput.swift; sourceTree = "<group>"; };
+		7D08E37159B83E89B4908AFA /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = System/Library/Frameworks/GameController.framework; sourceTree = SDKROOT; };
+		943F5996D2653E5553963EF2 /* Data */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Data; path = Build/Data; sourceTree = SOURCE_ROOT; };
+		9804ACE3F4CB94673186F407 /* GameHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameHost.swift; sourceTree = "<group>"; };
+		B76ACB4BACE212A1D0E7938D /* Mario64MRApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mario64MRApp.swift; sourceTree = "<group>"; };
+		BE83807C8E67A0F0C77270C6 /* SM64Game.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = SM64Game.xcframework; path = Build/Frameworks/SM64Game.xcframework; sourceTree = "<group>"; };
+		BF89F80560168B2528B592A0 /* Goddard.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Goddard.xcframework; path = Build/Frameworks/Goddard.xcframework; sourceTree = "<group>"; };
+		FB1BEFCF61DEC99C3DA05E63 /* Mario64MR-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Mario64MR-Bridging-Header.h"; sourceTree = "<group>"; };
+		"TEMP_143E31D4-0E06-4659-B80E-9ED05C9DDE50" /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C4D762CFDE1E5D165D6BF477 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7F41B5B7BE6DBCD6350DE9B2 /* SM64Game.xcframework in Frameworks */,
+				0E1E0BE81B551B9D3EE2199C /* Goddard.xcframework in Frameworks */,
+				301321DCC8B3AE931605EB37 /* LibSM64.xcframework in Frameworks */,
+				7FE158CC201E4051FE234B60 /* GameController.framework in Frameworks */,
+				298FA2EF6B354440718A3722 /* AVFAudio.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1D77E2B7C008BC6803418B18 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				3726FFC0B162C03EAA65575F /* AVFAudio.framework */,
+				7D08E37159B83E89B4908AFA /* GameController.framework */,
+				BF89F80560168B2528B592A0 /* Goddard.xcframework */,
+				4F445DB5C6F9AD8667114E35 /* LibSM64.xcframework */,
+				BE83807C8E67A0F0C77270C6 /* SM64Game.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		321A92A029CC3A8D73F7D3D7 = {
+			isa = PBXGroup;
+			children = (
+				67CAA28FC3D9655DDB5B332B /* Build */,
+				9386AD67911FBFE6BE80C648 /* Mario64MR */,
+				1D77E2B7C008BC6803418B18 /* Frameworks */,
+				92AC85A612729031C33421D5 /* Products */,
+				EBFF541230A593DB007C89C7 /* Recovered References */,
+			);
+			sourceTree = "<group>";
+		};
+		67CAA28FC3D9655DDB5B332B /* Build */ = {
+			isa = PBXGroup;
+			children = (
+				943F5996D2653E5553963EF2 /* Data */,
+			);
+			path = Build;
+			sourceTree = "<group>";
+		};
+		92AC85A612729031C33421D5 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				4CC3BA56A75143E46A326E16 /* Mario64MR.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		9386AD67911FBFE6BE80C648 /* Mario64MR */ = {
+			isa = PBXGroup;
+			children = (
+				68CB7AAC7557608A6803DF2B /* AudioOutput.swift */,
+				9804ACE3F4CB94673186F407 /* GameHost.swift */,
+				106C8D9566DE1035288922AF /* GamePad.swift */,
+				463CC69BAD9D784A8981F455 /* Info.plist */,
+				B76ACB4BACE212A1D0E7938D /* Mario64MRApp.swift */,
+				951F5C9FFCB361AE5EF3A6C6 /* Native */,
+			);
+			path = Mario64MR;
+			sourceTree = "<group>";
+		};
+		951F5C9FFCB361AE5EF3A6C6 /* Native */ = {
+			isa = PBXGroup;
+			children = (
+				FB1BEFCF61DEC99C3DA05E63 /* Mario64MR-Bridging-Header.h */,
+			);
+			path = Native;
+			sourceTree = "<group>";
+		};
+		EBFF541230A593DB007C89C7 /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				"TEMP_143E31D4-0E06-4659-B80E-9ED05C9DDE50" /* Signing.xcconfig */,
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		6C1CCE1D1C9E04497A349F84 /* Mario64MR */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A837F4997FADA3982AF8345D /* Build configuration list for PBXNativeTarget "Mario64MR" */;
+			buildPhases = (
+				C4B5D0BC2F0BC633E6473982 /* Sources */,
+				961507BAA09B26CE63EC1087 /* Resources */,
+				C4D762CFDE1E5D165D6BF477 /* Frameworks */,
+				3F6716F571FFB3263A98797C /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Mario64MR;
+			packageProductDependencies = (
+			);
+			productName = Mario64MR;
+			productReference = 4CC3BA56A75143E46A326E16 /* Mario64MR.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		293B375606C379FBE3FB6FFD /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					6C1CCE1D1C9E04497A349F84 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = FA58D889A7A000DA6528044D /* Build configuration list for PBXProject "Mario64MR" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 321A92A029CC3A8D73F7D3D7;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 92AC85A612729031C33421D5 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				6C1CCE1D1C9E04497A349F84 /* Mario64MR */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		961507BAA09B26CE63EC1087 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9EF802231B650D7D91AC5154 /* Data in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		C4B5D0BC2F0BC633E6473982 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				49758A8AF61B65E3303DC9BA /* AudioOutput.swift in Sources */,
+				786CA4ED2C07B599D71568B4 /* GameHost.swift in Sources */,
+				42460A2B357519EDF80BE817 /* GamePad.swift in Sources */,
+				B6D61905B2673091F5C50683 /* Mario64MRApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		14145891197F6582803278E1 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				"EXCLUDED_ARCHS[sdk=xrsimulator*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Build/Frameworks\"",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Mario64MR/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MARIO64MR_BUNDLE_ID)";
+				SDKROOT = xros;
+				SWIFT_OBJC_BRIDGING_HEADER = "Mario64MR/Native/Mario64MR-Bridging-Header.h";
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				TARGETED_DEVICE_FAMILY = 7;
+			};
+			name = Debug;
+		};
+		4B1F933820384E4B8B3B66DB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				"EXCLUDED_ARCHS[sdk=xrsimulator*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Build/Frameworks\"",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Mario64MR/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(MARIO64MR_BUNDLE_ID)";
+				SDKROOT = xros;
+				SWIFT_OBJC_BRIDGING_HEADER = "Mario64MR/Native/Mario64MR-Bridging-Header.h";
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				TARGETED_DEVICE_FAMILY = 7;
+			};
+			name = Release;
+		};
+		6B6E954D46A5765CD201A233 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "TEMP_143E31D4-0E06-4659-B80E-9ED05C9DDE50" /* Signing.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MARKETING_VERSION = 0.1;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = xros;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				XROS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
+		D7D7EEBEE6D2867210D52EDC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = "TEMP_143E31D4-0E06-4659-B80E-9ED05C9DDE50" /* Signing.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MARKETING_VERSION = 0.1;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = xros;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				XROS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A837F4997FADA3982AF8345D /* Build configuration list for PBXNativeTarget "Mario64MR" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				14145891197F6582803278E1 /* Debug */,
+				4B1F933820384E4B8B3B66DB /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FA58D889A7A000DA6528044D /* Build configuration list for PBXProject "Mario64MR" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D7D7EEBEE6D2867210D52EDC /* Debug */,
+				6B6E954D46A5765CD201A233 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 293B375606C379FBE3FB6FFD /* Project object */;
+}

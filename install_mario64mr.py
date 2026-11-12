@@ -23,6 +23,8 @@ usage:
     python3 install_mario64mr.py "Super Mario 64 (USA).z64" --check    # only checks the ROM
     python3 install_mario64mr.py "Super Mario 64 (USA).z64" --push --frame --apk Mario64MR-SteamFrame.apk
                                                                        # ...to a Steam Frame, over Wi-Fi
+    python3 install_mario64mr.py "Super Mario 64 (USA).z64" --visionos  # for Apple Vision Pro: into visionos/Build,
+                                                                       # for the Xcode project there (macOS, Xcode)
 
 Needs python3, git, make, patch and a C compiler (macOS: Xcode command line tools; Linux: build-essential;
 Windows: WSL). The Android NDK (r27c) is found where Android Studio or Homebrew put it, or downloaded (~700 MB) the
@@ -424,30 +426,168 @@ def make_compilers(ndk, work):
     return tuple(names)
 
 
-def build_game(work, rom, ndk, out):
-    """libsm64game.so: sm64ex with the PC port's 60 fps interpolation, the Unity bridge and Mario 64 MR's changes,
+class Android:
+    """Compiles the three libraries for the Quest / Steam Frame: Android's NDK, shared objects (.so)."""
+
+    def __init__(self, ndk, work):
+        self.ndk, self.work = ndk, work
+        self.game_build = GAME_BUILD
+
+    def compiler(self, cxx=False):
+        return compiler(self.ndk, cxx)
+
+    def make_compilers(self):
+        return make_compilers(self.ndk, self.work)
+
+    def library(self, name):
+        """The file name of library `name` (libsm64game...)."""
+        return name + ".so"
+
+    def shared(self, name, strict=False):
+        """The flags that link library `name` (strict: undefined symbols are errors)."""
+        return ["-shared"] + (["-Wl,--no-undefined"] if strict else []) + [
+            f"-Wl,-soname,{name}.so", "-Wl,-z,max-page-size=16384"]
+
+
+# ------------------------------------------------------------------------------------------------ Vision Pro
+# visionOS loads no code that isn't signed into the app, so the libraries are built here and bundled into the app
+# when you build it in Xcode (visionos/): each as a framework of its own (their decomp code has clashing symbols,
+# which Mach-O's two-level namespace keeps apart as separate .so files are on Android), for the headset and the
+# simulator, in XCFrameworks.
+VISIONOS_MIN = "26.0"
+VISIONOS_SLICES = (("xros", f"arm64-apple-xros{VISIONOS_MIN}"),
+                   ("xrsimulator", f"arm64-apple-xros{VISIONOS_MIN}-simulator"))
+FRAMEWORKS = {"libsm64game": "SM64Game", "libgoddard": "Goddard", "libsm64": "LibSM64"}
+VISIONOS_BUILD = HERE / "visionos/Build"  # (what the Xcode project bundles: Frameworks/ and Data/, never committed)
+
+
+class VisionOS:
+    """Compiles the three libraries for one visionOS SDK (the headset's, or the simulator's) with Xcode's clang, as
+    dynamic libraries named and installed as the frameworks that will hold them."""
+
+    def __init__(self, sdk, target, work):
+        self.sdk, self.target = sdk, target
+        self.game_build = f"build/us_{sdk}_60_ext"
+        sysroot = subprocess.check_output(["xcrun", "--sdk", sdk, "--show-sdk-path"], text=True).strip()
+        # Single words for make (sm64ex's Makefile passes compilers on unquoted): small wrappers with the target
+        wrappers = work / f"{sdk}-bin"
+        wrappers.mkdir(parents=True, exist_ok=True)
+        self.wrappers = []
+        for driver in ("clang", "clang++"):
+            path = subprocess.check_output(["xcrun", "--sdk", sdk, "-f", driver], text=True).strip()
+            wrapper = wrappers / f"{target}-{driver}"
+            wrapper.write_text(f'#!/bin/sh\nexec "{path}" -target {target} -isysroot "{sysroot}" "$@"\n')
+            wrapper.chmod(0o755)
+            self.wrappers.append(str(wrapper))
+
+    def compiler(self, cxx=False):
+        return [self.wrappers[1 if cxx else 0]]
+
+    def make_compilers(self):
+        return tuple(self.wrappers)
+
+    def library(self, name):
+        return name + ".dylib"
+
+    def shared(self, name, strict=False):
+        # (Mach-O's linker already turns down undefined symbols)
+        framework = FRAMEWORKS[name]
+        return ["-dynamiclib", f"-Wl,-install_name,@rpath/{framework}.framework/{framework}",
+                "-Wl,-headerpad_max_install_names"]
+
+
+def framework_plist(name, sdk):
+    platform_name = "XROS" if sdk == "xros" else "XRSimulator"
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleExecutable</key><string>{name}</string>
+    <key>CFBundleIdentifier</key><string>local.mario64mr.{name.lower()}</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>{name}</string>
+    <key>CFBundlePackageType</key><string>FMWK</string>
+    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleSupportedPlatforms</key><array><string>{platform_name}</string></array>
+    <key>MinimumOSVersion</key><string>{VISIONOS_MIN}</string>
+</dict>
+</plist>
+"""
+
+
+def make_xcframeworks(slices, out):
+    """Each library (out/<sdk>/<lib>.dylib) as a framework per SDK, and the two in an XCFramework, in out."""
+    for lib, name in FRAMEWORKS.items():
+        frameworks = []
+        for sdk in slices:
+            framework = out / sdk / f"{name}.framework"
+            shutil.rmtree(framework, ignore_errors=True)
+            framework.mkdir(parents=True)
+            shutil.copy2(out / sdk / f"{lib}.dylib", framework / name)
+            (framework / "Info.plist").write_text(framework_plist(name, sdk))
+            frameworks += ["-framework", framework]
+        xcframework = out / f"{name}.xcframework"
+        shutil.rmtree(xcframework, ignore_errors=True)
+        run(["xcodebuild", "-create-xcframework"] + frameworks + ["-output", xcframework])
+
+
+def build_visionos(sm64ex, rom, decomp, libsm64, work, out):
+    """The three libraries for Vision Pro (the headset and the simulator) as XCFrameworks, with the game data,
+    where the Xcode project (visionos/) takes them from."""
+    slices = out / "visionos"
+    for sdk, target in VISIONOS_SLICES:
+        print(f"== The game code, for visionOS ({sdk})", flush=True)
+        toolchain = VisionOS(sdk, target, work)
+        (slices / sdk).mkdir(parents=True, exist_ok=True)
+        build_game(sm64ex, rom, toolchain, slices / sdk)
+        build_goddard(decomp, sm64ex, toolchain, work / f"goddard-{sdk}", slices / sdk)
+        build_libsm64(libsm64, toolchain, slices / sdk)
+    frameworks = VISIONOS_BUILD / "Frameworks"
+    frameworks.mkdir(parents=True, exist_ok=True)
+    make_xcframeworks([sdk for sdk, _ in VISIONOS_SLICES], slices)
+    for name in FRAMEWORKS.values():
+        shutil.rmtree(frameworks / f"{name}.xcframework", ignore_errors=True)
+        shutil.copytree(slices / f"{name}.xcframework", frameworks / f"{name}.xcframework", symlinks=True)
+    # The data, as the app's bundle holds it: Data/baserom.us.z64, Data/sm64/res/base.zip (and your label)
+    data = VISIONOS_BUILD / "Data"
+    shutil.rmtree(data, ignore_errors=True)
+    (data / "sm64/res").mkdir(parents=True)
+    shutil.copy2(out / "baserom.us.z64", data / "baserom.us.z64")
+    shutil.copy2(out / "sm64/res/base.zip", data / "sm64/res/base.zip")
+    for label in sorted(out.glob("label.*"))[:1]:
+        shutil.copy2(label, data / label.name)
+    for sdk, _ in VISIONOS_SLICES:
+        for lib in FRAMEWORKS:
+            print(f"{slices / sdk / (lib + '.dylib')}: {(slices / sdk / (lib + '.dylib')).stat().st_size / 1e6:.1f} MB")
+
+
+def build_game(work, rom, toolchain, out):
+    """libsm64game: sm64ex with the PC port's 60 fps interpolation, the Unity bridge and Mario 64 MR's changes,
     its data left out (it reads base.zip at runtime)."""
     patch_sm64ex.prepare(work, rom, sixty=True, external_data=True)
     # The attract demos' inputs are game data compiled in even with external data: blank them (never played, the
     # demo timer is off)
     for demo in (work / "assets/demos").glob("*.bin"):
         demo.write_bytes(bytes(4))
-    cc, cxx = make_compilers(ndk, work)
+    cc, cxx = toolchain.make_compilers()
+    build = toolchain.game_build
     flags = "-Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-pointer-types"
-    run(["make", "-j" + str(os.cpu_count() or 4), "HOST_OS=Linux", "OSX_BUILD=0", "BUILD_DIR=" + GAME_BUILD,
+    run(["make", "-j" + str(os.cpu_count() or 4), "HOST_OS=Linux", "OSX_BUILD=0", "BUILD_DIR=" + build,
          "CC=" + cc, "CXX=" + cxx, "LD=" + cc, "CPP=" + cc + " -E -P -x c",
          "RENDER_API=UNITY", "WINDOW_API=UNITY", "AUDIO_API=UNITY", "CONTROLLER_API=UNITY", "NOEXTRACT=1",
          "EXTERNAL_DATA=1", "EXT_OPTIONS_MENU=1", "TEXTURE_FIX=0", "BETTERCAMERA=0", "NODRAWINGDISTANCE=0",
-         "LDFLAGS=-shared -Wl,--no-undefined -Wl,-soname,libsm64game.so -Wl,-z,max-page-size=16384 -lm",
+         "LDFLAGS=" + " ".join(toolchain.shared("libsm64game", strict=True) + ["-lm"]),
          "OPT_FLAGS=-O2 -fPIC " + flags,
-         f"CC_CHECK={cc} -fsyntax-only -fPIC -Isrc -Iinclude -I. -I{GAME_BUILD} -I{GAME_BUILD}/include -DVERSION_US "
+         f"CC_CHECK={cc} -fsyntax-only -fPIC -Isrc -Iinclude -I. -I{build} -I{build}/include -DVERSION_US "
          f"-D_LANGUAGE_C -DNON_MATCHING -DAVOID_UB -DF3DEX_GBI_2E -DRAPI_UNITY -DWAPI_UNITY -DAAPI_UNITY {flags}"],
         cwd=work)
-    shutil.copy2(work / GAME_BUILD / "sm64.us.f3dex2e", out / "libsm64game.so")
+    shutil.copy2(work / build / "sm64.us.f3dex2e", out / toolchain.library("libsm64game"))
 
 
-def build_goddard(decomp, extracted, ndk, work, out):
-    """libgoddard.so: the decomp's Goddard (the title screen's face) as a library, with Mario 64 MR's patches (two
+def build_goddard(decomp, extracted, toolchain, work, out):
+    """libgoddard: the decomp's Goddard (the title screen's face) as a library, with Mario 64 MR's patches (two
     hands, holding, depth) and a small API (native/goddard/shim). Its textures are blanks, filled at runtime from
     base.zip."""
     kit = HERE / "native/goddard"
@@ -471,23 +611,23 @@ def build_goddard(decomp, extracted, ndk, work, out):
     defines = ["-DVERSION_US=1", "-DF3D_OLD=1", "-DNON_MATCHING=1", "-DAVOID_UB=1", "-D_LANGUAGE_C",
                "-DNO_SEGMENTED_MEMORY", "-DGBI_FLOATS"]
     includes = ["-I" + native(p) for p in (gen, src, decomp / "include", decomp / "src", decomp, kit / "shim")]
-    run(compiler(ndk) + ["-std=gnu99", "-O2", "-fPIC", "-fno-strict-aliasing", "-fsigned-char", "-fvisibility=hidden",
-         "-w", "-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=0"] + defines + includes +
-        ["-shared", "-Wl,-soname,libgoddard.so", "-Wl,-z,max-page-size=16384", "-o", native(out / "libgoddard.so")]
+    run(toolchain.compiler() + ["-std=gnu99", "-O2", "-fPIC", "-fno-strict-aliasing", "-fsigned-char",
+         "-fvisibility=hidden", "-w", "-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=0"] + defines + includes +
+        toolchain.shared("libgoddard") + ["-o", native(out / toolchain.library("libgoddard"))]
         + [native(p) for p in sources] + ["-lm"])
 
 
-def build_libsm64(libsm64, ndk, out):
-    """libsm64.so: libsm64 as it is upstream (the title screen plays the game's music and sounds through it, from
+def build_libsm64(libsm64, toolchain, out):
+    """libsm64: libsm64 as it is upstream (the title screen plays the game's music and sounds through it, from
     your ROM)."""
     if not (libsm64 / "src/decomp/mario/geo.inc.c").is_file():
         run([sys.executable, "import-mario-geo.py"], cwd=libsm64)  # (Mario's model, from the decomp's sources)
     dirs = ["src", "src/decomp", "src/decomp/engine", "src/decomp/include/PR", "src/decomp/game", "src/decomp/pc",
             "src/decomp/pc/audio", "src/decomp/mario", "src/decomp/tools", "src/decomp/audio"]
     sources = sorted(str(p.relative_to(libsm64)) for d in dirs for p in (libsm64 / d).glob("*.c"))
-    run(compiler(ndk) + ["-O2", "-fno-strict-aliasing", "-Wno-everything", "-fPIC", "-fvisibility=hidden",
-         "-DSM64_LIB_EXPORT", "-DGBI_FLOATS", "-DVERSION_US", "-DNO_SEGMENTED_MEMORY", "-I", "src/decomp/include",
-         "-shared", "-Wl,-soname,libsm64.so", "-Wl,-z,max-page-size=16384", "-o", native(out / "libsm64.so")]
+    run(toolchain.compiler() + ["-O2", "-fno-strict-aliasing", "-Wno-everything", "-fPIC", "-fvisibility=hidden",
+         "-DSM64_LIB_EXPORT", "-DGBI_FLOATS", "-DVERSION_US", "-DNO_SEGMENTED_MEMORY", "-I", "src/decomp/include"]
+        + toolchain.shared("libsm64") + ["-o", native(out / toolchain.library("libsm64"))]
         + sources + ["-lm"], cwd=libsm64)
 
 
@@ -655,7 +795,14 @@ def main():
                              "install`, so Lepton's OpenXR/Vulkan API layer bind mounts are set up. Pass user@host "
                              "(e.g. steamos@frame.lan); this computer's public SSH key must be in the Frame's "
                              "authorized_keys. Without this, adb install still runs but the first XR launch may fail.")
+    parser.add_argument("--visionos", action="store_true",
+                        help="build for Apple Vision Pro instead (macOS with Xcode): the libraries as XCFrameworks and "
+                             "the data, into visionos/Build, for the Xcode project in visionos/")
     args = parser.parse_args()
+    if args.visionos and (args.push or args.ndk or args.frame or args.apk):
+        sys.exit("--visionos builds for Xcode: --push, --ndk, --frame and --apk are for Android headsets")
+    if args.visionos and platform.system() != "Darwin":
+        sys.exit("--visionos needs a Mac with Xcode (and its visionOS platform)")
     # The ROM first: the most likely thing to be wrong, and nothing should be fetched, built or pushed until it's right
     try:
         rom = read_rom(args.rom)
@@ -663,7 +810,8 @@ def main():
         sys.exit(str(problem))
     if args.check:
         return
-    for tool in ("git", "make", "patch", "cc") + (("clang", "ld.lld") if ARM64_LINUX else ()):
+    for tool in ("git", "make", "patch", "cc") + (("clang", "ld.lld") if ARM64_LINUX else ()) + (
+            ("xcrun", "xcodebuild") if args.visionos else ()):
         if shutil.which(tool) is None:
             sys.exit(f"{tool} not found (see the top of this script for what is needed)")
     work, out = args.work.resolve(), args.out.resolve()
@@ -682,15 +830,24 @@ def main():
     (out / "baserom.us.z64").write_bytes(rom)
     pack(sm64ex, out)
 
-    print("== The game code, for the headset", flush=True)
-    ndk = find_ndk(work, args.ndk)
-    build_game(sm64ex, rom, ndk, out / "native")
     decomp = work / "sm64-decomp"
     fetch(DECOMP, DECOMP_REVISION, decomp, shallow=True)
-    build_goddard(decomp, sm64ex, ndk, work / "goddard", out / "native")
     libsm64 = work / "libsm64"
     fetch(LIBSM64, LIBSM64_REVISION, libsm64, shallow=True)
-    build_libsm64(libsm64, ndk, out / "native")
+    if args.visionos:
+        for sdk, _ in VISIONOS_SLICES:
+            if subprocess.run(["xcrun", "--sdk", sdk, "--show-sdk-path"], capture_output=True).returncode != 0:
+                sys.exit(f"Xcode has no {sdk} SDK: install the visionOS platform (Xcode > Settings > Components)")
+        build_visionos(sm64ex, rom, decomp, libsm64, work, out)
+        print(f"Done: {VISIONOS_BUILD}. Open visionos/Mario64MR.xcodeproj in Xcode, choose your team under Signing "
+              "& Capabilities, and run it on your Vision Pro (or the visionOS simulator).")
+        return
+
+    print("== The game code, for the headset", flush=True)
+    toolchain = Android(find_ndk(work, args.ndk), work)
+    build_game(sm64ex, rom, toolchain, out / "native")
+    build_goddard(decomp, sm64ex, toolchain, work / "goddard", out / "native")
+    build_libsm64(libsm64, toolchain, out / "native")
     for name in LIBRARIES:
         print(f"{out / 'native' / name}: {(out / 'native' / name).stat().st_size / 1e6:.1f} MB")
 

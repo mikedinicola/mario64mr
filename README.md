@@ -384,6 +384,26 @@ To install it, follow [Install](#install) with `Mario64MR-Pico.apk` in place of 
    **Mac or Linux**: `python3 install_mario64mr.py "Super Mario 64 (USA).z64" --push --apk Mario64MR-Pico.apk`
 3. Allow the room permission when it asks, and start Mario 64 MR from your Library (Unknown sources).
 
+## Apple Vision Pro (in progress)
+
+A native visionOS app is being written in [`visionos/`](visionos). **It doesn't play yet**: so far it builds the
+game for visionOS, runs it and plays its sound, with nothing drawn. visionOS runs no code that isn't signed into the
+app, so instead of an app to download you build it yourself in Xcode, with the game made from your ROM inside it.
+
+You need a Mac with Xcode 26 or later and its visionOS platform (Xcode › Settings › Components), and an Apple ID.
+
+1. Make the game for visionOS:
+
+   ```
+   python3 install_mario64mr.py "Super Mario 64 (USA).z64" --visionos
+   ```
+
+   It goes in `visionos/Build` (the three libraries as XCFrameworks, for the headset and the simulator, and the
+   game data), which is never committed.
+2. Open `visionos/Mario64MR.xcodeproj`, choose your team under Signing & Capabilities (and a bundle identifier of
+   your own), and run it on your Vision Pro or the visionOS simulator. Or put them in `visionos/Local.xcconfig`:
+   `DEVELOPMENT_TEAM = ABCDE12345` and `MARIO64MR_BUNDLE_ID = com.yourname.mario64mr`.
+
 ## Troubleshooting
 
 - **Microsoft Defender says `Trojan:Script/Sabsik.EN.A!ml`** for `install_mario64mr.bat` (or the downloaded ZIP),
