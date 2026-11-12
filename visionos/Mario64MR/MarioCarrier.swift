@@ -6,6 +6,16 @@ struct RoomGeometry: Sendable {
     var roomFromView: simd_float4x4   // the game camera's view space (game units) into the room (metres)
     var windowFromRoom: simd_float4x4 // the room into the window's own space (z towards you)
     var halfSize: SIMD2<Float>        // the opening's half width and height, metres
+    /// The cartridge is open into the window (closed, nothing goes through it)
+    var open = true
+    /// "PRESS START" on the title screen, in the window's plane (RoomPlacement.startLabel)
+    var startLabel: (center: SIMD2<Float>, half: SIMD2<Float>) = (.zero, .zero)
+
+    /// A room point in the window's own space
+    func inWindow(_ p: SIMD3<Float>) -> SIMD3<Float> {
+        let w = windowFromRoom * SIMD4(p, 1)
+        return SIMD3(w.x, w.y, w.z)
+    }
 }
 
 /// Your hands and Mario (README, "Your left hand in the game"), on the game thread before each tick:
@@ -33,7 +43,7 @@ final class MarioCarrier {
         let viewFromRoom = g.roomFromView.inverse
         func inGame(_ p: SIMD3<Float>) -> Bool {
             let w = g.windowFromRoom * SIMD4(p, 1)
-            return w.z < 0 && abs(w.x) <= g.halfSize.x && abs(w.y) <= g.halfSize.y
+            return g.open && w.z < 0 && abs(w.x) <= g.halfSize.x && abs(w.y) <= g.halfSize.y
         }
         func world(_ p: SIMD3<Float>) -> SIMD3<Float> { xyz(worldFromView * (viewFromRoom * SIMD4(p, 1))) }
         func worldDirection(_ v: SIMD3<Float>) -> SIMD3<Float> {

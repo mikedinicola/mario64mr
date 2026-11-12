@@ -29,7 +29,14 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private let world = WorldTrackingProvider()
     private let scanner = RoomScanner()
     private let handTracker = HandTracker()
-    private var placement: RoomPlacement?
+    private let planeFinder = PlaneFinder()
+    private let props: RoomProps
+    /// The cartridge, and the window it opens into (made at the first frame, in front of you)
+    private var cartridge: Cartridge?
+    /// (the simulator's stand-in room's planes)
+    private var standInPlanes: [RoomPlane] = []
+    private var lastTime: TimeInterval?
+    private var startTime: TimeInterval?
     private var placedFromHead = false
     private var loggedRoom = false
     private var started: TimeInterval?
@@ -41,7 +48,10 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private init?(layer: LayerRenderer, device: MTLDevice, frames: GameFrames, link: RoomLink) {
         let target = GameRenderer.Target(colorFormat: layer.configuration.colorFormat,
                                          depthFormat: layer.configuration.depthFormat, room: true)
-        guard let game = GameRenderer(device: device, frames: frames, target: target) else { return nil }
+        guard let game = GameRenderer(device: device, frames: frames, target: target),
+              let props = RoomProps(device: device, library: game.library, colorFormat: target.colorFormat,
+                                    depthFormat: target.depthFormat) else { return nil }
+        self.props = props
         self.layer = layer
         self.game = game
         self.frames = frames
@@ -61,11 +71,13 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private func run() {
         // (where the head is: if tracking doesn't start, the room still shows, placed in front of where the head
         // would be, rather than staying empty)
-        let tracking = Task { [session, world, scanner, handTracker] in
+        let tracking = Task { [session, world, scanner, handTracker, planeFinder] in
             var providers: [any DataProvider] = WorldTrackingProvider.isSupported ? [world] : []
             let wanted: [ARKitSession.AuthorizationType] = [.worldSensing, .handTracking]
             let allowed = await session.requestAuthorization(for: wanted)
-            if RoomScanner.isSupported, allowed[.worldSensing] == .allowed { providers.append(scanner.provider) }
+            let sensing = allowed[.worldSensing] == .allowed
+            if RoomScanner.isSupported, sensing { providers.append(scanner.provider) }
+            if PlaneFinder.isSupported, sensing { providers.append(planeFinder.provider) }
             if HandTracker.isSupported, allowed[.handTracking] == .allowed { providers.append(handTracker.provider) }
             guard !providers.isEmpty else { return Self.log.info("No world tracking here") }
             var running = false
@@ -80,8 +92,14 @@ final class ImmersiveRenderer: @unchecked Sendable {
                     try? await Task.sleep(for: .seconds(1))
                 }
             }
-            if running, providers.contains(where: { $0 === scanner.provider }) {
-                await scanner.run { [weak self] mesh in self?.useRoom(mesh) }
+            guard running else { return }
+            await withTaskGroup(of: Void.self) { group in
+                if providers.contains(where: { $0 === scanner.provider }) {
+                    group.addTask { await scanner.run { [weak self] mesh in self?.useRoom(mesh) } }
+                }
+                if providers.contains(where: { $0 === planeFinder.provider }) {
+                    group.addTask { await planeFinder.run() }
+                }
             }
         }
         link.update { $0.on = true }
@@ -119,105 +137,192 @@ final class ImmersiveRenderer: @unchecked Sendable {
             ?? simd_float4x4(SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(0, 1.5, 0, 1))
         let now = CACurrentMediaTime()
         if started == nil { started = now }
-        // The first poses can be untracked, at the room's origin on the floor: place the window only from a tracked
-        // head at standing or sitting height. Placed without one (after 2 s), it moves once one comes.
+        // The first poses can be untracked, at the room's origin on the floor: place the cartridge only from a
+        // tracked head at standing or sitting height. Placed without one (after 2 s), it moves once one comes, if
+        // it isn't open or in a hand by then.
         let realHead = anchor.map { $0.isTracked && $0.originFromAnchorTransform.columns.3.y > 0.5 } ?? false
-        if placement == nil || (!placedFromHead && realHead) {
-            if realHead || !WorldTrackingProvider.isSupported || (placement == nil && now - (started ?? now) > 2) {
+        let movable = cartridge.map { !$0.isOpen && $0.holding.isEmpty } ?? true
+        if cartridge == nil || (!placedFromHead && realHead && movable) {
+            if realHead || !WorldTrackingProvider.isSupported || (cartridge == nil && now - (started ?? now) > 2) {
                 // (no tracked head after 2 s, as in the simulator: in front of the pose there is, wherever it is)
                 let facing = head
-                let placement = RoomPlacement(facing: facing)
-                self.placement = placement
-                let w = placement.roomFromWindow.columns.3
-                scanner.focus = SIMD3(w.x, w.y, w.z)
+                let cartridge = Cartridge(facing: facing)
+                self.cartridge = cartridge
+                if startTime == nil { startTime = time }
                 placedFromHead = realHead
                 let y = head.columns.3.y, tracked = anchor?.isTracked ?? false
-                Self.log.info("The window is placed (\(realHead ? "from the head" : "no tracked head yet"), head y \(y), tracked \(tracked))")
+                Self.log.info("The cartridge is placed (\(realHead ? "from the head" : "no tracked head yet"), head y \(y), tracked \(tracked))")
                 #if DEBUG
+                let arguments = ProcessInfo.processInfo.arguments
+                if arguments.contains("-open") || arguments.contains("-carry") { cartridge.open(RoomPlacement(facing: facing)) }
                 if !RoomScanner.isSupported {  // (the simulator: a floor and a table to try Mario out on)
-                    let (room, above) = RoomMesh.standIn(window: placement, floor: facing.columns.3.y - 1.5)
+                    let (room, above, planes) = RoomMesh.standIn(window: RoomPlacement(facing: facing),
+                                                                  floor: facing.columns.3.y - 1.5)
                     useRoom(room)
+                    standInPlanes = planes
                     link.update { $0.debugRelease = above }
                 }
                 #endif
             }
         }
-
-        if let placement, let gameFrame = frames.latest() {
-            let xScale = RoomPlacement.xScale(gameFrame.size)
-            let level = gameFrame.draws.first { $0.kind == .world }?.projection
-            let roomFromView = placement.roomFromView(projection: level, xScale: xScale)
-            let viewFromRoom = roomFromView.inverse
-            // The game camera and its near plane in the window's space, for the level reaching out of the window
-            let windowFromView = placement.roomFromWindow.inverse * roomFromView
-            let cameraInWindow = windowFromView * SIMD4(0, 0, 0, 1)
-            let nearInWindow = windowFromView * SIMD4(0, 0, -RoomPlacement.near(level), 1)
-            let gameCamera = SIMD4(cameraInWindow.x, cameraInWindow.y, cameraInWindow.z, nearInWindow.z)
-            let up = simd_normalize(SIMD3(gameFrame.camera.columns.1.x, gameFrame.camera.columns.1.y,
-                                          gameFrame.camera.columns.1.z))
-            // Billboards turn to the head, in the game camera's view space (sm64unity_billboards, next tick)
-            let headInView = viewFromRoom * head.columns.3
-            let geometry = RoomGeometry(roomFromView: roomFromView, windowFromRoom: placement.roomFromWindow.inverse,
-                                        halfSize: placement.halfSize)
-            let hands = handTracker.update(at: time)
-            // The way back towards you from where you look, level (the stick, out in the room: sm64unity_room_facing).
-            // Looking down, the head's up points ahead, and looking up, behind
-            let back = head.columns.2, headUp = head.columns.1
-            let levelBack = back - headUp * (back.y >= 0 ? 1 : -1)
-            link.update {
-                $0.head = SIMD3(headInView.x, headInView.y, headInView.z); $0.up = up
-                $0.facing = SIMD2(levelBack.x, levelBack.z)
-                $0.geometry = geometry; $0.hands = hands
-            }
-
-            let camera = gameFrame.camera
-            let actorFromClip = { (draw: GameFrame.Draw) -> simd_float4x4 in
-                RoomPlacement.actorFromClip(draw.projection, xScale: xScale, camera: camera)
-            }
-            let room = roomMesh.withLockUnchecked { $0 }
-            var cache: [SIMD16<Float>: simd_float4x4] = [:]  // (most draws share a few projections)
-            let roomFromClip = { (draw: GameFrame.Draw) -> simd_float4x4 in
-                let c = draw.projection.columns
-                let key = SIMD16(lowHalf: SIMD8(lowHalf: c.0, highHalf: c.1), highHalf: SIMD8(lowHalf: c.2, highHalf: c.3))
-                if let m = cache[key] { return m }
-                let m = RoomPlacement.roomFromClip(draw.projection, xScale: xScale, roomFromView: roomFromView)
-                cache[key] = m
-                return m
-            }
-            for (index, view) in drawable.views.enumerated() {
-                let roomFromEye = head * view.transform
-                let eye = GameRenderer.RoomEye(
-                    viewProjection: drawable.computeProjection(viewIndex: index) * roomFromEye.inverse,
-                    roomFromView: roomFromView,
-                    roomFromWindow: placement.roomFromWindow,
-                    windowFromRoom: placement.roomFromWindow.inverse,
-                    eye: placement.roomFromWindow.inverse * roomFromEye.columns.3,
-                    window: SIMD4(placement.halfSize.x, placement.halfSize.y, placement.skyDistance, 0),
-                    up: SIMD4(up, 0),
-                    camera: gameCamera)
-                guard let encoder = makeEncoder(commands, drawable: drawable, view: view) else { continue }
-                // The game; the room's surfaces into depth; then Mario, if he's out in the room, hidden by them
-                game.encodeRoom(gameFrame, into: encoder, eye: eye, actors: false,
-                                roomFromClip: roomFromClip, actorFromClip: actorFromClip)
-                if gameFrame.marioOutside {
-                    if let mesh = room.buffer { game.encodeRoomMesh(mesh, count: room.count, into: encoder, eye: eye) }
-                    game.encodeRoom(gameFrame, into: encoder, eye: eye, actors: true,
-                                    roomFromClip: roomFromClip, actorFromClip: actorFromClip)
-                }
-                encoder.endEncoding()
-            }
-            if !drewFirstFrame {
-                drewFirstFrame = true
-                Self.log.info("First frame in the room: \(gameFrame.draws.count) draws")
-            }
-        } else {
+        guard let cartridge else {
             for view in drawable.views {  // (nothing yet: clear to the passthrough)
                 makeEncoder(commands, drawable: drawable, view: view)?.endEncoding()
             }
+            drawable.encodePresent(commandBuffer: commands)
+            commands.commit()
+            return
+        }
+
+        // Your hands: on the cartridge or the window's frame first; the rest go to the game
+        let eyePosition = SIMD3(head.columns.3.x, head.columns.3.y, head.columns.3.z)
+        let gameFrame = frames.latest()
+        var hands = handTracker.update(at: time)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-cart") {
+            hands = scriptedHands(time - (startTime ?? time), cartridge: cartridge, eye: eyePosition,
+                                  title: gameFrame?.title != nil)
+        }
+        #endif
+        let dt = Float(lastTime.map { time - $0 } ?? 0)
+        lastTime = time
+        cartridge.update(hands: hands, eye: eyePosition, planes: planeFinder.current + standInPlanes,
+                         floor: min(0, head.columns.3.y - 1.5), dt: dt)
+        for i in cartridge.holding where i < hands.count { hands[i].pinching = false }
+        let placement = cartridge.window
+        let w = placement.roomFromWindow.columns.3
+        scanner.focus = SIMD3(w.x, w.y, w.z)
+
+        let xScale = gameFrame.map { RoomPlacement.xScale($0.size) } ?? 0.75
+        let level = gameFrame?.draws.first { $0.kind == .world }?.projection
+        let roomFromView = placement.roomFromView(projection: level, xScale: xScale)
+        let viewFromRoom = roomFromView.inverse
+        // The game camera and its near plane in the window's space, for the level reaching out of the window
+        let windowFromView = placement.roomFromWindow.inverse * roomFromView
+        let cameraInWindow = windowFromView * SIMD4(0, 0, 0, 1)
+        let nearInWindow = windowFromView * SIMD4(0, 0, -RoomPlacement.near(level), 1)
+        let gameCamera = SIMD4(cameraInWindow.x, cameraInWindow.y, cameraInWindow.z, nearInWindow.z)
+        let camera = gameFrame?.camera ?? matrix_identity_float4x4
+        let up = simd_normalize(SIMD3(camera.columns.1.x, camera.columns.1.y, camera.columns.1.z))
+        // Billboards turn to the head, in the game camera's view space (sm64unity_billboards, next tick)
+        let headInView = viewFromRoom * head.columns.3
+        let geometry = RoomGeometry(roomFromView: roomFromView, windowFromRoom: placement.roomFromWindow.inverse,
+                                    halfSize: placement.halfSize, open: cartridge.isOpen,
+                                    startLabel: placement.startLabel)
+        // The way back towards you from where you look, level (the stick, out in the room: sm64unity_room_facing).
+        // Looking down, the head's up points ahead, and looking up, behind
+        let back = head.columns.2, headUp = head.columns.1
+        let levelBack = back - headUp * (back.y >= 0 ? 1 : -1)
+        link.update { [hands] in
+            $0.head = SIMD3(headInView.x, headInView.y, headInView.z); $0.up = up
+            $0.facing = SIMD2(levelBack.x, levelBack.z)
+            $0.geometry = geometry; $0.hands = hands
+        }
+
+        let actorFromClip = { (draw: GameFrame.Draw) -> simd_float4x4 in
+            RoomPlacement.actorFromClip(draw.projection, xScale: xScale, camera: camera)
+        }
+        let room = roomMesh.withLockUnchecked { $0 }
+        var cache: [SIMD16<Float>: simd_float4x4] = [:]  // (most draws share a few projections)
+        let roomFromClip = { (draw: GameFrame.Draw) -> simd_float4x4 in
+            let c = draw.projection.columns
+            let key = SIMD16(lowHalf: SIMD8(lowHalf: c.0, highHalf: c.1), highHalf: SIMD8(lowHalf: c.2, highHalf: c.3))
+            if let m = cache[key] { return m }
+            let m = RoomPlacement.roomFromClip(draw.projection, xScale: xScale, roomFromView: roomFromView)
+            cache[key] = m
+            return m
+        }
+        for (index, view) in drawable.views.enumerated() {
+            let roomFromEye = head * view.transform
+            let eye = GameRenderer.RoomEye(
+                viewProjection: drawable.computeProjection(viewIndex: index) * roomFromEye.inverse,
+                roomFromView: roomFromView,
+                roomFromWindow: placement.roomFromWindow,
+                windowFromRoom: placement.roomFromWindow.inverse,
+                eye: placement.roomFromWindow.inverse * roomFromEye.columns.3,
+                window: SIMD4(placement.halfSize.x, placement.halfSize.y, placement.skyDistance, 0),
+                up: SIMD4(up, 0),
+                camera: gameCamera)
+            guard let encoder = makeEncoder(commands, drawable: drawable, view: view) else { continue }
+            // Open: the game through the window (or the title screen's face), in its frame. Closed: the cartridge.
+            // Then the room's surfaces into depth and Mario, if he's out in the room, hidden by them
+            if cartridge.isOpen {
+                props.encodeFrame(placement, into: encoder, eye: eye)
+                if let gameFrame, let title = gameFrame.title {
+                    props.encodeTitle(title, window: placement, time: time - (startTime ?? 0), into: encoder, eye: eye)
+                } else if let gameFrame {
+                    game.encodeRoom(gameFrame, into: encoder, eye: eye, actors: false,
+                                    roomFromClip: roomFromClip, actorFromClip: actorFromClip)
+                }
+            } else {
+                props.encodeCartridge(cartridge.pose, into: encoder, eye: eye)
+            }
+            if let gameFrame, gameFrame.marioOutside {
+                if let mesh = room.buffer { game.encodeRoomMesh(mesh, count: room.count, into: encoder, eye: eye) }
+                game.encodeRoom(gameFrame, into: encoder, eye: eye, actors: true,
+                                roomFromClip: roomFromClip, actorFromClip: actorFromClip)
+            }
+            encoder.endEncoding()
+        }
+        if !drewFirstFrame, let gameFrame {
+            drewFirstFrame = true
+            Self.log.info("First frame in the room: \(gameFrame.draws.count) draws")
         }
         drawable.encodePresent(commandBuffer: commands)
         commands.commit()
     }
+
+    #if DEBUG
+    /// With -cart (debug builds, for the simulator, which has no hands): two hands take the cartridge in front of
+    /// you at 1 s and pull it open into a window 1.2 m wide, 1.2 m away. On the title screen they take Mario's
+    /// face by the nose and an ear and pull, let go, and pinch "PRESS START".
+    private var titleSince: TimeInterval?
+
+    private func scriptedHands(_ t: TimeInterval, cartridge: Cartridge, eye: SIMD3<Float>, title: Bool) -> [HandState] {
+        func hand(_ p: SIMD3<Float>, pinching: Bool) -> HandState {
+            var h = HandState(tracked: true)
+            h.pinch = p; h.reach = p; h.pinching = pinching
+            h.palm = p + SIMD3(0, -0.05, 0.08)
+            return h
+        }
+        if t < 3.4 {
+            guard t > 1 else { return [] }
+            if !cartridge.isOpen || t < 3.0 {
+                let center = cartridge.isOpen ? cartridge.window.center : cartridge.center
+                let pose = cartridge.isOpen ? cartridge.window.roomFromWindow : cartridge.pose
+                let across = simd_normalize(SIMD3(pose.columns.0.x, 0, pose.columns.0.z))
+                // From the cartridge's ends out to ±0.35 m, 1.2 m in front of you, 10 cm below the eyes
+                var forward = SIMD3(center.x - eye.x, 0, center.z - eye.z)
+                forward = simd_length(forward) > 1e-3 ? simd_normalize(forward) : SIMD3(0, 0, -1)
+                let target = eye + forward * 1.2 - SIMD3(0, 0.1, 0)
+                let start = cartridgeStart ?? cartridge.center
+                if cartridgeStart == nil { cartridgeStart = start }
+                let k = Float(min(max((t - 1.5) / 1.5, 0), 1))
+                let mid = start + (target - start) * k
+                let half = 0.05 + (0.35 - 0.05) * k
+                return [hand(mid - across * half, pinching: t >= 1.5), hand(mid + across * half, pinching: t >= 1.5)]
+            }
+            return []
+        }
+        guard title, cartridge.isOpen else { titleSince = nil; return [] }
+        if titleSince == nil { titleSince = t }
+        let s = t - titleSince!
+        let w = cartridge.window.roomFromWindow, h = cartridge.window.halfSize
+        func at(_ x: Float, _ y: Float, _ z: Float) -> SIMD3<Float> { w.transform(SIMD3(x, y, z)) }
+        if s > 2 && s < 6 {
+            let k = Float(min(max((s - 2.5) / 2, 0), 1))
+            let pinching = s >= 2.5 && s < 5
+            return [hand(at(-h.y * 0.45 - 0.12 * k, h.y * 0.05, 0.02 + 0.1 * k), pinching: pinching),
+                    hand(at(0.02 + 0.1 * k, -h.y * 0.05, 0.05 + 0.25 * k), pinching: pinching)]
+        }
+        if s > 7 && s < 8 {
+            let label = cartridge.window.startLabel
+            return [hand(at(label.center.x, label.center.y, 0.01), pinching: s > 7.4), HandState()]
+        }
+        return []
+    }
+    private var cartridgeStart: SIMD3<Float>?
+    #endif
 
     /// A new room from the scanner: to the game (its collision, loaded on the game thread) and to the drawing
     private func useRoom(_ mesh: RoomMesh) {

@@ -388,9 +388,13 @@ To install it, follow [Install](#install) with `Mario64MR-Pico.apk` in place of 
 
 A native visionOS app is being written in [`visionos/`](visionos). **Early**: the whole game plays in a flat window,
 with a paired gamepad (DualSense, Xbox) or a keyboard, and "Open a window into the game" puts it in your room, in 3D
-behind a window floating in front of you (press the Digital Crown to go back). Pinch Mario to pick him up, carry
-him out of the window and let go: he lands in your room and runs on it. No cartridge, title screen hands or diorama
-yet.
+behind a window floating in front of you (press the Digital Crown to go back). In the room the game starts as a
+cartridge in front of you: pinch it to pick it up and throw it (it lands on your tables), or pinch it with both hands
+and pull it open into the window. Pinch the frame to move it, with both hands to resize it, and squeeze it shut. On
+the title screen, pinch Mario's face with both hands and pull, and pinch "PRESS START" (or press Start, or pinch with
+your palm up). Pinch Mario to pick him up, carry him out of the window and let go: he lands in your room and runs on
+it. To put your own label on the cartridge, copy a `label.png` or `label.jpg` into the app's folder in the Files app.
+No diorama yet.
 visionOS runs no code that isn't signed into the
 app, so instead of an app to download you build it yourself in Xcode, with the game made from your ROM inside it.
 

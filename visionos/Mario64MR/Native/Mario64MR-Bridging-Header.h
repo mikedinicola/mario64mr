@@ -55,9 +55,44 @@ unsigned int *sm64unity_options(void);
 int sm64unity_option_count(void);
 
 // ---------------------------------------------------------------- Goddard (native/goddard/shim/gd_api.h)
+typedef struct {
+    float pos[3];
+    float uv[2];
+    uint8_t color[4];
+} GdVertex;
+typedef struct {
+    int32_t firstVertex;
+    int32_t vertexCount;
+    int32_t texture;
+    uint32_t flags;  // GD_BATCH_*: 1 screen, 2 blend, 4 cutout, 8 z test, 16 z write, 32 decal, 64/128 cull, 256 textured
+    uint8_t colorCombine[4];
+    uint8_t alphaCombine[4];
+    uint8_t prim[4];
+    uint8_t env[4];
+    uint8_t clampS, clampT, mirrorS, mirrorT;
+} GdBatch;
+int32_t gd_api_init(void);
+int32_t gd_api_tick(int32_t setCursor, float cursorX, float cursorY, uint16_t buttons, int8_t stickX, int8_t stickY, int8_t stickZ);
+const GdVertex *gd_api_vertices(int32_t *count);
+const GdBatch *gd_api_batches(int32_t *count);
+void gd_api_projection(float out[16]);
+void gd_api_cursor(float *x, float *y);
+int32_t gd_api_holding(void);
+void gd_api_set_drag_z(int32_t hand, float value);
+void gd_api_set_hand2(int32_t setCursor, float cursorX, float cursorY, int32_t a, int8_t stickX, int8_t stickY, int8_t stickZ);
+int32_t gd_api_holding2(void);
+void gd_api_cursor2(float *x, float *y);
+int32_t gd_api_set_texture(const char *name, const uint8_t *data, int32_t size);
 int32_t gd_api_texture_slot_count(void);
+const char *gd_api_texture_slot(int32_t index, int32_t *width, int32_t *height);
+int32_t gd_api_texture_count(void);
+void gd_api_texture_size(int32_t index, int32_t *width, int32_t *height);
+void gd_api_texture_rgba(int32_t index, uint8_t *out);
 
 // ---------------------------------------------------------------- LibSM64 (libsm64.h, upstream)
 #define SM64_TEXTURE_WIDTH 704  // (64 * 11)
 #define SM64_TEXTURE_HEIGHT 64
 void sm64_global_init(const uint8_t *rom, uint8_t *outTexture);
+void sm64_audio_init(const uint8_t *rom);
+uint32_t sm64_audio_tick(uint32_t numQueuedSamples, uint32_t numDesiredSamples, int16_t *audio_buffer);
+void sm64_play_sound_global(int32_t soundBits);

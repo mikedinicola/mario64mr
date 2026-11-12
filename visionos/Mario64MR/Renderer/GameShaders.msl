@@ -236,3 +236,103 @@ vertex float4 room_mesh_vertex(uint vid [[vertex_id]], const device packed_float
                                constant RoomEye &eye [[buffer(2)]]) {
     return eye.viewProjection * float4(float3(positions[vid]), 1);
 }
+
+// ---------------------------------------------------------------- Props: the cartridge, the window's frame, labels
+struct PropVertex { packed_float3 position; packed_float3 normal; packed_float2 uv; };
+struct PropDraw {
+    float4x4 model;  // the prop's own space into the room (metres)
+    float4 color;    // linear, multiplied by the texture
+    uint4 flags;     // x: lit, y: only where seen through the window's opening, z: alpha tested
+};
+struct PropVaryings { float4 position [[position]]; float3 normal; float2 uv; float3 room; };
+
+// Whether the eye sees the room point `room` through the window's opening (both in the window's space)
+static bool seenThroughOpening(float3 room, constant RoomEye &eye) {
+    float3 p = (eye.windowFromRoom * float4(room, 1)).xyz, e = eye.eye.xyz;
+    if ((e.z > 0) == (p.z > 0)) return false;
+    float2 at = mix(e.xy, p.xy, e.z / (e.z - p.z));
+    return all(abs(at) <= eye.window.xy);
+}
+
+vertex PropVaryings prop_vertex(uint vid [[vertex_id]], const device PropVertex *vertices [[buffer(0)]],
+                                constant PropDraw &draw [[buffer(1)]], constant RoomEye &eye [[buffer(2)]]) {
+    PropVertex v = vertices[vid];
+    PropVaryings out;
+    float4 room = draw.model * float4(float3(v.position), 1);
+    out.position = eye.viewProjection * room;
+    out.normal = (draw.model * float4(float3(v.normal), 0)).xyz;
+    out.uv = float2(v.uv);
+    out.room = room.xyz;
+    return out;
+}
+
+fragment float4 prop_fragment(PropVaryings in [[stage_in]], constant PropDraw &draw [[buffer(1)]],
+                              constant RoomEye &eye [[buffer(2)]],
+                              texture2d<float> texture [[texture(0)]], sampler s [[sampler(0)]]) {
+    if (draw.flags.y != 0 && !seenThroughOpening(in.room, eye)) discard_fragment();
+    float4 color = draw.color * texture.sample(s, in.uv);
+    if (draw.flags.z != 0 && color.a < 0.5) discard_fragment();
+    if (draw.flags.x != 0) {
+        float light = 0.6 + 0.4 * saturate(dot(normalize(in.normal), normalize(float3(0.3, 1, 0.5))));
+        color.rgb *= light;
+    }
+    return draw.flags.z != 0 ? float4(color.rgb, 1) : color;
+}
+
+// ---------------------------------------------------------------- The title screen's face (libgoddard)
+struct GdVertex { packed_float3 position; packed_float2 uv; uchar4 color; };
+struct TitleDraw {
+    float4x4 roomFromGd;    // the batch's space (Goddard's eye space, or its 320×240 screen) into the room
+    uchar4 colorCombine;    // (a - b) * c + d, GD_CC_* each
+    uchar4 alphaCombine;
+    float4 prim, env;
+    uint4 flags;            // x: GD_BATCH_*, y: textured
+};
+struct TitleVaryings { float4 position [[position]]; float2 uv; float4 shade; float3 room; };
+
+vertex TitleVaryings title_vertex(uint vid [[vertex_id]], const device GdVertex *vertices [[buffer(0)]],
+                                  constant TitleDraw &draw [[buffer(1)]], constant RoomEye &eye [[buffer(2)]]) {
+    GdVertex v = vertices[vid];
+    TitleVaryings out;
+    float4 room = draw.roomFromGd * float4(float3(v.position), 1);
+    out.position = eye.viewProjection * room;
+    out.uv = float2(v.uv);
+    out.shade = float4(v.color) / 255.0;
+    out.room = room.xyz;
+    return out;
+}
+
+static float4 gdInput(uint which, float4 texel, float4 shade, constant TitleDraw &d) {
+    switch (which) {
+        case 0: return float4(0);
+        case 1: return float4(1);
+        case 2: return texel;
+        case 3: return float4(texel.a);
+        case 4: return d.prim;
+        case 5: return float4(d.prim.a);
+        case 6: return shade;
+        case 7: return float4(shade.a);
+        case 8: return d.env;
+        default: return float4(d.env.a);
+    }
+}
+
+// The face is seen through the window's opening, but what's pulled out of it (his nose) is out in the room
+fragment float4 title_fragment(TitleVaryings in [[stage_in]], constant TitleDraw &d [[buffer(1)]],
+                               constant RoomEye &eye [[buffer(2)]],
+                               texture2d<float> texture [[texture(0)]], sampler s [[sampler(0)]]) {
+    if ((d.flags.x & 1) == 0 && (eye.windowFromRoom * float4(in.room, 1)).z < 0 && !seenThroughOpening(in.room, eye))
+        discard_fragment();
+    float4 texel = d.flags.y != 0 ? texture.sample(s, in.uv) : float4(1);
+    uchar4 c = d.colorCombine, a = d.alphaCombine;
+    float3 rgb = (gdInput(c.x, texel, in.shade, d).rgb - gdInput(c.y, texel, in.shade, d).rgb)
+                 * gdInput(c.z, texel, in.shade, d).rgb + gdInput(c.w, texel, in.shade, d).rgb;
+    float alpha = (gdInput(a.x, texel, in.shade, d).a - gdInput(a.y, texel, in.shade, d).a)
+                  * gdInput(a.z, texel, in.shade, d).a + gdInput(a.w, texel, in.shade, d).a;
+    uint flags = d.flags.x;
+    if ((flags & 4) != 0 && alpha < 0.5) discard_fragment();      // GD_BATCH_CUTOUT
+    if ((flags & 2) == 0) alpha = 1;                               // (not blended: covers the passthrough)
+    rgb = saturate(rgb);
+    rgb = select(pow((rgb + 0.055) / 1.055, 2.4), rgb / 12.92, rgb <= 0.04045);  // (the layer is sRGB)
+    return float4(rgb, saturate(alpha));
+}
