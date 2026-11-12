@@ -12,6 +12,7 @@
 		17D6A77C0756DAB97C8D31D2 /* Hands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65BC27FCF1DA01E632D00DD8 /* Hands.swift */; };
 		255784D2C1188D2EC24CD51F /* ZipArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A20CEB478FFE6DAFEB0B3C8 /* ZipArchive.swift */; };
 		298FA2EF6B354440718A3722 /* AVFAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3726FFC0B162C03EAA65575F /* AVFAudio.framework */; };
+		29C2520D71F9D7F771978A55 /* TexturePacks.swift in Sources */ = {isa = PBXBuildFile; fileRef = F44E64A21D2674F2B26E052E /* TexturePacks.swift */; };
 		301321DCC8B3AE931605EB37 /* LibSM64.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4F445DB5C6F9AD8667114E35 /* LibSM64.xcframework */; };
 		31D7F8F7465595A350AFD00F /* RoomProps.swift in Sources */ = {isa = PBXBuildFile; fileRef = 194C5C257E8D09FFA5448CA8 /* RoomProps.swift */; };
 		404DF67DE2B85CEAF1B7D879 /* N64Texture.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF233E5AB95DE6BC17C8FD9B /* N64Texture.swift */; };
@@ -92,9 +93,10 @@
 		CB1DD4AB1EC0CE1344AA1712 /* CompositorServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CompositorServices.framework; path = System/Library/Frameworks/CompositorServices.framework; sourceTree = SDKROOT; };
 		CF233E5AB95DE6BC17C8FD9B /* N64Texture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = N64Texture.swift; sourceTree = "<group>"; };
 		E201BEFE8AF929559A79171F /* ImmersiveRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImmersiveRenderer.swift; sourceTree = "<group>"; };
+		F44E64A21D2674F2B26E052E /* TexturePacks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TexturePacks.swift; sourceTree = "<group>"; };
 		FA91C4F5557E9231F3E72B88 /* RoomMesh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomMesh.swift; sourceTree = "<group>"; };
 		FB1BEFCF61DEC99C3DA05E63 /* Mario64MR-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Mario64MR-Bridging-Header.h"; sourceTree = "<group>"; };
-		"TEMP_4A0F09F3-8EB2-464E-B3F9-DB5B6585F8B3" /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
+		"TEMP_82EA4508-D667-4E51-A506-847E1E9EE5C1" /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -181,6 +183,7 @@
 				B76ACB4BACE212A1D0E7938D /* Mario64MRApp.swift */,
 				ADA9A7BA4F339B75DE635C04 /* MarioCarrier.swift */,
 				A7B25744D9B286AEA53F19E0 /* SpatialControllers.swift */,
+				F44E64A21D2674F2B26E052E /* TexturePacks.swift */,
 				951F5C9FFCB361AE5EF3A6C6 /* Native */,
 				A6A1FAF8D4A808ECF35AFF68 /* Renderer */,
 				894CDF88F81AE6C4DBDE6967 /* Title */,
@@ -217,7 +220,7 @@
 		EBE1C43830A6C0FB004720B7 /* Recovered References */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_4A0F09F3-8EB2-464E-B3F9-DB5B6585F8B3" /* Signing.xcconfig */,
+				"TEMP_82EA4508-D667-4E51-A506-847E1E9EE5C1" /* Signing.xcconfig */,
 			);
 			name = "Recovered References";
 			sourceTree = "<group>";
@@ -313,6 +316,7 @@
 				E7D6770BB438D204A732EEAF /* RoomPlacement.swift in Sources */,
 				31D7F8F7465595A350AFD00F /* RoomProps.swift in Sources */,
 				A1D5135FB4D76F34960EC809 /* SpatialControllers.swift in Sources */,
+				29C2520D71F9D7F771978A55 /* TexturePacks.swift in Sources */,
 				F11133D0BB78769A0F93253D /* TitleScreen.swift in Sources */,
 				255784D2C1188D2EC24CD51F /* ZipArchive.swift in Sources */,
 			);
@@ -373,7 +377,7 @@
 		};
 		6B6E954D46A5765CD201A233 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_4A0F09F3-8EB2-464E-B3F9-DB5B6585F8B3" /* Signing.xcconfig */;
+			baseConfigurationReference = "TEMP_82EA4508-D667-4E51-A506-847E1E9EE5C1" /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -432,7 +436,7 @@
 		};
 		D7D7EEBEE6D2867210D52EDC /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_4A0F09F3-8EB2-464E-B3F9-DB5B6585F8B3" /* Signing.xcconfig */;
+			baseConfigurationReference = "TEMP_82EA4508-D667-4E51-A506-847E1E9EE5C1" /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;

@@ -457,6 +457,17 @@ installed, the project is made again from `visionos/project.yml`.
 
 With a free Apple ID the app stops opening after 7 days: run it from Xcode again. Your saves and options stay.
 
+**Texture packs.** Texture packs made for sm64ex (the PC port), HD ones too, work on Vision Pro. In the app's
+window, choose **Texture packs**, then **+**, and pick the pack in the Files app: a `.zip`, or a folder, with a `gfx`
+folder in it (where it is in the zip or folder doesn't matter). Turn packs on and off there, or remove them. Where two
+packs have the same texture, the lower one in the list wins. The game uses them from when it next starts: the sheet
+offers to quit it, then open it again from the Home View. They're kept in the app's folder (Files app ›
+Mario 64 MR › sm64 › res, and res-off for the ones turned off), so you can also copy zips straight in there. The title
+screen's face uses them too; Mario out in your room keeps the ROM's look, as do the sounds.
+
+The ROM itself can't be swapped in the app: the installer builds the game code from it, so it goes in when you
+build in Xcode.
+
 **Options on Vision Pro.** The pause menu's options (above) apply as the headset allows; they're kept between runs.
 
 | Option | On Vision Pro |

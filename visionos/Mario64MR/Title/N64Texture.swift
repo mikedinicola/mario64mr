@@ -25,16 +25,18 @@ enum N64Texture {
         return out
     }
 
-    /// The image as straight (not premultiplied) RGBA8, `width` by `height`, top row first
+    /// The image as straight (not premultiplied) RGBA8, `width` by `height`, top row first (a texture pack's
+    /// larger one scaled down to it, in the same proportions)
     private static func decode(_ png: Data, width: Int, height: Int) -> [UInt8]? {
         guard let source = CGImageSourceCreateWithData(png as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-              image.width == width, image.height == height else { return nil }
+              image.width * height == image.height * width, image.width >= width else { return nil }
         // (CGContext draws only premultiplied: the alpha is undone after)
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8,
                                       bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.interpolationQuality = .high
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         for i in stride(from: 0, to: pixels.count, by: 4) where pixels[i + 3] > 0 && pixels[i + 3] < 255 {
             let a = Int(pixels[i + 3])

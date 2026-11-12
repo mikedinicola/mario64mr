@@ -48,19 +48,24 @@ final class TitleScreen {
         (0x10, 0x7008_0080), (0x20, 0x7009_0080), (0x40, 0x7006_0080), (0x80, 0x7007_0080),
     ]
 
-    /// Gives Goddard its textures from the resource pack (base.zip: sm64ex's, made from your ROM), as the N64's
-    /// formats; and starts libsm64's audio from the ROM, for its sounds
+    /// Gives Goddard its textures from the resource pack (base.zip: sm64ex's, made from your ROM), or your texture
+    /// packs (TexturePacks), as the N64's formats and sizes; and starts libsm64's audio from the ROM, for its sounds
     init?(device: MTLDevice, pack: URL, rom: Data?) {
         self.device = device
         guard let zip = ZipArchive(url: pack) else { return nil }
+        let packs = TexturePacks.Reader()  // (your texture packs' face, if they have one)
         var missing: [String] = []
         for i in 0..<gd_api_texture_slot_count() {
             var width: Int32 = 0, height: Int32 = 0
             guard let cName = gd_api_texture_slot(i, &width, &height) else { continue }
             let name = String(cString: cName)
-            guard let png = zip.read("gfx/textures/intro_raw/\(name).png"),
-                  let bytes = N64Texture.encode(png: png, format: (name as NSString).pathExtension,
-                                                width: Int(width), height: Int(height)),
+            let path = "gfx/textures/intro_raw/\(name).png", format = (name as NSString).pathExtension
+            let fromPack = packs.read(path).flatMap {
+                N64Texture.encode(png: $0, format: format, width: Int(width), height: Int(height))
+            }
+            guard let bytes = fromPack ?? zip.read(path).flatMap({
+                      N64Texture.encode(png: $0, format: format, width: Int(width), height: Int(height))
+                  }),
                   bytes.withUnsafeBufferPointer({ gd_api_set_texture(cName, $0.baseAddress, Int32($0.count)) }) == 1
             else { missing.append(name); continue }
         }
