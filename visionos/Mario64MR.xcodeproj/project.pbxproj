@@ -31,6 +31,7 @@
 		9E4A2B12AC8D5B6F8B735FB7 /* LibSM64.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 4F445DB5C6F9AD8667114E35 /* LibSM64.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		9EF802231B650D7D91AC5154 /* Data in Resources */ = {isa = PBXBuildFile; fileRef = 943F5996D2653E5553963EF2 /* Data */; };
 		9F73F930B2142512EF197BD9 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C17BF3C984C3F4C5803FE34B /* Metal.framework */; };
+		A1D5135FB4D76F34960EC809 /* SpatialControllers.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B25744D9B286AEA53F19E0 /* SpatialControllers.swift */; };
 		B6D61905B2673091F5C50683 /* Mario64MRApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B76ACB4BACE212A1D0E7938D /* Mario64MRApp.swift */; };
 		CCD398FFD74F9D436621B6C3 /* ImmersiveRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E201BEFE8AF929559A79171F /* ImmersiveRenderer.swift */; };
 		E093D695B090A938A776B98E /* CompositorServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CB1DD4AB1EC0CE1344AA1712 /* CompositorServices.framework */; };
@@ -79,6 +80,7 @@
 		9804ACE3F4CB94673186F407 /* GameHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameHost.swift; sourceTree = "<group>"; };
 		9DD4CFD5E67B1A2DED671C72 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
 		A4A92C8EA421D615DA6690C3 /* Diorama.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diorama.swift; sourceTree = "<group>"; };
+		A7B25744D9B286AEA53F19E0 /* SpatialControllers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialControllers.swift; sourceTree = "<group>"; };
 		ADA9A7BA4F339B75DE635C04 /* MarioCarrier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarioCarrier.swift; sourceTree = "<group>"; };
 		AED565824E6717B29E252745 /* TitleScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TitleScreen.swift; sourceTree = "<group>"; };
 		B76ACB4BACE212A1D0E7938D /* Mario64MRApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mario64MRApp.swift; sourceTree = "<group>"; };
@@ -90,7 +92,7 @@
 		E201BEFE8AF929559A79171F /* ImmersiveRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImmersiveRenderer.swift; sourceTree = "<group>"; };
 		FA91C4F5557E9231F3E72B88 /* RoomMesh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomMesh.swift; sourceTree = "<group>"; };
 		FB1BEFCF61DEC99C3DA05E63 /* Mario64MR-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Mario64MR-Bridging-Header.h"; sourceTree = "<group>"; };
-		"TEMP_E3E1C4AD-B401-4222-853C-6B31425E10DC" /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
+		"TEMP_2BE24640-28A8-420C-A0E5-B7CB6E769BD3" /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -175,6 +177,7 @@
 				463CC69BAD9D784A8981F455 /* Info.plist */,
 				B76ACB4BACE212A1D0E7938D /* Mario64MRApp.swift */,
 				ADA9A7BA4F339B75DE635C04 /* MarioCarrier.swift */,
+				A7B25744D9B286AEA53F19E0 /* SpatialControllers.swift */,
 				951F5C9FFCB361AE5EF3A6C6 /* Native */,
 				A6A1FAF8D4A808ECF35AFF68 /* Renderer */,
 				894CDF88F81AE6C4DBDE6967 /* Title */,
@@ -211,7 +214,7 @@
 		EBE1C43830A6C0FB004720B7 /* Recovered References */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_E3E1C4AD-B401-4222-853C-6B31425E10DC" /* Signing.xcconfig */,
+				"TEMP_2BE24640-28A8-420C-A0E5-B7CB6E769BD3" /* Signing.xcconfig */,
 			);
 			name = "Recovered References";
 			sourceTree = "<group>";
@@ -305,6 +308,7 @@
 				831998582ED4B977FC13FE36 /* RoomMesh.swift in Sources */,
 				E7D6770BB438D204A732EEAF /* RoomPlacement.swift in Sources */,
 				31D7F8F7465595A350AFD00F /* RoomProps.swift in Sources */,
+				A1D5135FB4D76F34960EC809 /* SpatialControllers.swift in Sources */,
 				F11133D0BB78769A0F93253D /* TitleScreen.swift in Sources */,
 				255784D2C1188D2EC24CD51F /* ZipArchive.swift in Sources */,
 			);
@@ -365,7 +369,7 @@
 		};
 		6B6E954D46A5765CD201A233 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_E3E1C4AD-B401-4222-853C-6B31425E10DC" /* Signing.xcconfig */;
+			baseConfigurationReference = "TEMP_2BE24640-28A8-420C-A0E5-B7CB6E769BD3" /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -424,7 +428,7 @@
 		};
 		D7D7EEBEE6D2867210D52EDC /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_E3E1C4AD-B401-4222-853C-6B31425E10DC" /* Signing.xcconfig */;
+			baseConfigurationReference = "TEMP_2BE24640-28A8-420C-A0E5-B7CB6E769BD3" /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;

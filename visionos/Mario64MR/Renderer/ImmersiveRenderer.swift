@@ -30,6 +30,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private let scanner = RoomScanner()
     private let handTracker = HandTracker()
     private let gazePinches = GazePinches()
+    private let controllerTracker = ControllerTracker()
     private let planeFinder = PlaneFinder()
     private let props: RoomProps
     /// The cartridge, and the window it opens into (made at the first frame, in front of you)
@@ -75,14 +76,20 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private func run() {
         // (where the head is: if tracking doesn't start, the room still shows, placed in front of where the head
         // would be, rather than staying empty)
-        let tracking = Task { [session, world, scanner, handTracker, planeFinder] in
+        let tracking = Task { [session, world, scanner, handTracker, planeFinder, controllerTracker] in
             var providers: [any DataProvider] = WorldTrackingProvider.isSupported ? [world] : []
-            let wanted: [ARKitSession.AuthorizationType] = [.worldSensing, .handTracking]
+            var wanted: [ARKitSession.AuthorizationType] = [.worldSensing, .handTracking]
+            if ControllerTracker.isSupported { wanted += AccessoryTrackingProvider.requiredAuthorizations }
             let allowed = await session.requestAuthorization(for: wanted)
             let sensing = allowed[.worldSensing] == .allowed
             if RoomScanner.isSupported, sensing { providers.append(scanner.provider) }
             if PlaneFinder.isSupported, sensing { providers.append(planeFinder.provider) }
             if HandTracker.isSupported, allowed[.handTracking] == .allowed { providers.append(handTracker.provider) }
+            if let controllers = controllerTracker.makeProvider() { providers.append(controllers) }
+            // (controllers paired later are tracked as they come)
+            SpatialControllers.shared.onChange = { accessories in
+                Task { await controllerTracker.track(accessories, in: session) }
+            }
             guard !providers.isEmpty else { return Self.log.info("No world tracking here") }
             var running = false
             for attempt in 1...10 where !Task.isCancelled {
@@ -187,6 +194,13 @@ final class ImmersiveRenderer: @unchecked Sendable {
         let gameFrame = frames.latest()
         var hands = handTracker.update(at: time)
         var gazes = gazePinches.take()
+        // A Sense controller in a hand stands in for it, its grip the pinch
+        while hands.count < 2 { hands.append(HandState()) }
+        var controls: [Int: ControllerControl] = [:]
+        for (side, hand, control) in controllerTracker.hands(at: time) {
+            hands[side] = hand
+            controls[side] = control
+        }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-cart") {
             hands = scriptedHands(time - (startTime ?? time), cartridge: cartridge, eye: eyePosition,
@@ -204,7 +218,8 @@ final class ImmersiveRenderer: @unchecked Sendable {
         // Held by its lower part over a table (or the floor): the circle shows where it would go down
         let low = cartridge.heldLow
         let circle = low.flatMap { Self.circle(under: $0.bottom, planes: planes) }
-        cartridge.update(hands: hands, gazes: gazes, eye: eyePosition, planes: planes, floor: min(0, head.columns.3.y - 1.5), dt: dt)
+        cartridge.update(hands: hands, gazes: gazes, eye: eyePosition, planes: planes, floor: min(0, head.columns.3.y - 1.5),
+                         dt: dt, controls: controls)
         if let low, let circle, stage == 3, let gameFrame, !cartridge.holding.contains(low.hand),
            cartridge.isOpen, cartridge.heldLow == nil {
             // Let go over it: the level rises out of it
@@ -215,7 +230,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
         if let diorama {
             let width = cartridge.window.halfSize.x * 2
             diorama.update(hands: hands, gazes: gazes, cameraStick: GamePad.cameraStick(),
-                           recenter: GamePad.cameraStickPressed(), mario: gameFrame?.mario, dt: dt)
+                           recenter: GamePad.cameraStickPressed(), mario: gameFrame?.mario, dt: dt, controls: controls)
             if stage != 3 {  // (left the course: the window back, standing on the base)
                 let h = cartridge.window.halfSize.y
                 cartridge.leaveDiorama(RoomPlacement(center: diorama.center + SIMD3(0, h + 0.05, 0),
@@ -252,11 +267,13 @@ final class ImmersiveRenderer: @unchecked Sendable {
         let back = head.columns.2, headUp = head.columns.1
         let levelBack = back - headUp * (back.y >= 0 ? 1 : -1)
         let lookForward = -SIMD3(head.columns.2.x, head.columns.2.y, head.columns.2.z)
+        // (the controllers holding something: their sticks and triggers aren't the game's)
+        let busy = cartridge.holding.union(diorama?.holding ?? []).intersection(controls.keys)
         let dioramaForward = diorama?.forwardInWorld(eyeForward: lookForward)
         link.update { [hands] in
             $0.head = SIMD3(headInView.x, headInView.y, headInView.z); $0.up = up
             $0.facing = SIMD2(levelBack.x, levelBack.z)
-            $0.geometry = geometry; $0.hands = hands; $0.dioramaForward = dioramaForward
+            $0.geometry = geometry; $0.hands = hands; $0.dioramaForward = dioramaForward; $0.busy = busy
         }
 
         let actorFromClip = { (draw: GameFrame.Draw) -> simd_float4x4 in
@@ -523,6 +540,9 @@ final class RoomLink: @unchecked Sendable {
         var stage: Int32 = 0
         /// In a diorama: your forward in the game's world, for the stick to move Mario the way you look
         var dioramaForward: SIMD3<Float>?
+        /// The Sense controllers (by side, 0 left, 1 right) whose grip holds the cartridge, the window or the base:
+        /// their stick and trigger work it, not the game
+        var busy: Set<Int> = []
     }
     private let state = OSAllocatedUnfairLock(initialState: State())
     /// Called (on the room's thread) when the room closes

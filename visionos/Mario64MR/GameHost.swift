@@ -93,11 +93,12 @@ final class GameHost {
         let cartDemo = ProcessInfo.processInfo.arguments.contains("-cart")
         #endif
         let carrier = MarioCarrier()
+        let padReader = PadReader()
         let period = 1.0 / 30
         var deadline = Date.now.timeIntervalSinceReferenceDate
         var frame = 0
         while !Thread.current.isCancelled {
-            var pad = GamePad.read()
+            var pad = padReader.read(busy: self.room.current.busy)
             #if DEBUG
             if demo { pad = Self.demoInput(frame) }
             #endif
@@ -160,7 +161,7 @@ final class GameHost {
             }
             for i in hands.indices where i < 2 {
                 let pinching = hands[i].tracked && hands[i].pinching
-                if pinching, !wasPinching[i], hands[i].palmUp { startFrames = 3 }
+                if pinching, !wasPinching[i], hands[i].palmUp, !hands[i].controller { startFrames = 3 }
                 wasPinching[i] = pinching
             }
             if startFrames > 0 { pad.buttons |= GamePad.start; startFrames -= 1 }

@@ -95,7 +95,7 @@ final class MarioCarrier {
         // Picking him up
         for (i, hand) in hands.enumerated() {
             let began = hand.tracked && hand.pinching && !wasPinching[i]
-            if began, held == nil, seen >= 1,
+            if began, held == nil, seen >= 1, hand.grabsMario,
                simd_distance(hand.pinch, marioInRoom + SIMD3(0, hang * 0.7, 0)) < 0.12 {
                 held = i
                 heldFrom = mode >= 2 ? world(marioInRoom) : position
