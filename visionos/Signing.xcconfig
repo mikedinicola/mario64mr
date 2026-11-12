@@ -1,0 +1,6 @@
+// Your Apple ID's team and a bundle identifier of your own, for running on your Vision Pro. Set them in Xcode
+// (Signing & Capabilities), or put them in Local.xcconfig next to this file (not committed):
+//   DEVELOPMENT_TEAM = ABCDE12345
+//   MARIO64MR_BUNDLE_ID = com.yourname.mario64mr
+MARIO64MR_BUNDLE_ID = local.mario64mr.app
+#include? "Local.xcconfig"

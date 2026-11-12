@@ -1,0 +1,6 @@
+# Made from your ROM by install_mario64mr.py --visionos: never commit
+Build/
+Local.xcconfig
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+DerivedData/
