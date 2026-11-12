@@ -1,5 +1,6 @@
 import ARKit
 import Foundation
+import os
 import simd
 
 /// Your room's surfaces, as triangles in the room (metres; ARKit's origin, on the floor where the space opened).
@@ -58,40 +59,64 @@ struct RoomMesh {
 /// (at most once a second)
 final class RoomScanner: @unchecked Sendable {
     let provider = SceneReconstructionProvider()
-    private var anchors: [UUID: [SIMD3<Float>]] = [:]
+    private var anchors: [UUID: (center: SIMD3<Float>, triangles: [SIMD3<Float>])] = [:]
     private var lastPublished = Date.distantPast
+    private let focusLock = OSAllocatedUnfairLock<SIMD3<Float>>(initialState: .zero)
+    /// Where Mario plays (the window), metres: the game takes only so many triangles (RoomMesh.maxTriangles), and
+    /// the pieces of the room nearest here go first, so the ones he's put on are never the ones left out
+    var focus: SIMD3<Float> {
+        get { focusLock.withLock { $0 } }
+        set { focusLock.withLock { $0 = newValue } }
+    }
 
     static var isSupported: Bool { SceneReconstructionProvider.isSupported }
 
     func run(publish: @escaping (RoomMesh) -> Void) async {
         for await update in provider.anchorUpdates {
             switch update.event {
-            case .added, .updated: anchors[update.anchor.id] = Self.triangles(of: update.anchor)
+            case .added, .updated:
+                let t = update.anchor.originFromAnchorTransform.columns.3
+                anchors[update.anchor.id] = (SIMD3(t.x, t.y, t.z), Self.triangles(of: update.anchor))
             case .removed: anchors[update.anchor.id] = nil
             @unknown default: break
             }
             if Date.now.timeIntervalSince(lastPublished) > 1 {
                 lastPublished = .now
-                publish(RoomMesh(triangles: anchors.values.flatMap { $0 }))
+                let focus = self.focus
+                let near = anchors.values.sorted { simd_distance($0.center, focus) < simd_distance($1.center, focus) }
+                publish(RoomMesh(triangles: near.flatMap { $0.triangles }))
             }
         }
     }
 
+    /// The anchor's faces in the room, each turned to face the way the surface does (its vertices' normals): the
+    /// game takes a triangle's front from its corners' order (counterclockwise: a floor faces up, a ceiling down)
     private static func triangles(of anchor: MeshAnchor) -> [SIMD3<Float>] {
-        let geometry = anchor.geometry, vertices = geometry.vertices, faces = geometry.faces
+        let geometry = anchor.geometry, vertices = geometry.vertices, normals = geometry.normals, faces = geometry.faces
         guard vertices.format == .float3, faces.primitive == .triangle, faces.bytesPerIndex == 4 else { return [] }
         let base = vertices.buffer.contents().advanced(by: vertices.offset)
+        let normalBase = normals.format == .float3 && normals.count == vertices.count
+            ? normals.buffer.contents().advanced(by: normals.offset) : nil
         let transform = anchor.originFromAnchorTransform
         func corner(_ index: UInt32) -> SIMD3<Float> {
             let p = base.advanced(by: Int(index) * vertices.stride).assumingMemoryBound(to: Float.self)
             let world = transform * SIMD4(p[0], p[1], p[2], 1)
             return SIMD3(world.x, world.y, world.z)
         }
+        func normal(_ index: UInt32) -> SIMD3<Float> {
+            guard let normalBase else { return .zero }
+            let n = normalBase.advanced(by: Int(index) * normals.stride).assumingMemoryBound(to: Float.self)
+            let world = transform * SIMD4(n[0], n[1], n[2], 0)
+            return SIMD3(world.x, world.y, world.z)
+        }
         let indices = faces.buffer.contents().assumingMemoryBound(to: UInt32.self)
         var out: [SIMD3<Float>] = []
         out.reserveCapacity(faces.count * 3)
         for f in 0..<faces.count {
-            out += [corner(indices[f * 3]), corner(indices[f * 3 + 1]), corner(indices[f * 3 + 2])]
+            let i = (indices[f * 3], indices[f * 3 + 1], indices[f * 3 + 2])
+            let a = corner(i.0), b = corner(i.1), c = corner(i.2)
+            let facing = normal(i.0) + normal(i.1) + normal(i.2)
+            out += simd_dot(simd_cross(b - a, c - a), facing) < 0 ? [a, c, b] : [a, b, c]
         }
         return out
     }

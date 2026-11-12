@@ -135,6 +135,20 @@ static int room_floor_under(float x,float y,float z) {
     unity_room_end();
     return floor!=NULL;
 }
+/* Out in the room the stick steers by your head, as in the game it steers by the camera: the game camera's yaw
+ * means nothing in the room's coordinates (up on the stick went any way at all, depending on where it had
+ * looked). The host gives the way back towards you from where you look, level, in the room (sm64unity_room_facing) */
+static int room_facing_on;
+static float room_facing[2];
+EXPORT void sm64unity_room_facing(int on, float x, float z) {
+    room_facing_on = on && isfinite(x) && isfinite(z) && x * x + z * z > 1e-6f;
+    if (room_facing_on) { room_facing[0] = x; room_facing[1] = z; }
+}
+/* The camera's yaw for the stick (mario.c, update_mario_joystick_inputs): towards the camera from Mario */
+s16 unity_stick_yaw(s16 camera_yaw) {
+    if (carry_mode != 3 || !room_facing_on) return camera_yaw;
+    return atan2s(room_facing[1], room_facing[0]);
+}
 /* Back into the game where he was taken from, falling */
 static void return_to_game(void) {
     carry_mode=0;

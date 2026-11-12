@@ -46,6 +46,7 @@ int sm64unity_game_hands(const int16_t *triangles, int count);
 float sm64unity_room_floor(float x, float y, float z);
 int sm64unity_carry(int mode, float x, float y, float z, float vx, float vy, float vz);
 int sm64unity_carry_mode(void);
+void sm64unity_room_facing(int on, float x, float z);
 int sm64unity_mario(float *state);
 int sm64unity_mario_on_hand(void);
 void sm64unity_displace(float dx, float dy, float dz);
