@@ -20,6 +20,7 @@ final class GameHost {
 
     @ObservationIgnored let device = MTLCreateSystemDefaultDevice()
     @ObservationIgnored let output = GameFrames()
+    @ObservationIgnored let room = RoomLink()
     @ObservationIgnored private let audio = AudioOutput()
     @ObservationIgnored private var thread: Thread?
 
@@ -88,6 +89,14 @@ final class GameHost {
             #if DEBUG
             if demo { pad = Self.demoInput(frame) }
             #endif
+            // In the room: the level unculled (it's seen from your eyes, not the game camera), billboards facing you
+            let room = self.room.current
+            sm64unity_mr_geometry(room.on ? 1 : 0)
+            if room.on, let head = room.head {
+                sm64unity_billboards(1, head.x, head.y, head.z, room.up.x, room.up.y, room.up.z)
+            } else {
+                sm64unity_billboards(0, 0, 0, 0, 0, 1, 0)
+            }
             sm64unity_audio_buffered(Int32(audio.buffered))
             guard sm64unity_tick(pad.buttons, pad.stickX, pad.stickY) == 1 else {
                 return fail("The game stopped (bridge error \(sm64unity_error()))")
