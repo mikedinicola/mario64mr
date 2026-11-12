@@ -13,8 +13,9 @@ struct RoomPlacement {
     var roomFromWindow: simd_float4x4
     /// Half the opening's width and height, metres (16:9, the 60 fps build's picture)
     var halfSize = SIMD2<Float>(0.6, 0.3375)
-    /// Metres per game unit: Mario (about 160 units tall) is then about 27 cm
-    var scale: Float = 1.0 / 600
+    /// Game units a metre, in the window and in the room: Mario (about 160 units tall) is then about 27 cm
+    static let unitsPerMetre: Float = 600
+    var scale: Float = 1 / RoomPlacement.unitsPerMetre
     /// How far the sky is from the camera, game units (about 30 m)
     var skyDistance: Float = 18000
 
@@ -40,6 +41,15 @@ struct RoomPlacement {
         return roomFromWindow * translate * scaling
     }
 
+    /// The near plane's distance (game units) of a level drawn with `projection` (guPerspective's: clip z is
+    /// a z + b, a = (n + f) / (n - f), b = 2nf / (n - f), so n = b / (a - 1)); the game's usual 100 without one
+    static func near(_ projection: simd_float4x4?) -> Float {
+        guard let p = projection, p.columns.2.w != 0 else { return 100 }
+        let a = p.columns.2.z, b = p.columns.3.z
+        let n = abs(a - 1) > 1e-6 ? b / (a - 1) : 0
+        return n.isFinite && n > 0 ? n : 100
+    }
+
     /// The x narrowing of a game picture `size` pixels wide and high (gfx_adjust_x_for_aspect_ratio)
     static func xScale(_ size: SIMD2<Int32>) -> Float {
         (4.0 / 3.0) / (Float(size.x) / Float(size.y))
@@ -49,5 +59,13 @@ struct RoomPlacement {
     static func roomFromClip(_ projection: simd_float4x4, xScale: Float, roomFromView: simd_float4x4) -> simd_float4x4 {
         let narrowing = simd_float4x4(diagonal: SIMD4(xScale, 1, 1, 1))
         return roomFromView * (narrowing * projection).inverse
+    }
+
+    /// Mario's draws while he's out in the room: his clip space back into the game camera's view space, on into
+    /// the room's game coordinates (the camera undone), and to metres
+    static func actorFromClip(_ projection: simd_float4x4, xScale: Float, camera: simd_float4x4) -> simd_float4x4 {
+        let narrowing = simd_float4x4(diagonal: SIMD4(xScale, 1, 1, 1))
+        let metres = simd_float4x4(diagonal: SIMD4(SIMD3(repeating: 1 / unitsPerMetre), 1))
+        return metres * camera.inverse * (narrowing * projection).inverse
     }
 }

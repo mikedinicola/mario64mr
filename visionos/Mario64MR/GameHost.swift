@@ -92,6 +92,18 @@ final class GameHost {
             // In the room: the level unculled (it's seen from your eyes, not the game camera), billboards facing you
             let room = self.room.current
             sm64unity_mr_geometry(room.on ? 1 : 0)
+            if let triangles = room.roomTriangles {  // (the room, for Mario out in it)
+                self.room.update { $0.roomTriangles = nil }
+                let loaded = triangles.withUnsafeBufferPointer { sm64unity_room_mesh($0.baseAddress, Int32($0.count / 9)) }
+                if loaded < 0 { print("Mario 64 MR: the room didn't load (\(loaded))") }
+            }
+            #if DEBUG
+            if demo, room.on, frame == 2300, let at = room.debugRelease, ProcessInfo.processInfo.arguments.contains("-release") {
+                // Out of the window onto the stand-in table, as a hand would let him go (sm64unity_carry 3)
+                let p = at * RoomPlacement.unitsPerMetre
+                _ = sm64unity_carry(3, p.x, p.y, p.z, 0, 0, 0)
+            }
+            #endif
             if room.on, let head = room.head {
                 sm64unity_billboards(1, head.x, head.y, head.z, room.up.x, room.up.y, room.up.z)
             } else {
@@ -134,11 +146,13 @@ final class GameHost {
 
     #if DEBUG
     /// Launched with -demo (debug builds only): into the game with no controller, for the simulator, which can't
-    /// send a gamepad or keys to the app. Start through the title and file select, then Mario runs and jumps.
+    /// send a gamepad or keys to the app. Start through the title and file select, then Mario runs and jumps
+    /// (with -release, until he's let out into the room at frame 2300, where he stays put).
     private static func demoInput(_ frame: Int) -> GamePad.State {
         var state = GamePad.State()
         if [300, 450, 600].contains(where: { frame >= $0 && frame < $0 + 3 }) { state.buttons = GamePad.start }
-        if frame >= 900 {
+        let released = frame >= 2300 && ProcessInfo.processInfo.arguments.contains("-release")
+        if frame >= 900, !released {
             state.stickY = 80
             state.stickX = Int8(frame / 90 % 2 == 0 ? 30 : -30)
             if frame % 60 < 3 { state.buttons |= GamePad.a }

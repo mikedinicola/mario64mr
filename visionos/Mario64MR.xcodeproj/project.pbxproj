@@ -19,6 +19,7 @@
 		786CA4ED2C07B599D71568B4 /* GameHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9804ACE3F4CB94673186F407 /* GameHost.swift */; };
 		7F41B5B7BE6DBCD6350DE9B2 /* SM64Game.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BE83807C8E67A0F0C77270C6 /* SM64Game.xcframework */; };
 		7FE158CC201E4051FE234B60 /* GameController.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7D08E37159B83E89B4908AFA /* GameController.framework */; };
+		831998582ED4B977FC13FE36 /* RoomMesh.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA91C4F5557E9231F3E72B88 /* RoomMesh.swift */; };
 		882431449D7AE670809B380F /* Goddard.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BF89F80560168B2528B592A0 /* Goddard.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		88811CBC6F281484A61720C5 /* GameShaders.msl in Resources */ = {isa = PBXBuildFile; fileRef = 7ACFB0947ABEBB5BE4664230 /* GameShaders.msl */; };
 		9E4A2B12AC8D5B6F8B735FB7 /* LibSM64.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 4F445DB5C6F9AD8667114E35 /* LibSM64.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -71,6 +72,7 @@
 		C17BF3C984C3F4C5803FE34B /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		CB1DD4AB1EC0CE1344AA1712 /* CompositorServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CompositorServices.framework; path = System/Library/Frameworks/CompositorServices.framework; sourceTree = SDKROOT; };
 		E201BEFE8AF929559A79171F /* ImmersiveRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImmersiveRenderer.swift; sourceTree = "<group>"; };
+		FA91C4F5557E9231F3E72B88 /* RoomMesh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomMesh.swift; sourceTree = "<group>"; };
 		FB1BEFCF61DEC99C3DA05E63 /* Mario64MR-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Mario64MR-Bridging-Header.h"; sourceTree = "<group>"; };
 		"TEMP_EF9F4A92-2CD2-40E4-8D49-5D613D493118" /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -168,6 +170,7 @@
 				7ACFB0947ABEBB5BE4664230 /* GameShaders.msl */,
 				6DE37540EB0552146DC22291 /* GameView.swift */,
 				E201BEFE8AF929559A79171F /* ImmersiveRenderer.swift */,
+				FA91C4F5557E9231F3E72B88 /* RoomMesh.swift */,
 				7F7340C8F92D6C1C7DB67773 /* RoomPlacement.swift */,
 			);
 			path = Renderer;
@@ -262,6 +265,7 @@
 				FD9C9C52B1BB6920FEF587FD /* GameView.swift in Sources */,
 				CCD398FFD74F9D436621B6C3 /* ImmersiveRenderer.swift in Sources */,
 				B6D61905B2673091F5C50683 /* Mario64MRApp.swift in Sources */,
+				831998582ED4B977FC13FE36 /* RoomMesh.swift in Sources */,
 				E7D6770BB438D204A732EEAF /* RoomPlacement.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

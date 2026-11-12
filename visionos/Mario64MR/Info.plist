@@ -31,6 +31,8 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSWorldSensingUsageDescription</key>
+	<string>Mario runs on your room's floor and furniture once you take him out of the window.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
