@@ -1,6 +1,9 @@
 import ARKit
+import CompositorServices
 import Foundation
+import os
 import simd
+import SwiftUI
 
 /// A tracked hand as the game thread needs it (room metres)
 struct HandState: Sendable {
@@ -78,5 +81,86 @@ final class HandTracker: @unchecked Sendable {
             hand.surface += up ? [a, b, c] : [a, c, b]
         }
         return hand
+    }
+}
+
+/// A pinch the system saw you make while looking at something: visionOS gives apps no gaze, only the ray from your
+/// eyes to where you looked as a pinch began (the layer's spatial events). Room metres.
+struct GazePinch: Sendable {
+    let id: Int
+    /// New this frame: the pinch just began
+    var began: Bool
+    /// From your eyes, where you looked when it began
+    let origin: SIMD3<Float>, direction: SIMD3<Float>
+    /// The hand (0 left, 1 right), if the system says
+    let hand: Int?
+    /// Where the pinch is now
+    var position: SIMD3<Float>?
+}
+
+extension GazePinch {
+    /// Which of `hands` made it: as the system says, else the tracked pinch nearest it
+    func hand(in hands: [HandState]) -> Int? {
+        if let hand { return hand }
+        guard let p = position else { return nil }
+        return hands.indices.filter { hands[$0].tracked }
+            .min { simd_distance(hands[$0].pinch, p) < simd_distance(hands[$1].pinch, p) }
+    }
+
+    /// Where it meets the plane z = 0 of `space` (from the room), in that space, if in front of the eyes
+    func hit(_ spaceFromRoom: simd_float4x4) -> SIMD3<Float>? {
+        let o = spaceFromRoom * SIMD4(origin, 1), d = spaceFromRoom * SIMD4(direction, 0)
+        guard abs(d.z) > 1e-5 else { return nil }
+        let t = -o.z / d.z
+        guard t > 0 else { return nil }
+        return SIMD3(o.x + d.x * t, o.y + d.y * t, 0)
+    }
+}
+
+/// Collects the layer's indirect pinches (on the main thread) for the room's render thread
+final class GazePinches: @unchecked Sendable {
+    private struct State {
+        var ids: [SpatialEventCollection.Event.ID: Int] = [:]
+        var next = 0
+        var active: [Int: GazePinch] = [:]
+    }
+    private let state = OSAllocatedUnfairLock<State>(uncheckedState: State())
+
+    /// Listens to `layer`'s spatial events (call on the main thread)
+    @MainActor func listen(to layer: LayerRenderer) {
+        layer.onSpatialEvent = { [weak self] events in self?.receive(events) }
+    }
+
+    @MainActor private func receive(_ events: SpatialEventCollection) {
+        state.withLockUnchecked { state in
+            for event in events where event.kind == .indirectPinch {
+                let position = event.inputDevicePose.map { SIMD3<Float>($0.pose3D.position.vector) }
+                if event.phase != .active {
+                    if let id = state.ids.removeValue(forKey: event.id) { state.active[id] = nil }
+                    continue
+                }
+                if let id = state.ids[event.id] {
+                    if let position { state.active[id]?.position = position }
+                    continue
+                }
+                guard let ray = event.selectionRay else { continue }
+                let id = state.next
+                state.next += 1
+                state.ids[event.id] = id
+                let hand: Int? = switch event.chirality { case .left: 0; case .right: 1; default: nil }
+                state.active[id] = GazePinch(id: id, began: true, origin: SIMD3<Float>(ray.origin.vector),
+                                             direction: simd_normalize(SIMD3<Float>(ray.direction.vector)),
+                                             hand: hand, position: position)
+            }
+        }
+    }
+
+    /// The pinches held now, those begun since the last call marked `began`
+    func take() -> [GazePinch] {
+        state.withLockUnchecked { state in
+            let pinches = state.active.values.sorted { $0.id < $1.id }
+            for id in state.active.keys { state.active[id]?.began = false }
+            return pinches
+        }
     }
 }

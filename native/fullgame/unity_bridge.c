@@ -34,7 +34,7 @@ static float vertices[MAX_FLOATS];
 static float projection[16], batch_projections[MAX_BATCHES][16];
 static int object_tag, batch_tags[MAX_BATCHES], game_stage;
 static float camera_matrix[16], camera_current[16], cursor_depth;
-static int mr_geometry;
+static int mr_geometry, draw_far;
 static struct UnityTexture *textures;
 static int texture_count, texture_capacity, selected_tile;
 static int16_t audio_samples[4096];
@@ -165,6 +165,7 @@ void unity_set_camera(const float *matrix) {
 void unity_set_camera_interpolated(const float *matrix) { memcpy(camera_matrix,matrix,sizeof(camera_matrix)); }
 void unity_set_projection(const float *matrix) { memcpy(projection,matrix,sizeof(projection)); }
 int unity_is_mr(void) { return mr_geometry; }
+int unity_draw_far(void) { return draw_far; }
 EXPORT int sm64unity_init(const char *save_path) {
     if (initialized) return 1;
     if (!save_path || strlen(save_path) >= sizeof(gCLIOpts.SavePath)) return 0;
@@ -189,6 +190,9 @@ EXPORT void sm64unity_cursor(int enabled, float x, float y) {
     cursor_enabled=enabled; cursor_x=x<0?0:x>319?319:x; cursor_y=y<0?0:y>239?239:y;
 }
 EXPORT void sm64unity_mr_geometry(int enabled) { mr_geometry=enabled; }
+/* A diorama is seen whole, from well outside the game camera: objects past their drawing distance from Mario
+ * are still drawn (only drawn: they stay "far away" to the game, which updates them as it always has). */
+EXPORT void sm64unity_draw_far(int enabled) { draw_far=enabled; }
 EXPORT void sm64unity_hand_depth(float depth) { cursor_depth=depth; }
 EXPORT int sm64unity_stage(void) { return game_stage; }
 /* Observe the original face joint for input verification/diagnostics. An id

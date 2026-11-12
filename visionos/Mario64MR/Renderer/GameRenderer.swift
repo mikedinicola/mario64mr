@@ -161,6 +161,43 @@ final class GameRenderer: NSObject, MTKViewDelegate {
         }
     }
 
+    /// The level as a diorama (Diorama): only its level and Mario, from `roomFromWorld` (the game's world, units, into
+    /// the room) through the game camera; cut away below `table`. No sky, no HUD.
+    func encodeDiorama(_ frame: GameFrame, into encoder: MTLRenderCommandEncoder, eye: RoomEye,
+                       roomFromWorld: simd_float4x4, table: Float, xScale: Float) {
+        guard let vertices = frame.vertices else { return }
+        var number = frame.number
+        var eye = eye
+        encoder.setFragmentBytes(&number, length: 4, index: 0)
+        encoder.setFragmentBytes(&eye, length: MemoryLayout<RoomEye>.stride, index: 1)
+        encoder.setVertexBytes(&eye, length: MemoryLayout<RoomEye>.stride, index: 2)
+        encoder.setCullMode(.none)
+        let roomFromView = roomFromWorld * frame.camera.inverse
+        let narrowing = simd_float4x4(diagonal: SIMD4(xScale, 1, 1, 1))
+        var cache: [SIMD16<Float>: simd_float4x4] = [:]
+        for draw in frame.draws where draw.kind == .world {
+            guard prepare(draw, encoder: encoder) else { continue }
+            let key = draw.projectionKey
+            let m = cache[key] ?? roomFromView * (narrowing * draw.projection).inverse
+            cache[key] = m
+            var room = RoomDraw(roomFromClip: m, kind: SIMD4(4, table.bitPattern, 0, 0))
+            encoder.setVertexBytes(&room, length: MemoryLayout<RoomDraw>.stride, index: 1)
+            encoder.setFragmentBytes(&room, length: MemoryLayout<RoomDraw>.stride, index: 2)
+            encoder.setVertexBuffer(vertices, offset: draw.firstFloat * 4, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: draw.vertexCount)
+        }
+        // See-through surfaces (lava, water) write no depth, and with no sky behind them, where nothing of the level
+        // is either, they'd be left at depth 0, which the compositor takes as empty: drawn again into depth only
+        for draw in frame.draws where draw.kind == .world && draw.blend && draw.depthTest {
+            guard prepare(draw, encoder: encoder, depthOnly: true), let m = cache[draw.projectionKey] else { continue }
+            var room = RoomDraw(roomFromClip: m, kind: SIMD4(4, table.bitPattern, 0, 0))
+            encoder.setVertexBytes(&room, length: MemoryLayout<RoomDraw>.stride, index: 1)
+            encoder.setFragmentBytes(&room, length: MemoryLayout<RoomDraw>.stride, index: 2)
+            encoder.setVertexBuffer(vertices, offset: draw.firstFloat * 4, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: draw.vertexCount)
+        }
+    }
+
     private lazy var roomMeshPipeline: MTLRenderPipelineState? = {
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = library.makeFunction(name: "room_mesh_vertex")
@@ -185,10 +222,11 @@ final class GameRenderer: NSObject, MTKViewDelegate {
     // ---------------------------------------------------------------- Both
 
     /// The draw's pipeline, depth, textures and samplers
-    private func prepare(_ draw: GameFrame.Draw, encoder: MTLRenderCommandEncoder) -> Bool {
-        guard let pipeline = pipeline(draw.shaderId, blend: draw.blend) else { return false }
+    /// (`depthOnly`: into depth, where it shows, and nothing else)
+    private func prepare(_ draw: GameFrame.Draw, encoder: MTLRenderCommandEncoder, depthOnly: Bool = false) -> Bool {
+        guard let pipeline = pipeline(draw.shaderId, blend: draw.blend, depthOnly: depthOnly) else { return false }
         encoder.setRenderPipelineState(pipeline)
-        encoder.setDepthStencilState(depthState(test: draw.depthTest, write: draw.depthWrite))
+        encoder.setDepthStencilState(depthState(test: draw.depthTest, write: draw.depthWrite || depthOnly))
         if target.room {  // (reversed depth: nearer is more)
             encoder.setDepthBias(draw.decal ? 4 : 0, slopeScale: draw.decal ? 2 : 0, clamp: 0)
         } else {
@@ -201,8 +239,8 @@ final class GameRenderer: NSObject, MTKViewDelegate {
         return true
     }
 
-    private func pipeline(_ shaderId: UInt32, blend: Bool) -> MTLRenderPipelineState? {
-        let key = UInt64(shaderId) | (blend ? 1 << 32 : 0)
+    private func pipeline(_ shaderId: UInt32, blend: Bool, depthOnly: Bool = false) -> MTLRenderPipelineState? {
+        let key = UInt64(shaderId) | (blend ? 1 << 32 : 0) | (depthOnly ? 1 << 48 : 0)
         if let pipeline = pipelines[key] { return pipeline }
         do {
             let constants = MTLFunctionConstantValues()
@@ -210,6 +248,8 @@ final class GameRenderer: NSObject, MTKViewDelegate {
             constants.setConstantValue(&id, type: .uint, index: 0)
             var opaque = !blend  // (in the room, alpha is coverage over the passthrough: opaque draws cover it)
             constants.setConstantValue(&opaque, type: .bool, index: 1)
+            var depthOnly = depthOnly
+            constants.setConstantValue(&depthOnly, type: .bool, index: 2)
             let descriptor = MTLRenderPipelineDescriptor()
             descriptor.vertexFunction = try library.makeFunction(
                 name: target.room ? "game_vertex_room" : "game_vertex", constantValues: constants)
@@ -218,7 +258,8 @@ final class GameRenderer: NSObject, MTKViewDelegate {
             descriptor.depthAttachmentPixelFormat = target.depthFormat
             let color = descriptor.colorAttachments[0]!
             color.pixelFormat = target.colorFormat
-            if blend {  // glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            if depthOnly { color.writeMask = [] }
+            if blend && !depthOnly {  // glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
                 color.isBlendingEnabled = true
                 color.sourceRGBBlendFactor = .sourceAlpha
                 color.destinationRGBBlendFactor = .oneMinusSourceAlpha
@@ -268,5 +309,13 @@ final class GameRenderer: NSObject, MTKViewDelegate {
         let state = device.makeSamplerState(descriptor: descriptor)
         samplers[s] = state
         return state
+    }
+}
+
+private extension GameFrame.Draw {
+    /// The draw's projection, as a key: draws through the same one share its unprojection
+    var projectionKey: SIMD16<Float> {
+        let c = projection.columns
+        return SIMD16(lowHalf: SIMD8(lowHalf: c.0, highHalf: c.1), highHalf: SIMD8(lowHalf: c.2, highHalf: c.3))
     }
 }

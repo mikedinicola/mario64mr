@@ -9,7 +9,7 @@ final class RoomProps {
     private struct PropDraw {
         var model: simd_float4x4
         var color: SIMD4<Float>
-        var flags: SIMD4<UInt32>  // x lit, y only through the opening, z alpha tested
+        var flags: SIMD4<UInt32>  // x lit, y only through the opening, z alpha tested, w blended into depth
     }
     private struct TitleDraw {
         var roomFromGd: simd_float4x4
@@ -33,6 +33,8 @@ final class RoomProps {
     private let white: MTLTexture
     private let label: MTLTexture
     private let pressStart: MTLTexture
+    private let ring: MTLTexture
+    private let pill: MTLTexture
     private var samplers: [Int: MTLSamplerState] = [:]
 
     /// The cartridge's plastic, and the backdrop behind the face (linear)
@@ -96,6 +98,8 @@ final class RoomProps {
         label = custom.flatMap { try? loader.newTexture(URL: $0, options: options) }
             ?? (try? loader.newTexture(cgImage: Self.plainLabel(), options: options)) ?? white
         pressStart = (try? loader.newTexture(cgImage: Self.pressStartImage(), options: options)) ?? white
+        ring = (try? loader.newTexture(cgImage: Self.ringImage(), options: options)) ?? white
+        pill = (try? loader.newTexture(cgImage: Self.pillImage(), options: options)) ?? white
     }
 
     // ---------------------------------------------------------------- The cartridge and the frame
@@ -112,7 +116,7 @@ final class RoomProps {
     }
 
     func encodeFrame(_ window: RoomPlacement, into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
-        let h = window.halfSize, t: Float = 0.018 + 0.012 * h.x / 0.6, d: Float = 0.03
+        let h = window.halfSize, t = window.frameThickness, d: Float = 0.03
         let bars: [(SIMD3<Float>, SIMD3<Float>)] = [
             (SIMD3(0, h.y + t / 2, 0), SIMD3(2 * h.x + 2 * t, t, d)), (SIMD3(0, -h.y - t / 2, 0), SIMD3(2 * h.x + 2 * t, t, d)),
             (SIMD3(-h.x - t / 2, 0, 0), SIMD3(t, 2 * h.y, d)), (SIMD3(h.x + t / 2, 0, 0), SIMD3(t, 2 * h.y, d)),
@@ -121,6 +125,35 @@ final class RoomProps {
             drawBox(window.roomFromWindow * Self.translate(at.x, at.y, at.z) * Self.scale(size), color: plastic,
                     into: encoder, eye: eye)
         }
+    }
+
+    /// The handle under the window, as visionOS draws its windows' bar: a soft white pill, brighter and a little
+    /// wider while held
+    func encodeHandle(_ window: RoomPlacement, held: Bool, into encoder: MTLRenderCommandEncoder,
+                      eye: GameRenderer.RoomEye) {
+        let handle = window.handle, grow: Float = held ? 1.15 : 1
+        let model = window.roomFromWindow * Self.translate(handle.center.x, handle.center.y, 0)
+            * Self.scale(SIMD3(handle.half.x * 2 * grow, handle.half.y * 2 * grow, 1))
+        draw(quad, count: 6, model: model, color: SIMD4(1, 1, 1, held ? 0.95 : 0.6), texture: pill,
+             flags: SIMD4(0, 0, 0, 1), blend: true, depth: depthWrite, into: encoder, eye: eye)
+    }
+
+    /// The glowing circle on a table, `radius` metres, facing up: where the window goes down into a diorama, and the
+    /// diorama's base
+    func encodeCircle(at center: SIMD3<Float>, radius: Float, glow: Float, into encoder: MTLRenderCommandEncoder,
+                      eye: GameRenderer.RoomEye) {
+        // (the quad faces +z: turned to face up, a millimetre over the table)
+        let flat = simd_float4x4(SIMD4(1, 0, 0, 0), SIMD4(0, 0, -1, 0), SIMD4(0, 1, 0, 0),
+                                 SIMD4(center.x, center.y + 0.002, center.z, 1))
+        let model = flat * Self.scale(SIMD3(radius * 2 * Self.ringMargin, radius * 2 * Self.ringMargin, 1))
+        // Twice: once over everything, dimmer, so it still shows where the level reaching out of the window (or the
+        // room's own surfaces, a little above the table) is in front of it; then depth tested, so where nothing is
+        // in front it's brighter, and in the depth buffer where it shows: visionOS reprojects each frame to where
+        // your head is by its depth, and what has none it takes for infinitely far, so it would swim and flicker
+        draw(quad, count: 6, model: model, color: SIMD4(0.55, 0.85, 1, glow * 0.55), texture: ring,
+             flags: SIMD4(0, 0, 0, 0), blend: true, depth: depthOff, into: encoder, eye: eye)
+        draw(quad, count: 6, model: model, color: SIMD4(0.55, 0.85, 1, glow * 0.6), texture: ring,
+             flags: SIMD4(0, 0, 0, 1), blend: true, depth: depthWrite, into: encoder, eye: eye)
     }
 
     // ---------------------------------------------------------------- The title screen
@@ -166,8 +199,8 @@ final class RoomProps {
         let blink = Float(0.65 + 0.35 * cos(time * 4))
         let quad = window.roomFromWindow * Self.translate(label.center.x, label.center.y, 0.004)
             * Self.scale(SIMD3(label.half.x * 2, label.half.y * 2, 1))
-        drawQuad(quad, color: SIMD4(1, 1, 1, blink), texture: pressStart, flags: SIMD4(0, 0, 0, 0), blend: true,
-                 into: encoder, eye: eye)
+        draw(self.quad, count: 6, model: quad, color: SIMD4(1, 1, 1, blink), texture: pressStart,
+             flags: SIMD4(0, 0, 0, 1), blend: true, depth: depthWrite, into: encoder, eye: eye)
     }
 
     /// Goddard's eye space into the room: its camera at the game camera's place in front of the window (where its
@@ -202,9 +235,10 @@ final class RoomProps {
     }
 
     private func draw(_ mesh: MTLBuffer, count: Int, model: simd_float4x4, color: SIMD4<Float>, texture: MTLTexture,
-                      flags: SIMD4<UInt32>, blend: Bool, into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
+                      flags: SIMD4<UInt32>, blend: Bool, depth: MTLDepthStencilState? = nil,
+                      into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
         encoder.setRenderPipelineState(blend ? blended : opaque)
-        encoder.setDepthStencilState(blend ? depthTestOnly : depthWrite)
+        encoder.setDepthStencilState(depth ?? (blend ? depthTestOnly : depthWrite))
         encoder.setCullMode(.none)
         var d = PropDraw(model: model, color: color, flags: flags), e = eye
         encoder.setVertexBuffer(mesh, offset: 0, index: 0)
@@ -224,6 +258,7 @@ final class RoomProps {
         d.minFilter = .linear
         d.magFilter = .linear
         d.mipFilter = .linear
+        d.maxAnisotropy = 16  // (the circle on the table is mostly seen at a low angle)
         d.sAddressMode = clamp.x ? .clampToEdge : mirror.x ? .mirrorRepeat : .repeat
         d.tAddressMode = clamp.y ? .clampToEdge : mirror.y ? .mirrorRepeat : .repeat
         let s = device.makeSamplerState(descriptor: d)
@@ -275,6 +310,59 @@ final class RoomProps {
             UIColor(white: 0.32, alpha: 1).setFill(); UIRectFill(CGRect(x: 0, y: 0, width: 256, height: 200))
             UIColor(white: 0.86, alpha: 1).setFill(); UIRectFill(CGRect(x: 10, y: 10, width: 236, height: 180))
         }
+    }
+
+    /// A white capsule filling the picture (its ends round), soft-edged
+    private static func pillImage() -> CGImage {
+        let w = 512, h = 64
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+        let r = Float(h) / 2 - 2
+        for y in 0..<h {
+            for x in 0..<w {
+                let px = Float(x) + 0.5, py = Float(y) + 0.5
+                let cx = min(max(px, Float(h) / 2), Float(w) - Float(h) / 2)
+                let d = ((px - cx) * (px - cx) + (py - Float(h) / 2) * (py - Float(h) / 2)).squareRoot()
+                let a = 1 - simd_smoothstep(r - 1.5, r + 1.5, d)
+                let i = (y * w + x) * 4
+                pixels[i] = 255; pixels[i + 1] = 255; pixels[i + 2] = 255; pixels[i + 3] = UInt8(a * 255)
+            }
+        }
+        let provider = CGDataProvider(data: Data(pixels) as CFData)!
+        return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                       space: CGColorSpaceCreateDeviceRGB(),
+                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
+    }
+
+    /// How far past the ring the circle's picture reaches (its half width over the ring's radius), so the glow
+    /// fades out before the picture's edge
+    private static let ringMargin: Float = 1.45
+
+    /// A ring of light (radius 1 / ringMargin of the picture's half width) glowing out on both sides, a faint fill
+    /// inside, and a dark band just outside it so it stands out on a light table, all soft-edged (a hard edge
+    /// shimmers at a low angle)
+    private static func ringImage() -> CGImage {
+        let size = 1024
+        var pixels = [UInt8](repeating: 0, count: size * size * 4)
+        for y in 0..<size {
+            for x in 0..<size {
+                let dx = (Float(x) + 0.5) / Float(size) * 2 - 1, dy = (Float(y) + 0.5) / Float(size) * 2 - 1
+                let r = (dx * dx + dy * dy).squareRoot() * ringMargin
+                let ring = exp(-pow((r - 1) / 0.045, 2)), glow = exp(-pow((r - 1) / 0.16, 2)) * 0.6
+                let fill = 0.18 * (1 - simd_smoothstep(0.9, 1.0, r))
+                let light = min(1, ring + glow + fill), dark = 0.4 * exp(-pow((r - 1.12) / 0.08, 2))
+                // (the light over the dark band)
+                let a = light + dark * (1 - light), v = a > 0 ? light / a : 1
+                let i = (y * size + x) * 4
+                let c = UInt8(v * 255)
+                pixels[i] = c; pixels[i + 1] = c; pixels[i + 2] = c; pixels[i + 3] = UInt8(a * 255)
+            }
+        }
+        let provider = CGDataProvider(data: Data(pixels) as CFData)!
+        return CGImage(width: size, height: size, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: size * 4,
+                       space: CGColorSpaceCreateDeviceRGB(),
+                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
     }
 
     private static func pressStartImage() -> CGImage {

@@ -221,6 +221,40 @@ def prepare(root, rom, sixty=True, external_data=True):
                          '    mtxf_lookat(cameraTransform, unityPos, node->focus, node->roll); }\n    unity_set_camera(&cameraTransform[0][0]);')
     graph = replace_once(graph, '    geo = node->sharedChild;',
                          '    if (unity_is_mr()) return TRUE;\n    geo = node->sharedChild;')
+    # Levels split into rooms (the castle, Big Boo's Haunt, Hazy Maze Cave) draw the room under Mario and those
+    # next to it. A diorama draws them all: rooms share pieces (a wall, a painting, water), each drawn once
+    graph = graph.replace('#include "game/object_list_processor.h"\n',
+                          '#include "game/object_list_processor.h"\n#include "game/object_helpers.h"\nextern int unity_draw_far(void);\n'
+                          'static int unity_all_rooms, unity_seen_count;\nstatic struct { const void *what; u32 how; } unity_seen[1024];\n'
+                          'static int unity_seen_before(const void *what, u32 how) {\n'
+                          '    s32 i;\n    if (!unity_all_rooms) return FALSE;\n'
+                          '    for (i = 0; i < unity_seen_count; i++) if (unity_seen[i].what == what && unity_seen[i].how == how) return TRUE;\n'
+                          '    if (unity_seen_count < 1024) { unity_seen[unity_seen_count].what = what; unity_seen[unity_seen_count++].how = how; }\n'
+                          '    return FALSE;\n}\n', 1)
+    graph = replace_once(graph, """    for (i = 0; selectedChild != NULL && node->selectedCase > i; i++) {
+        selectedChild = selectedChild->next;
+    }""", """    if (unity_draw_far() && (void *) node->fnNode.func == (void *) geo_switch_area && selectedChild != NULL) {
+        struct GraphNode *room = selectedChild;
+        unity_all_rooms = TRUE;
+        unity_seen_count = 0;
+        do {
+            geo_process_node_and_siblings(room);
+            room = room->next;
+        } while (room != selectedChild);
+        unity_all_rooms = FALSE;
+        return;
+    }
+    for (i = 0; selectedChild != NULL && node->selectedCase > i; i++) {
+        selectedChild = selectedChild->next;
+    }""")
+    graph = replace_once(graph, """static void geo_process_display_list(struct GraphNodeDisplayList *node) {
+    if (node->displayList != NULL) {
+        geo_append_display_list(node->displayList, node->node.flags >> 8);""", """static void geo_process_display_list(struct GraphNodeDisplayList *node) {
+    if (node->displayList != NULL && !unity_seen_before(node->displayList, node->node.flags >> 8)) {
+        geo_append_display_list(node->displayList, node->node.flags >> 8);""")
+    graph = replace_once(graph, """static void geo_process_generated_list(struct GraphNodeGenerated *node) {
+    if (node->fnNode.func != NULL) {""", """static void geo_process_generated_list(struct GraphNodeGenerated *node) {
+    if (node->fnNode.func != NULL && !unity_seen_before((void *) node->fnNode.func, node->parameter)) {""")
     graph = 'extern void unity_camera_further(float *pos, const float *focus);\nextern int unity_mario_outside(void);\nextern int unity_camera_frozen(void);\nextern void unity_room_begin(void);\nextern void unity_room_end(void);\n' + graph
     graph = replace_once(graph, '    if (node->fnNode.func != NULL) {\n        node->fnNode.func(GEO_CONTEXT_RENDER, &node->fnNode.node, gMatStack[gMatStackIndex]);\n    }\n    mtxf_rotate_xy',
                          '    if (node->fnNode.func != NULL && !unity_camera_frozen()) {\n        node->fnNode.func(GEO_CONTEXT_RENDER, &node->fnNode.node, gMatStack[gMatStackIndex]);\n    }\n    mtxf_rotate_xy')
@@ -298,6 +332,71 @@ def prepare(root, rom, sixty=True, external_data=True):
     interaction = replace_once(interaction, 'void mario_process_interactions(struct MarioState *m) {',
                                'void mario_process_interactions(struct MarioState *m) {\n    if (unity_mario_outside()) { m->marioObj->oInteractStatus=0; return; }')
     (root / "src/game/interaction.c").write_text(interaction)
+    # Seen as a diorama the whole level is in view: objects past their drawing distance from Mario are still drawn
+    # (unity_draw_far), though the game goes on treating them as far away (their updates, unchanged)
+    behavior = original("src/engine/behavior_script.c")
+    behavior = 'extern int unity_draw_far(void);\n' + behavior
+    behavior = replace_once(behavior, """                // Out of render distance, hide the object.
+                gCurrentObject->header.gfx.node.flags &= ~GRAPH_RENDER_ACTIVE;
+                gCurrentObject->activeFlags |= ACTIVE_FLAG_FAR_AWAY;""", """                // Out of render distance, hide the object.
+                if (!unity_draw_far()) {
+                    gCurrentObject->header.gfx.node.flags &= ~GRAPH_RENDER_ACTIVE;
+                } else if (gCurrentObject->oHeldState == HELD_FREE) {
+                    gCurrentObject->header.gfx.node.flags |= GRAPH_RENDER_ACTIVE;
+                }
+                gCurrentObject->activeFlags |= ACTIVE_FLAG_FAR_AWAY;""")
+    (root / "src/engine/behavior_script.c").write_text(behavior)
+    obj_behaviors = original("src/game/obj_behaviors.c")
+    obj_behaviors = 'extern int unity_draw_far(void);\n' + obj_behaviors
+    obj_behaviors = replace_once(obj_behaviors, '    if (is_point_within_radius_of_mario(objX, objY, objZ, dist) == TRUE) {\n#endif\n        obj->header.gfx.node.flags &= ~GRAPH_RENDER_INVISIBLE;',
+                                 '    if (unity_draw_far() || is_point_within_radius_of_mario(objX, objY, objZ, dist) == TRUE) {\n#endif\n        obj->header.gfx.node.flags &= ~GRAPH_RENDER_INVISIBLE;')
+    (root / "src/game/obj_behaviors.c").write_text(obj_behaviors)
+    # Behaviours hiding themselves by distance stay shown, and spawners (coins, Goombas, fish, Fwooshes, Pokeys,
+    # fire bars, ...) load their objects at any distance and keep them: the sites of sm64ex's own NODRAWINGDISTANCE,
+    # at run time. (Not the Lakitu and the water bomb cannon: loaded, they'd go for Mario from anywhere. Nor those
+    # changing what happens: Heave-Ho, Snufit bullets, butterflies, fish respawning.)
+    far = "unity_draw_far() || "
+    near = "!unity_draw_far() && "
+    behaviors = {
+        "king_bobomb": [("    if (o->oDistanceToMario < 5000.0f)\n", far)],
+        "coin": [("            if (o->oDistanceToMario < 2000.0f) {", far), ("            if (o->oDistanceToMario > 2100.0f)", near)],
+        "goomba": [("        if (o->oDistanceToMario < 3000.0f) {", far), ("    } else if (o->oDistanceToMario > 4000.0f) {", near)],
+        "fish": [("    if (o->oDistanceToMario < minDistToMario || gCurrLevelNum == LEVEL_SA) {", far)],
+        "bub": [("    if (o->oDistanceToMario < 1500.0f) {", far)],
+        "cloud": [("    if (o->oDistanceToMario < 2000.0f) {", far), ("    if (o->oDistanceToMario > 2500.0f) {", near)],
+        "pokey": [("    if (o->oDistanceToMario < 2000.0f) {", far), ("    } else if (o->oDistanceToMario > 2500.0f) {", near)],
+        "lll_rotating_hex_flame": [("    if (o->oDistanceToMario < 3000.0f)", far), ("    if (o->oDistanceToMario > 3200.0f)", near)],
+        "lll_floating_wood_piece": [("            if (o->oDistanceToMario < 2500.0f) {", far), ("            if (o->oDistanceToMario > 2600.0f)", near)],
+        "chain_chomp": [("    if (o->oDistanceToMario < 3000.0f) {", far),
+                        ("    if (o->oChainChompReleaseStatus == CHAIN_CHOMP_NOT_RELEASED && o->oDistanceToMario > 4000.0f) {", near)],
+    }
+    for name, edits in behaviors.items():
+        path = f"src/game/behaviors/{name}.inc.c"
+        text = original(path)
+        for line, gate in edits:
+            head = line[:len(line) - len(line.lstrip())]
+            cond = line.lstrip()
+            if cond.startswith("} else if ("):
+                new = head + "} else if (" + gate + cond[len("} else if ("):]
+            else:
+                new = head + "if (" + gate + cond[len("if ("):]
+            guarded = "#ifndef NODRAWINGDISTANCE\n" + line
+            text = (replace_once(text, guarded, "#ifndef NODRAWINGDISTANCE\n" + new) if guarded in text
+                    else replace_once(text, line, new))
+        (root / path).write_text("extern int unity_draw_far(void);\n" + text)
+    piranha = original("src/game/behaviors/piranha_plant.inc.c")
+    piranha = replace_once(piranha, "        if (gMarioObject->oPosY > 3400.0f)\n            cur_obj_hide();",
+                           "        if (gMarioObject->oPosY > 3400.0f && !unity_draw_far())\n            cur_obj_hide();")
+    (root / "src/game/behaviors/piranha_plant.inc.c").write_text("extern int unity_draw_far(void);\n" + piranha)
+    whirlpool = original("src/game/behaviors/whirlpool.inc.c")
+    whirlpool = replace_once(whirlpool, "    } else {\n        o->header.gfx.node.flags |= GRAPH_RENDER_INVISIBLE;\n        gEnvFxBubbleConfig[ENVFX_STATE_PARTICLECOUNT] = 0;",
+                             "    } else {\n        if (unity_draw_far()) o->header.gfx.node.flags &= ~GRAPH_RENDER_INVISIBLE;\n"
+                             "        else o->header.gfx.node.flags |= GRAPH_RENDER_INVISIBLE;\n        gEnvFxBubbleConfig[ENVFX_STATE_PARTICLECOUNT] = 0;")
+    (root / "src/game/behaviors/whirlpool.inc.c").write_text("extern int unity_draw_far(void);\n" + whirlpool)
+    # (with every spawner loaded, sm64ex's larger object pool: its NODRAWINGDISTANCE size)
+    pool = original("src/game/object_list_processor.h")
+    pool = replace_once(pool, "#ifdef NODRAWINGDISTANCE\n#define OBJECT_POOL_CAPACITY 960", "#if 1\n#define OBJECT_POOL_CAPACITY 960")
+    (root / "src/game/object_list_processor.h").write_text(pool)
     # Levels split into rooms (the castle) draw the one under Mario: carried, or out in the room (whose
     # coordinates mean nothing in the level), he keeps the one he was taken from
     helpers = original("src/game/object_helpers.c")
@@ -305,6 +404,27 @@ def prepare(root, rom, sixty=True, external_data=True):
     helpers = replace_once(helpers, '        if (gMarioObject == NULL) {\n            switchCase->selectedCase = 0;\n        } else {',
                            '        if (unity_mario_carried()) {\n        } else if (gMarioObject == NULL) {\n'
                            '            switchCase->selectedCase = 0;\n        } else {')
+    helpers = 'extern int unity_draw_far(void);\n' + helpers
+    helpers = replace_once(helpers, """        } else {
+            cur_obj_disable_rendering();
+            o->activeFlags |= ACTIVE_FLAG_IN_DIFFERENT_ROOM;""", """        } else {
+            if (unity_draw_far()) cur_obj_enable_rendering();
+            else cur_obj_disable_rendering();
+            o->activeFlags |= ACTIVE_FLAG_IN_DIFFERENT_ROOM;""")
+    helpers = replace_once(helpers, """    } else {
+        cur_obj_hide();
+        return TRUE;
+    }
+}
+
+Gfx *geo_offset_klepto_held_object(""", """    } else {
+        if (unity_draw_far()) cur_obj_unhide();
+        else cur_obj_hide();
+        return TRUE;
+    }
+}
+
+Gfx *geo_offset_klepto_held_object(""")
     (root / "src/game/object_helpers.c").write_text(helpers)
     # In MR the window can be looked into from the side: the sky extends well beyond the screen (more tiles of
     # its panorama around the original 3x3, wrapping round, its top and bottom rows repeated)
@@ -346,6 +466,8 @@ def prepare(root, rom, sixty=True, external_data=True):
     sky = sky.replace('extern int unity_is_mr(void);\n', 'extern int unity_is_mr(void);\nextern void unity_note_sky(int background, int color);\n', 1)
     (root / "src/game/skybox.c").write_text(sky)
     surface = original("src/engine/surface_load.c") + '\n#include "pc/unity_room.inc.h"\n'
+    surface = 'extern int unity_draw_far(void);\n' + replace_once(surface, "#ifndef NODRAWINGDISTANCE\n    if (marioDist < gCurrentObject->oDrawingDistance) {",
+                                                               "#ifndef NODRAWINGDISTANCE\n    if (unity_draw_far() || marioDist < gCurrentObject->oDrawingDistance) {")
     (root / "src/engine/surface_load.c").write_text(surface)
     (root / "src/pc/unity_room.inc.c").unlink(missing_ok=True)
     # The PC port's options menu (R in the pause menu) holds Mario 64 MR's own options instead of its menus

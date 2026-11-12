@@ -31,6 +31,7 @@ const uint8_t *sm64unity_texture(int id, int *w, int *h, int *version);
 int sm64unity_sky(int *color);
 const char *sm64unity_sky_tile(int background, int index);
 void sm64unity_mr_geometry(int enabled);
+void sm64unity_draw_far(int enabled);
 
 const int16_t *sm64unity_audio(int *count);
 void sm64unity_audio_buffered(int frames);

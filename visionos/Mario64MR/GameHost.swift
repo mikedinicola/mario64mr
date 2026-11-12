@@ -1,6 +1,7 @@
 import Foundation
 import Metal
 import Observation
+import simd
 
 /// Runs the game (SM64Game) on a thread of its own at 30 game frames a second: the pad in, the frame's sound out to
 /// AudioOutput, the frame's draw calls out to `output` for GameRenderer.
@@ -110,6 +111,8 @@ final class GameHost {
                 continue
             }
             sm64unity_mr_geometry(room.on ? 1 : 0)
+            // (a diorama is seen whole: nothing left out for being far from Mario)
+            sm64unity_draw_far(room.on && room.geometry?.diorama == true ? 1 : 0)
             if let triangles = room.roomTriangles {  // (the room, for Mario out in it)
                 self.room.update { $0.roomTriangles = nil }
                 let loaded = triangles.withUnsafeBufferPointer { sm64unity_room_mesh($0.baseAddress, Int32($0.count / 9)) }
@@ -117,7 +120,7 @@ final class GameHost {
                 carrier.roomHasSurfaces = loaded > 0
             }
             // Your hands and Mario
-            if room.on, let geometry = room.geometry {
+            if room.on, let geometry = room.geometry, !geometry.diorama {
                 var hands = room.hands
                 #if DEBUG
                 if demo, carryDemo { hands = demoHand(frame, carrier: carrier, geometry: geometry, to: room.debugRelease) }
@@ -133,6 +136,13 @@ final class GameHost {
             #if DEBUG
             if cartDemo, stage == 2 || stage == 4, frame % 90 < 3 { pad.buttons |= GamePad.start }
             #endif
+            self.room.update { $0.stage = stage }
+            // A diorama: the stick moves Mario the way you look (not the way the game camera does)
+            if room.on, let forward = room.dioramaForward {
+                Self.turnStick(&pad, toward: forward)
+                // (and the camera stick turns and zooms the diorama, not the game camera: Diorama.update)
+                pad.buttons &= ~(GamePad.cUp | GamePad.cDown | GamePad.cLeft | GamePad.cRight)
+            }
             if let geometry = room.geometry, room.on, geometry.open, stage == 1, let title {
                 let (cursors, start) = titleHands.update(hands: hands, geometry: geometry, frame: titleFrame)
                 if start { startFrames = 3 }
@@ -177,9 +187,14 @@ final class GameHost {
             // draws this tick's own, shown half a tick later
             var between = maker.make()
             between.title = titleFrame
+            var marioState = [Float](repeating: 0, count: 8)
+            if sm64unity_mario(&marioState) != 0, sm64unity_carry_mode() < 2 {
+                between.mario = SIMD3(marioState[0], marioState[1], marioState[2])
+            }
             if sm64unity_interpolates() == 1, sm64unity_render_current() == 1 {
                 var current = maker.make()
                 current.title = titleFrame
+                current.mario = between.mario
                 output.publish(between, then: current, after: period / 2)
             } else {
                 output.publish(between)
@@ -205,6 +220,22 @@ final class GameHost {
         } else if now - deadline > 0.25 {
             deadline = now  // (fell far behind, e.g. suspended: don't race to catch up)
         }
+    }
+
+    /// The stick turned from your forward (in the game's world) to the game camera's: pushed up, Mario runs the way
+    /// you look
+    private static func turnStick(_ pad: inout GamePad.State, toward forward: SIMD3<Float>) {
+        guard pad.stickX != 0 || pad.stickY != 0, let m = sm64unity_camera() else { return }
+        var cameraForward = -SIMD3(m[2], m[6], m[10])  // (the view matrix's third row, as simd reads it)
+        cameraForward.y = 0
+        guard simd_length(cameraForward) > 1e-4 else { return }
+        cameraForward = simd_normalize(cameraForward)
+        let up = SIMD3<Float>(0, 1, 0)
+        let cameraRight = simd_cross(cameraForward, up), lookRight = simd_cross(forward, up)
+        let wanted = lookRight * Float(pad.stickX) + forward * Float(pad.stickY)
+        let x = simd_dot(wanted, cameraRight), y = simd_dot(wanted, cameraForward)
+        pad.stickX = Int8(max(-128, min(127, x.rounded())))
+        pad.stickY = Int8(max(-128, min(127, y.rounded())))
     }
 
     /// A hand at the window, for the menus' cursor: where it points in the game's 320×240 screen (its 4:3 middle

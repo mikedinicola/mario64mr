@@ -7,9 +7,15 @@ import simd
 ///   let go, it flies with your hand's speed, falls, and comes to rest lying on the first plane it meets (a table,
 ///   the floor);
 /// - pinched with both hands and pulled apart, it opens into the window, as wide as your hands are apart;
-/// - open, pinching the frame with one hand moves the window, with two resizes it (up to four times the size it
-///   first opens to), and squeezing it narrower than its first size closes it back into the cartridge.
+/// - open, pinching the frame or the handle under it with one hand moves the window, with two resizes it (up to
+///   four times the size it first opens to), and squeezing it narrower than its first size closes it back into the
+///   cartridge. Pinching while looking at the frame or the handle (from anywhere) takes it as well, moving it as far
+///   as your hand moves, times how much farther the window is than your hand.
+/// Only with the -cartridge launch argument (or -cart, its scripted demo): otherwise the window is open from the
+/// start, and squeezing it doesn't close it.
 final class Cartridge {
+    static let enabled = ["-cartridge", "-cart"].contains(where: ProcessInfo.processInfo.arguments.contains)
+
     /// The cartridge's size, metres: width, height, thickness
     static let size = SIMD3<Float>(0.13, 0.095, 0.024)
     /// The window when it first opens, metres wide; and at most four times that
@@ -23,13 +29,18 @@ final class Cartridge {
     /// The window (open, or as it was when last open: the game camera stays there)
     private(set) var window: RoomPlacement
     private(set) var isOpen = false
+    /// Gone into a diorama (Diorama): not drawn, and hands leave it alone
+    private(set) var inDiorama = false
 
     private var velocity = SIMD3<Float>.zero
     private var resting = true
     /// A hand holding the cartridge or the frame, and where (from the cartridge's centre, or in the window's space)
     private var grips: [Int: SIMD3<Float>] = [:]
-    /// Two hands on the frame: their distance and the window's width when the second took hold
-    private var resizeFrom: (distance: Float, width: Float)?
+    /// Hands holding it by a pinch made looking at it (GazePinch): its id, and where the hand last was
+    private var gazeGrips: [Int: (id: Int, last: SIMD3<Float>)] = [:]
+    /// Two hands on the frame: their distance and middle, and the window's width and centre, when the second took
+    /// hold
+    private var resizeFrom: (distance: Float, width: Float, mid: SIMD3<Float>, center: SIMD3<Float>)?
     private var wasPinching = [false, false]
 
     /// The cartridge floating in front of `head`, a little below the eyes; the window would open where it was set
@@ -46,7 +57,35 @@ final class Cartridge {
         window = placement
         isOpen = true
         grips = [:]
+        gazeGrips = [:]
         resizeFrom = nil
+    }
+
+    /// The hand holding the window alone by its lower part, and the opening's bottom edge's middle in the room (to
+    /// put it down as a diorama)
+    var heldLow: (hand: Int, bottom: SIMD3<Float>)? {
+        guard isOpen, !inDiorama, grips.count == 1, let (hand, grip) = grips.first,
+              grip.y < -window.halfSize.y * 0.6 else { return nil }
+        return (hand, window.roomFromWindow.transform(SIMD3(0, -window.halfSize.y, 0)))
+    }
+
+    /// Into the diorama: the window put away
+    func enterDiorama() {
+        inDiorama = true
+        grips = [:]
+        gazeGrips = [:]
+        resizeFrom = nil
+    }
+
+    /// Out of the diorama: the window back, at `placement`, held by `hand` (if any) at `grip` (in its own space)
+    func leaveDiorama(_ placement: RoomPlacement, hand: Int?, grip: SIMD3<Float>) {
+        inDiorama = false
+        window = placement
+        isOpen = true
+        grips = [:]
+        gazeGrips = [:]
+        resizeFrom = nil
+        if let hand, hand < 2 { grips[hand] = grip; wasPinching[hand] = true }
     }
 
     /// Which hands the cartridge or frame holds (their pinches aren't for the game)
@@ -54,18 +93,33 @@ final class Cartridge {
 
     var center: SIMD3<Float> { SIMD3(pose.columns.3.x, pose.columns.3.y, pose.columns.3.z) }
 
-    func update(hands: [HandState], eye: SIMD3<Float>, planes: [RoomPlane], floor: Float, dt: Float) {
+    /// Whether a hand holds it by a pinch made looking at it
+    var heldByGaze: Bool { !gazeGrips.isEmpty }
+
+    func update(hands: [HandState], gazes: [GazePinch], eye: SIMD3<Float>, planes: [RoomPlane], floor: Float,
+                dt: Float) {
         let dt = min(max(dt, 0), 0.05)
         var hands = Array(hands.prefix(2))  // (untracked hands may be missing: they let go)
         while hands.count < 2 { hands.append(HandState()) }
+        if inDiorama {
+            for (i, hand) in hands.enumerated() { wasPinching[i] = hand.tracked && hand.pinching }
+            return
+        }
         var began: [Int] = []
+        let active = Set(gazes.map(\.id))
         for (i, hand) in hands.enumerated() {
             let pinching = hand.tracked && hand.pinching
-            if pinching && !wasPinching[i] { began.append(i) }
-            if !pinching, grips[i] != nil { release(i, hands: hands) }
+            if pinching && !wasPinching[i] && gazeGrips[i] == nil { began.append(i) }
+            // (a hand holding by a pinch made looking at it lets go when the system ends that pinch)
+            let held = gazeGrips[i].map { active.contains($0.id) } ?? pinching
+            if !held, grips[i] != nil { release(i, hands: hands) }
             wasPinching[i] = pinching
         }
-        if isOpen { updateWindow(hands, began: began, eye: eye) } else { updateClosed(hands, began: began, eye: eye) }
+        if isOpen {
+            updateWindow(hands, began: began, gazes: gazes, eye: eye)
+        } else {
+            updateClosed(hands, began: began, eye: eye)
+        }
         if !isOpen && grips.isEmpty && !resting { fall(planes: planes, floor: floor, dt: dt, eye: eye) }
     }
 
@@ -87,7 +141,7 @@ final class Cartridge {
                 window = RoomPlacement(center: mid, facing: eye, width: Self.openWidth)
                 isOpen = true
                 for i in held { grips[i] = window.roomFromWindow.inverse.transform(hands[i].pinch) }
-                resizeFrom = (apart, window.halfSize.x * 2)
+                resizeFrom = (apart, window.halfSize.x * 2, mid, window.center)
             }
         } else if let i = held.first {
             pose = Self.upright(at: hands[i].pinch + grips[i]!, facing: eye, turning: pose, by: 0.15)
@@ -96,6 +150,7 @@ final class Cartridge {
 
     private func release(_ i: Int, hands: [HandState]) {
         grips[i] = nil
+        gazeGrips[i] = nil
         resizeFrom = nil
         if !isOpen && grips.isEmpty {
             velocity = hands[i].velocity
@@ -144,30 +199,74 @@ final class Cartridge {
 
     // ---------------------------------------------------------------- Open
 
-    private func updateWindow(_ hands: [HandState], began: [Int], eye: SIMD3<Float>) {
+    /// Whether `p` (in the window's space, on its plane) is on the frame or the handle, with `margin` metres more
+    private func onFrame(_ p: SIMD3<Float>, margin: Float = 0) -> Bool {
+        let h = window.halfSize, handle = window.handle
+        // Just outside the opening's edge, or just inside it; or on the handle, generously
+        let outer = abs(p.x) < h.x + 0.07 + margin && abs(p.y) < h.y + 0.07 + margin
+        let inner = abs(p.x) < h.x - 0.04 - margin && abs(p.y) < h.y - 0.04 - margin
+        let onHandle = abs(p.x - handle.center.x) < handle.half.x + 0.04 + margin
+            && abs(p.y - handle.center.y) < handle.half.y + 0.035 + margin
+        return (outer && !inner) || onHandle
+    }
+
+    /// Where hand `i` is: tracked, or where the system says its pinch is
+    private func position(_ i: Int, _ hands: [HandState], _ gazes: [GazePinch]) -> SIMD3<Float> {
+        if hands[i].tracked { return hands[i].pinch }
+        let id = gazeGrips[i]?.id
+        return gazes.first { $0.id == id }?.position ?? gazeGrips[i]?.last ?? hands[i].pinch
+    }
+
+    /// How far the window moves for a hand held by a look: as far as the hand, times how much farther it is
+    private func reach(_ eye: SIMD3<Float>, hand: SIMD3<Float>) -> Float {
+        min(max(simd_distance(eye, window.center) / max(simd_distance(eye, hand), 0.1), 1), 6)
+    }
+
+    private func updateWindow(_ hands: [HandState], began: [Int], gazes: [GazePinch], eye: SIMD3<Float>) {
         let windowFromRoom = window.roomFromWindow.inverse
         let h = window.halfSize
         for i in began {
-            // On the frame: just outside the opening's edge, or just inside it, near the window's plane
+            // On the frame or the handle, near the window's plane
             let p = windowFromRoom.transform(hands[i].pinch)
-            let outer = abs(p.x) < h.x + 0.07 && abs(p.y) < h.y + 0.07
-            let inner = abs(p.x) < h.x - 0.04 && abs(p.y) < h.y - 0.04
-            if outer && !inner && abs(p.z) < 0.08 { grips[i] = p }
+            if onFrame(p), abs(p.z) < 0.08 { grips[i] = p }
+        }
+        // Pinched looking at the frame or the handle (or anywhere, the other hand already holding it)
+        for gaze in gazes where gaze.began {
+            guard let i = gaze.hand(in: hands) ?? (0..<2).first(where: { grips[$0] == nil }),
+                  gazeGrips[i] == nil else { continue }
+            let p = gaze.hit(windowFromRoom)
+            guard p.map({ onFrame($0, margin: 0.02) }) == true || (grips.count == 1 && grips[i] == nil) else { continue }
+            guard let from = hands[i].tracked ? hands[i].pinch : gaze.position else { continue }
+            grips[i] = p ?? .zero
+            gazeGrips[i] = (gaze.id, from)
+            resizeFrom = nil
         }
         let held = grips.keys.sorted()
         if held.count == 2 {
-            let a = hands[held[0]].pinch, b = hands[held[1]].pinch, apart = simd_distance(a, b)
-            if resizeFrom == nil { resizeFrom = (apart, h.x * 2) }
-            let width = resizeFrom!.width * apart / max(resizeFrom!.distance, 0.01)
-            if width < Self.closeWidth {  // squeezed shut: the cartridge, held between them
+            let a = position(held[0], hands, gazes), b = position(held[1], hands, gazes)
+            let apart = simd_distance(a, b), mid = (a + b) / 2
+            if resizeFrom == nil { resizeFrom = (apart, h.x * 2, mid, window.center) }
+            let from = resizeFrom!
+            let width = from.width * apart / max(from.distance, 0.01)
+            // Held by its frame, the window between the hands; by a look, it moves as their middle does
+            let center = gazeGrips.isEmpty ? mid : from.center + (mid - from.mid) * reach(eye, hand: mid)
+            if Self.enabled, width < Self.closeWidth {  // squeezed shut: the cartridge, held between them
                 isOpen = false
-                pose = Self.upright(at: (a + b) / 2, facing: eye)
+                pose = Self.upright(at: center, facing: eye)
                 for i in held { grips[i] = center - hands[i].pinch }
+                gazeGrips = [:]
                 resizeFrom = nil
                 resting = false
                 return
             }
-            window = RoomPlacement(center: (a + b) / 2, facing: eye, width: min(width, Self.maxWidth))
+            // (with no cartridge to close into, it stops at the size it'd close at)
+            window = RoomPlacement(center: center, facing: eye, width: min(max(width, Self.closeWidth), Self.maxWidth))
+        } else if let i = held.first, let gaze = gazeGrips[i] {
+            // Held by a look: moved as the hand moves, farther the farther away it is, turning to face you
+            let p = position(i, hands, gazes)
+            let moved = window.center + (p - gaze.last) * reach(eye, hand: p)
+            window = RoomPlacement(center: moved, facing: eye, width: h.x * 2)
+            gazeGrips[i]!.last = p
         } else if let i = held.first {
             // Moved by the point held: that point follows the pinch, the window turning to face you
             let grip = grips[i]!, pinch = hands[i].pinch
