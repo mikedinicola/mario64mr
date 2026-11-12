@@ -129,6 +129,22 @@ final class MarioCarrier {
         }
     }
 
+    /// The options menu's Bring Mario back: out in the room (or held), back where he was in the level
+    func bringBack(geometry g: RoomGeometry?) {
+        let mode = sm64unity_carry_mode()
+        guard mode != 0 else { return }
+        if held == nil, mode == 3, let g, let inRoom = marioInRoom(geometry: g) {
+            // (where he went out: the window's point he's nearest, in the level)
+            let camera = Self.camera(), viewFromRoom = g.roomFromView.inverse
+            let w = g.windowFromRoom * SIMD4(inRoom, 1)
+            let edge = g.windowFromRoom.inverse * SIMD4(min(max(w.x, -g.halfSize.x * 0.8), g.halfSize.x * 0.8),
+                                                min(max(w.y, -g.halfSize.y * 0.8), g.halfSize.y * 0.8), -0.05, 1)
+            heldFrom = xyz(camera.inverse * (viewFromRoom * edge))
+        }
+        held = nil
+        _ = sm64unity_carry(0, heldFrom.x, heldFrom.y, heldFrom.z, 0, 0, 0)
+    }
+
     /// Out of the room: hands let go of
     func reset() {
         if held != nil {

@@ -404,7 +404,8 @@ pick it up and throw it (it lands on your tables), or pinch it with both hands a
 squeeze the window shut.) On
 the title screen, pinch Mario's face with both hands and pull, and pinch "PRESS START" (or press Start, or pinch with
 your palm up). Pinch Mario to pick him up, carry him out of the window and let go: he lands in your room and runs on
-it. To put your own label on the cartridge (with `-cartridge`), copy a `label.png` or `label.jpg` into the app's folder in the Files app.
+it. To put your own label on the cartridge (with `-cartridge`), copy a `label.png` or `label.jpg` into the app's folder
+in the Files app (it wins over one from `--label`).
 Hold the window by its handle (or its lower part) down near a table and let go over the glowing circle: the level
 becomes a diorama on it. Look at it and pinch (anywhere, your hand can stay in your lap) to move it, up and down too,
 with both hands to turn and scale it; pinching its base works too. The gamepad's right stick (the arrow keys on a
@@ -441,22 +442,40 @@ L1 or R1 (the grip) takes the cartridge, the window's frame and the diorama's ba
 L2 opens the cartridge or closes the window, and the stick up or down resizes the window (on the base: up / down
 scales it, left / right turns it).
 
-visionOS runs no code that isn't signed into the
-app, so instead of an app to download you build it yourself in Xcode, with the game made from your ROM inside it.
+**Building it.** visionOS runs no code that isn't signed into the app, so instead of an app to download you build it
+yourself in Xcode, with the game made from your ROM inside it.
 
-You need a Mac with Xcode 26 or later and its visionOS platform (Xcode › Settings › Components), and an Apple ID.
+You need a Mac with Xcode 26 or later and its visionOS platform (Xcode › Settings › Components), and an Apple ID
+(signed in under Xcode › Settings › Accounts). [XcodeGen](https://github.com/yonaskolb/XcodeGen) is optional: if it's
+installed, the project is made again from `visionos/project.yml`.
 
-1. Make the game for visionOS:
+1. Make the game for visionOS, with your team ID (Xcode › Settings › Accounts) and a bundle identifier of your own:
 
    ```
-   python3 install_mario64mr.py "Super Mario 64 (USA).z64" --visionos
+   python3 install_mario64mr.py "Super Mario 64 (USA).z64" --visionos --team ABCDE12345 --bundle-id com.yourname.mario64mr
    ```
 
-   It goes in `visionos/Build` (the three libraries as XCFrameworks, for the headset and the simulator, and the
-   game data), which is never committed.
-2. Open `visionos/Mario64MR.xcodeproj`, choose your team under Signing & Capabilities (and a bundle identifier of
-   your own), and run it on your Vision Pro or the visionOS simulator. Or put them in `visionos/Local.xcconfig`:
-   `DEVELOPMENT_TEAM = ABCDE12345` and `MARIO64MR_BUNDLE_ID = com.yourname.mario64mr`.
+   It builds the three libraries as XCFrameworks, for the headset and the simulator, and the game data into
+   `visionos/Build` (never committed), writes your team and bundle identifier to `visionos/Local.xcconfig` (not
+   committed either), and opens `visionos/Mario64MR.xcodeproj` in Xcode. Add `--label my-label.png` to put your own
+   label on the cartridge, or `--no-open` to leave Xcode closed. Without `--team`, choose your team and a bundle
+   identifier under Signing & Capabilities in Xcode instead.
+2. Turn on Developer Mode on the Vision Pro (Settings › Privacy & Security), pair it with Xcode (Window › Devices and
+   Simulators), choose it as the run destination and press Run. Or choose the visionOS simulator: everything but your
+   hands, the room's surfaces and the controllers works there.
+
+With a free Apple ID the app stops opening after 7 days: run it from Xcode again. Your saves and options stay.
+
+**Options on Vision Pro.** The pause menu's options (above) apply as the headset allows; they're kept between runs.
+
+| Option | On Vision Pro |
+| --- | --- |
+| Resolution | The headset's render quality: 100% is its own, 70% the least it allows, 150% the most |
+| Anti-aliasing | MSAA 2x or 4x in your room |
+| Foveation | On (any level) or off. It changes the next time you open a window into the game |
+| Textures | As on the other headsets: N64, mipmaps, or mipmaps with 2x to 16x anisotropic filtering |
+| Refresh rate, Sharpening | Not in the menu: visionOS sets them itself |
+| Bring Mario back | Out in your room or held: back into the game where he went out (or was picked up) |
 
 ## Troubleshooting
 

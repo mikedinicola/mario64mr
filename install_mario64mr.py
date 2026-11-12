@@ -24,7 +24,9 @@ usage:
     python3 install_mario64mr.py "Super Mario 64 (USA).z64" --push --frame --apk Mario64MR-SteamFrame.apk
                                                                        # ...to a Steam Frame, over Wi-Fi
     python3 install_mario64mr.py "Super Mario 64 (USA).z64" --visionos  # for Apple Vision Pro: into visionos/Build,
-                                                                       # for the Xcode project there (macOS, Xcode)
+                                                                       # then opens the Xcode project (macOS, Xcode)
+    python3 install_mario64mr.py "Super Mario 64 (USA).z64" --visionos --team ABCDE12345 --bundle-id com.you.mario64mr
+                                                                       # ...signed with your team (visionos/Local.xcconfig)
 
 Needs python3, git, make, patch and a C compiler (macOS: Xcode command line tools; Linux: build-essential;
 Windows: WSL). The Android NDK (r27c) is found where Android Studio or Homebrew put it, or downloaded (~700 MB) the
@@ -497,6 +499,7 @@ class Android:
     def __init__(self, ndk, work):
         self.ndk, self.work = ndk, work
         self.game_build = GAME_BUILD
+        self.game_defines = ""
 
     def compiler(self, cxx=False):
         return compiler(self.ndk, cxx)
@@ -533,6 +536,7 @@ class VisionOS:
     def __init__(self, sdk, target, work):
         self.sdk, self.target = sdk, target
         self.game_build = f"build/us_{sdk}_60_ext"
+        self.game_defines = " -DMR_VISIONOS"  # (the options menu without what the headset sets itself)
         sysroot = subprocess.check_output(["xcrun", "--sdk", sdk, "--show-sdk-path"], text=True).strip()
         # Single words for make (sm64ex's Makefile passes compilers on unquoted): small wrappers with the target
         wrappers = work / f"{sdk}-bin"
@@ -628,6 +632,36 @@ def build_visionos(sm64ex, rom, decomp, libsm64, work, out):
             print(f"{slices / sdk / (lib + '.dylib')}: {(slices / sdk / (lib + '.dylib')).stat().st_size / 1e6:.1f} MB")
 
 
+def open_xcode(team, bundle_id, open_it):
+    """Your signing into visionos/Local.xcconfig (not committed), the project made again from project.yml if
+    XcodeGen is there, and the project opened in Xcode."""
+    local = HERE / "visionos/Local.xcconfig"
+    if team or bundle_id:
+        settings = {}
+        if local.is_file():  # (keeping what's there that isn't being set)
+            for line in local.read_text().splitlines():
+                key, sep, value = line.partition("=")
+                if sep and not line.lstrip().startswith("//"):
+                    settings[key.strip()] = value.strip()
+        if team:
+            settings["DEVELOPMENT_TEAM"] = team
+        if bundle_id:
+            settings["MARIO64MR_BUNDLE_ID"] = bundle_id
+        local.write_text("// Written by install_mario64mr.py --visionos (--team, --bundle-id); not committed\n"
+                         + "".join(f"{k} = {v}\n" for k, v in settings.items()))
+        print(f"Signing: {local}", flush=True)
+    if shutil.which("xcodegen"):
+        run(["xcodegen", "-q"], cwd=HERE / "visionos")
+    project = HERE / "visionos/Mario64MR.xcodeproj"
+    signed = local.is_file() and "DEVELOPMENT_TEAM" in local.read_text()
+    print(f"Done: {VISIONOS_BUILD}. In Xcode ({project}): " + (
+        "choose your Vision Pro (or the visionOS simulator) and Run." if signed else
+        "under Signing & Capabilities choose your team and a bundle identifier of your own (or run this again with "
+        "--team and --bundle-id), then choose your Vision Pro (or the visionOS simulator) and Run."), flush=True)
+    if open_it:
+        subprocess.run(["open", str(project)])
+
+
 def build_game(work, rom, toolchain, out):
     """libsm64game: sm64ex with the PC port's 60 fps interpolation, the Unity bridge and Mario 64 MR's changes,
     its data left out (it reads base.zip at runtime)."""
@@ -644,9 +678,9 @@ def build_game(work, rom, toolchain, out):
          "RENDER_API=UNITY", "WINDOW_API=UNITY", "AUDIO_API=UNITY", "CONTROLLER_API=UNITY", "NOEXTRACT=1",
          "EXTERNAL_DATA=1", "EXT_OPTIONS_MENU=1", "TEXTURE_FIX=0", "BETTERCAMERA=0", "NODRAWINGDISTANCE=0",
          "LDFLAGS=" + " ".join(toolchain.shared("libsm64game", strict=True) + ["-lm"]),
-         "OPT_FLAGS=-O2 -fPIC " + flags,
+         "OPT_FLAGS=-O2 -fPIC " + flags + toolchain.game_defines,
          f"CC_CHECK={cc} -fsyntax-only -fPIC -Isrc -Iinclude -I. -I{build} -I{build}/include -DVERSION_US "
-         f"-D_LANGUAGE_C -DNON_MATCHING -DAVOID_UB -DF3DEX_GBI_2E -DRAPI_UNITY -DWAPI_UNITY -DAAPI_UNITY {flags}"],
+         f"-D_LANGUAGE_C -DNON_MATCHING -DAVOID_UB -DF3DEX_GBI_2E -DRAPI_UNITY -DWAPI_UNITY -DAAPI_UNITY {flags}{toolchain.game_defines}"],
         cwd=work)
     shutil.copy2(work / build / "sm64.us.f3dex2e", out / toolchain.library("libsm64game"))
 
@@ -862,12 +896,25 @@ def main():
                              "authorized_keys. Without this, adb install still runs but the first XR launch may fail.")
     parser.add_argument("--visionos", action="store_true",
                         help="build for Apple Vision Pro instead (macOS with Xcode): the libraries as XCFrameworks and "
-                             "the data, into visionos/Build, for the Xcode project in visionos/")
+                             "the data, into visionos/Build, then opens the Xcode project in visionos/")
+    parser.add_argument("--team", metavar="TEAM_ID",
+                        help="with --visionos: your Apple developer team ID (Xcode > Settings > Accounts), written to "
+                             "visionos/Local.xcconfig so the project signs with it")
+    parser.add_argument("--bundle-id", metavar="ID",
+                        help="with --visionos: the app's bundle identifier, one of your own (e.g. com.yourname.mario64mr)"
+                             "; needed to sign with a team, as local.mario64mr.app is taken")
+    parser.add_argument("--no-open", action="store_true", help="with --visionos: don't open Xcode at the end")
     args = parser.parse_args()
     if args.visionos and (args.push or args.ndk or args.frame or args.apk):
         sys.exit("--visionos builds for Xcode: --push, --ndk, --frame and --apk are for Android headsets")
     if args.visionos and platform.system() != "Darwin":
         sys.exit("--visionos needs a Mac with Xcode (and its visionOS platform)")
+    if (args.team or args.bundle_id or args.no_open) and not args.visionos:
+        sys.exit("--team, --bundle-id and --no-open go with --visionos")
+    if args.team and not re.fullmatch(r"[A-Z0-9]{10}", args.team):
+        sys.exit(f"{args.team}: a team ID is 10 letters and digits (Xcode > Settings > Accounts, or your membership page)")
+    if args.bundle_id and not re.fullmatch(r"[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+", args.bundle_id):
+        sys.exit(f"{args.bundle_id}: a bundle identifier is like com.yourname.mario64mr")
     # The ROM first: the most likely thing to be wrong, and nothing should be fetched, built or pushed until it's right
     try:
         rom = read_rom(args.rom)
@@ -908,8 +955,7 @@ def main():
             if subprocess.run(["xcrun", "--sdk", sdk, "--show-sdk-path"], capture_output=True).returncode != 0:
                 sys.exit(f"Xcode has no {sdk} SDK: install the visionOS platform (Xcode > Settings > Components)")
         build_visionos(sm64ex, rom, decomp, libsm64, work, out)
-        print(f"Done: {VISIONOS_BUILD}. Open visionos/Mario64MR.xcodeproj in Xcode, choose your team under Signing "
-              "& Capabilities, and run it on your Vision Pro (or the visionOS simulator).")
+        open_xcode(args.team, args.bundle_id, not args.no_open)
         return
 
     print("== The game code, for the headset", flush=True)

@@ -12,9 +12,26 @@ struct RoomLayerConfiguration: CompositorLayerConfiguration {
                            configuration: inout LayerRenderer.Configuration) {
         configuration.colorFormat = .bgra8Unorm_srgb
         configuration.depthFormat = .depth32Float
-        configuration.isFoveationEnabled = false
-        let layouts = capabilities.supportedLayouts(options: [])
+        // The options: foveation (on at any level) as the room opens; room for the resolution's 150%
+        let foveation = capabilities.supportsFoveation && GameOptions.savedGraphics.foveation
+        configuration.isFoveationEnabled = foveation
+        let layouts = capabilities.supportedLayouts(options: foveation ? [.foveationEnabled] : [])
         configuration.layout = layouts.contains(.dedicated) ? .dedicated : .layered
+        // (the simulator has none: its default isn't a number, and a max aborts the layer)
+        let quality = capabilities.defaultRenderQuality.rawValue
+        let supported = quality.isFinite && quality > 0 && quality <= 1
+        Self.defaultQuality.withLock { $0 = supported ? quality : nil }
+        if supported { configuration.maxRenderQuality = LayerRenderer.RenderQuality(rawValue: 1) }
+    }
+
+    /// The headset's own render quality (the options' 100%), if it has one
+    static let defaultQuality = OSAllocatedUnfairLock<Float?>(initialState: nil)
+
+    /// The options' resolution (0.7 to 1.5) as a render quality: 100% the default, 70% the least, 150% the most
+    static func quality(_ resolution: Float) -> Float? {
+        guard let base = defaultQuality.withLock({ $0 }) else { return nil }
+        return resolution >= 1 ? base + (1 - base) * min((resolution - 1) / 0.5, 1)
+            : base * max((resolution - 0.7) / 0.3, 0)
     }
 }
 
@@ -46,6 +63,10 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private var started: TimeInterval?
     private var drewFirstFrame = false
     static let log = Logger(subsystem: "Mario64MR", category: "Room")
+    /// The options' graphics applied now
+    private var graphics: GameOptions.Graphics?
+    /// The views' MSAA targets (memoryless), resolved into the drawable's
+    private var multisample: [Int: (color: MTLTexture, depth: MTLTexture)] = [:]
     /// The room's surfaces for drawing (packed float3, metres), as the scanner last gave them
     private let roomMesh = OSAllocatedUnfairLock<(buffer: MTLBuffer?, count: Int)>(uncheckedState: (nil, 0))
 
@@ -137,12 +158,16 @@ final class ImmersiveRenderer: @unchecked Sendable {
         LayerRenderer.Clock().wait(until: timing.optimalInputTime)
         frame.startSubmission()
         defer { frame.endSubmission() }
-        guard let drawable = frame.queryDrawable(),
+        // (usually one; a second while the view is being recorded or shared, at its own quality and without
+        // foveation: each gets the same frame)
+        let drawables = frame.queryDrawables()
+        guard let drawable = drawables.first,
               let commands = game.queue.makeCommandBuffer() else { return }
 
+        applyOptions()
         let time = Self.seconds(LayerRenderer.Clock.Instant.epoch.duration(to: drawable.frameTiming.presentationTime))
         let anchor = world.state == .running ? world.queryDeviceAnchor(atTimestamp: time) : nil
-        drawable.deviceAnchor = anchor
+        for drawable in drawables { drawable.deviceAnchor = anchor }
         // (no tracking, as in the simulator before it starts: a head standing at the origin)
         let head = anchor?.originFromAnchorTransform
             ?? simd_float4x4(SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(0, 1.5, 0, 1))
@@ -181,10 +206,12 @@ final class ImmersiveRenderer: @unchecked Sendable {
             }
         }
         guard let cartridge else {
-            for view in drawable.views {  // (nothing yet: clear to the passthrough)
-                makeEncoder(commands, drawable: drawable, view: view)?.endEncoding()
+            for (slot, drawable) in drawables.enumerated() {
+                for view in drawable.views {  // (nothing yet: clear to the passthrough)
+                    makeEncoder(commands, drawable: drawable, slot: slot, view: view)?.endEncoding()
+                }
+                drawable.encodePresent(commandBuffer: commands)
             }
-            drawable.encodePresent(commandBuffer: commands)
             commands.commit()
             return
         }
@@ -289,58 +316,60 @@ final class ImmersiveRenderer: @unchecked Sendable {
             cache[key] = m
             return m
         }
-        for (index, view) in drawable.views.enumerated() {
-            let roomFromEye = head * view.transform
-            let eye = GameRenderer.RoomEye(
-                viewProjection: drawable.computeProjection(viewIndex: index) * roomFromEye.inverse,
-                roomFromView: roomFromView,
-                roomFromWindow: placement.roomFromWindow,
-                windowFromRoom: placement.roomFromWindow.inverse,
-                eye: placement.roomFromWindow.inverse * roomFromEye.columns.3,
-                window: SIMD4(placement.halfSize.x, placement.halfSize.y, placement.skyDistance, 0),
-                up: SIMD4(up, 0),
-                camera: gameCamera)
-            guard let encoder = makeEncoder(commands, drawable: drawable, view: view) else { continue }
-            // Open: the game through the window (or the title screen's face), in its frame. Closed: the cartridge.
-            // Then the room's surfaces into depth and Mario, if he's out in the room, hidden by them
-            if let diorama, let roomFromWorld {
-                if let gameFrame {
-                    game.encodeDiorama(gameFrame, into: encoder, eye: eye, roomFromWorld: roomFromWorld,
-                                       table: diorama.table, xScale: xScale)
+        for (slot, drawable) in drawables.enumerated() {
+            for (index, view) in drawable.views.enumerated() {
+                let roomFromEye = head * view.transform
+                let eye = GameRenderer.RoomEye(
+                    viewProjection: drawable.computeProjection(viewIndex: index) * roomFromEye.inverse,
+                    roomFromView: roomFromView,
+                    roomFromWindow: placement.roomFromWindow,
+                    windowFromRoom: placement.roomFromWindow.inverse,
+                    eye: placement.roomFromWindow.inverse * roomFromEye.columns.3,
+                    window: SIMD4(placement.halfSize.x, placement.halfSize.y, placement.skyDistance, 0),
+                    up: SIMD4(up, 0),
+                    camera: gameCamera)
+                guard let encoder = makeEncoder(commands, drawable: drawable, slot: slot, view: view) else { continue }
+                // Open: the game through the window (or the title screen's face), in its frame. Closed: the cartridge.
+                // Then the room's surfaces into depth and Mario, if he's out in the room, hidden by them
+                if let diorama, let roomFromWorld {
+                    if let gameFrame {
+                        game.encodeDiorama(gameFrame, into: encoder, eye: eye, roomFromWorld: roomFromWorld,
+                                           table: diorama.table, xScale: xScale)
+                    }
+                } else if cartridge.isOpen {
+                    props.encodeFrame(placement, into: encoder, eye: eye)
+                    if let gameFrame, let title = gameFrame.title {
+                        props.encodeTitle(title, window: placement, time: time - (startTime ?? 0), into: encoder, eye: eye)
+                    } else if let gameFrame {
+                        game.encodeRoom(gameFrame, into: encoder, eye: eye, actors: false,
+                                        roomFromClip: roomFromClip, actorFromClip: actorFromClip)
+                    }
+                } else {
+                    props.encodeCartridge(cartridge.pose, into: encoder, eye: eye)
                 }
-            } else if cartridge.isOpen {
-                props.encodeFrame(placement, into: encoder, eye: eye)
-                if let gameFrame, let title = gameFrame.title {
-                    props.encodeTitle(title, window: placement, time: time - (startTime ?? 0), into: encoder, eye: eye)
-                } else if let gameFrame {
-                    game.encodeRoom(gameFrame, into: encoder, eye: eye, actors: false,
+                if diorama == nil, let gameFrame, gameFrame.marioOutside {
+                    if let mesh = room.buffer { game.encodeRoomMesh(mesh, count: room.count, into: encoder, eye: eye) }
+                    game.encodeRoom(gameFrame, into: encoder, eye: eye, actors: true,
                                     roomFromClip: roomFromClip, actorFromClip: actorFromClip)
                 }
-            } else {
-                props.encodeCartridge(cartridge.pose, into: encoder, eye: eye)
+                // The handle, and where the window will go down, last: they're blended (into depth only where they
+                // show), so whatever came after them (the frame, the level reaching out of the window) would paint over
+                // their soft edges
+                if diorama == nil, cartridge.isOpen {
+                    props.encodeHandle(placement, held: !cartridge.holding.isEmpty, into: encoder, eye: eye)
+                }
+                if diorama == nil, cartridge.isOpen, let circle {
+                    let glow = Float(0.75 + 0.25 * sin(time * 6))
+                    props.encodeCircle(at: circle, radius: Diorama.radius, glow: glow, into: encoder, eye: eye)
+                }
+                encoder.endEncoding()
             }
-            if diorama == nil, let gameFrame, gameFrame.marioOutside {
-                if let mesh = room.buffer { game.encodeRoomMesh(mesh, count: room.count, into: encoder, eye: eye) }
-                game.encodeRoom(gameFrame, into: encoder, eye: eye, actors: true,
-                                roomFromClip: roomFromClip, actorFromClip: actorFromClip)
-            }
-            // The handle, and where the window will go down, last: they're blended (into depth only where they
-            // show), so whatever came after them (the frame, the level reaching out of the window) would paint over
-            // their soft edges
-            if diorama == nil, cartridge.isOpen {
-                props.encodeHandle(placement, held: !cartridge.holding.isEmpty, into: encoder, eye: eye)
-            }
-            if diorama == nil, cartridge.isOpen, let circle {
-                let glow = Float(0.75 + 0.25 * sin(time * 6))
-                props.encodeCircle(at: circle, radius: Diorama.radius, glow: glow, into: encoder, eye: eye)
-            }
-            encoder.endEncoding()
+            drawable.encodePresent(commandBuffer: commands)
         }
         if !drewFirstFrame, let gameFrame {
             drewFirstFrame = true
             Self.log.info("First frame in the room: \(gameFrame.draws.count) draws")
         }
-        drawable.encodePresent(commandBuffer: commands)
         commands.commit()
     }
 
@@ -495,23 +524,83 @@ final class ImmersiveRenderer: @unchecked Sendable {
         roomMesh.withLockUnchecked { $0 = (buffer, corners.count / 3) }
     }
 
-    private func makeEncoder(_ commands: MTLCommandBuffer, drawable: LayerRenderer.Drawable,
+    /// The options menu's graphics, as the game last gave them: the render quality, MSAA, anisotropy
+    private func applyOptions() {
+        let wanted = link.current.graphics
+        guard wanted != graphics else { return }
+        if wanted.resolution != graphics?.resolution, let quality = RoomLayerConfiguration.quality(wanted.resolution) {
+            let most = layer.configuration.maxRenderQuality.rawValue
+            layer.renderQuality = LayerRenderer.RenderQuality(rawValue: min(quality, most))
+        }
+        let samples = device.supportsTextureSampleCount(wanted.sampleCount) ? wanted.sampleCount : 1
+        if samples != game.sampleCount { multisample.removeAll() }
+        game.sampleCount = samples
+        props.sampleCount = samples
+        game.anisotropy = wanted.mipmaps ? wanted.anisotropy : 1
+        graphics = wanted
+    }
+
+    private var device: MTLDevice { game.device }
+
+    private func makeEncoder(_ commands: MTLCommandBuffer, drawable: LayerRenderer.Drawable, slot: Int,
                              view: LayerRenderer.Drawable.View) -> MTLRenderCommandEncoder? {
         let map = view.textureMap
+        let color = drawable.colorTextures[map.textureIndex], depth = drawable.depthTextures[map.textureIndex]
         let pass = MTLRenderPassDescriptor()
-        pass.colorAttachments[0].texture = drawable.colorTextures[map.textureIndex]
-        pass.colorAttachments[0].slice = map.sliceIndex
         pass.colorAttachments[0].loadAction = .clear
         pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
-        pass.colorAttachments[0].storeAction = .store
-        pass.depthAttachment.texture = drawable.depthTextures[map.textureIndex]
-        pass.depthAttachment.slice = map.sliceIndex
         pass.depthAttachment.loadAction = .clear
         pass.depthAttachment.clearDepth = 0  // (reversed depth: far is 0)
-        pass.depthAttachment.storeAction = .store
+        if game.sampleCount > 1, let targets = multisampleTargets(view: slot * 64 + map.textureIndex * 8 + map.sliceIndex,
+                                                                     like: color, depth: depth) {
+            // MSAA: drawn into the samples, resolved into the drawable (depth too, the nearest: the compositor
+            // reprojects with it)
+            pass.colorAttachments[0].texture = targets.color
+            pass.colorAttachments[0].resolveTexture = color
+            pass.colorAttachments[0].resolveSlice = map.sliceIndex
+            pass.colorAttachments[0].storeAction = .multisampleResolve
+            pass.depthAttachment.texture = targets.depth
+            pass.depthAttachment.resolveTexture = depth
+            pass.depthAttachment.resolveSlice = map.sliceIndex
+            pass.depthAttachment.depthResolveFilter = .max  // (reversed depth: nearer is more)
+            pass.depthAttachment.storeAction = .multisampleResolve
+        } else {
+            pass.colorAttachments[0].texture = color
+            pass.colorAttachments[0].slice = map.sliceIndex
+            pass.colorAttachments[0].storeAction = .store
+            pass.depthAttachment.texture = depth
+            pass.depthAttachment.slice = map.sliceIndex
+            pass.depthAttachment.storeAction = .store
+        }
+        if layer.configuration.isFoveationEnabled {  // (foveation: the drawable's rate map for this view)
+            let maps = drawable.rasterizationRateMaps
+            if !maps.isEmpty { pass.rasterizationRateMap = maps[min(map.textureIndex, maps.count - 1)] }
+        }
         let encoder = commands.makeRenderCommandEncoder(descriptor: pass)
         encoder?.setViewport(map.viewport)
         return encoder
+    }
+
+    /// A view's MSAA colour and depth, the drawable's size (memoryless: they never leave the GPU's tiles)
+    private func multisampleTargets(view: Int, like color: MTLTexture, depth: MTLTexture)
+        -> (color: MTLTexture, depth: MTLTexture)? {
+        if let t = multisample[view], t.color.width == color.width, t.color.height == color.height { return t }
+        func make(_ format: MTLPixelFormat) -> MTLTexture? {
+            let d = MTLTextureDescriptor()
+            d.textureType = .type2DMultisample
+            d.pixelFormat = format
+            d.width = color.width
+            d.height = color.height
+            d.sampleCount = game.sampleCount
+            d.usage = .renderTarget
+            d.storageMode = .memoryless
+            if let t = device.makeTexture(descriptor: d) { return t }
+            d.storageMode = .private  // (where memoryless isn't there)
+            return device.makeTexture(descriptor: d)
+        }
+        guard let c = make(color.pixelFormat), let d = make(depth.pixelFormat) else { return nil }
+        multisample[view] = (c, d)
+        return (c, d)
     }
 
     private static func seconds(_ duration: Duration) -> TimeInterval {
@@ -543,6 +632,8 @@ final class RoomLink: @unchecked Sendable {
         /// The Sense controllers (by side, 0 left, 1 right) whose grip holds the cartridge, the window or the base:
         /// their stick and trigger work it, not the game
         var busy: Set<Int> = []
+        /// (from the game) the options menu's graphics
+        var graphics = GameOptions.savedGraphics
     }
     private let state = OSAllocatedUnfairLock(initialState: State())
     /// Called (on the room's thread) when the room closes

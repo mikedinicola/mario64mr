@@ -21,10 +21,12 @@ final class RoomProps {
     }
 
     private let device: MTLDevice
-    private let opaque: MTLRenderPipelineState
-    private let blended: MTLRenderPipelineState
-    private let titleOpaque: MTLRenderPipelineState
-    private let titleBlended: MTLRenderPipelineState
+    private let library: MTLLibrary
+    private let colorFormat: MTLPixelFormat, depthFormat: MTLPixelFormat
+    /// The pipelines (opaque, blended, title opaque, title blended) by sample count
+    private var pipelineSets: [Int: [MTLRenderPipelineState]] = [:]
+    /// The room's MSAA samples (the options' anti-aliasing): the pipelines drawn with
+    var sampleCount = 1
     private let depthWrite: MTLDepthStencilState
     private let depthTestOnly: MTLDepthStencilState
     private let depthOff: MTLDepthStencilState
@@ -43,40 +45,19 @@ final class RoomProps {
 
     init?(device: MTLDevice, library: MTLLibrary, colorFormat: MTLPixelFormat, depthFormat: MTLPixelFormat) {
         self.device = device
-        func pipeline(_ vertex: String, _ fragment: String, blend: Bool) -> MTLRenderPipelineState? {
-            let d = MTLRenderPipelineDescriptor()
-            d.vertexFunction = library.makeFunction(name: vertex)
-            d.fragmentFunction = library.makeFunction(name: fragment)
-            d.depthAttachmentPixelFormat = depthFormat
-            d.colorAttachments[0].pixelFormat = colorFormat
-            if blend {
-                d.colorAttachments[0].isBlendingEnabled = true
-                d.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
-                d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
-                d.colorAttachments[0].sourceAlphaBlendFactor = .one
-                d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
-            }
-            do { return try device.makeRenderPipelineState(descriptor: d) } catch {
-                print("Mario 64 MR: \(fragment) didn't build: \(error)")
-                return nil
-            }
-        }
+        self.library = library
+        (self.colorFormat, self.depthFormat) = (colorFormat, depthFormat)
         func depth(test: Bool, write: Bool) -> MTLDepthStencilState? {
             let d = MTLDepthStencilDescriptor()
             d.depthCompareFunction = test ? .greaterEqual : .always  // (reversed depth)
             d.isDepthWriteEnabled = write
             return device.makeDepthStencilState(descriptor: d)
         }
-        guard let opaque = pipeline("prop_vertex", "prop_fragment", blend: false),
-              let blended = pipeline("prop_vertex", "prop_fragment", blend: true),
-              let titleOpaque = pipeline("title_vertex", "title_fragment", blend: false),
-              let titleBlended = pipeline("title_vertex", "title_fragment", blend: true),
-              let depthWrite = depth(test: true, write: true), let depthTestOnly = depth(test: true, write: false),
+        guard let depthWrite = depth(test: true, write: true), let depthTestOnly = depth(test: true, write: false),
               let depthOff = depth(test: false, write: false),
               let box = device.makeBuffer(bytes: Self.boxVertices, length: Self.boxVertices.count * 4),
               let quad = device.makeBuffer(bytes: Self.quadVertices, length: Self.quadVertices.count * 4)
         else { print("Mario 64 MR: the room's props didn't build"); return nil }
-        (self.opaque, self.blended, self.titleOpaque, self.titleBlended) = (opaque, blended, titleOpaque, titleBlended)
         (self.depthWrite, self.depthTestOnly, self.depthOff, self.box, self.quad) = (depthWrite, depthTestOnly, depthOff, box, quad)
 
         let loader = MTKTextureLoader(device: device)
@@ -91,15 +72,18 @@ final class RoomProps {
             return nil
         }
         self.white = white
-        // The label: label.png or label.jpg in the app's Documents folder (the Files app), else a plain one
-        let documents = URL.documentsDirectory
-        let custom = ["label.png", "label.jpg", "label.jpeg"].lazy.map { documents.appendingPathComponent($0) }
-            .first { FileManager.default.fileExists(atPath: $0.path) }
+        // The label: label.png or label.jpg in the app's Documents folder (the Files app), else the one the
+        // installer put in the app (--label), else a plain one
+        let folders = [URL.documentsDirectory] + [Bundle.main.resourceURL?.appendingPathComponent("Data")].compactMap { $0 }
+        let custom = folders.lazy.flatMap { folder in
+            ["label.png", "label.jpg", "label.jpeg"].lazy.map { folder.appendingPathComponent($0) }
+        }.first { FileManager.default.fileExists(atPath: $0.path) }
         label = custom.flatMap { try? loader.newTexture(URL: $0, options: options) }
             ?? (try? loader.newTexture(cgImage: Self.plainLabel(), options: options)) ?? white
         pressStart = (try? loader.newTexture(cgImage: Self.pressStartImage(), options: options)) ?? white
         ring = (try? loader.newTexture(cgImage: Self.ringImage(), options: options)) ?? white
         pill = (try? loader.newTexture(cgImage: Self.pillImage(), options: options)) ?? white
+        guard pipelines() != nil else { print("Mario 64 MR: the room's props didn't build"); return nil }
     }
 
     // ---------------------------------------------------------------- The cartridge and the frame
@@ -177,7 +161,8 @@ final class RoomProps {
             encoder.setFragmentBytes(&e, length: MemoryLayout<GameRenderer.RoomEye>.stride, index: 2)
             for draw in title.draws {
                 let blend = draw.flags & 2 != 0
-                encoder.setRenderPipelineState(blend ? titleBlended : titleOpaque)
+                guard let pipelines = pipelines() else { return }
+                encoder.setRenderPipelineState(pipelines[blend ? 3 : 2])
                 let test = draw.flags & 8 != 0, write = draw.flags & 16 != 0
                 encoder.setDepthStencilState(!test ? depthOff : write && !blend ? depthWrite : depthTestOnly)
                 encoder.setDepthBias(draw.flags & 32 != 0 ? 4 : 0, slopeScale: draw.flags & 32 != 0 ? 2 : 0, clamp: 0)
@@ -237,7 +222,8 @@ final class RoomProps {
     private func draw(_ mesh: MTLBuffer, count: Int, model: simd_float4x4, color: SIMD4<Float>, texture: MTLTexture,
                       flags: SIMD4<UInt32>, blend: Bool, depth: MTLDepthStencilState? = nil,
                       into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
-        encoder.setRenderPipelineState(blend ? blended : opaque)
+        guard let pipelines = pipelines() else { return }
+        encoder.setRenderPipelineState(pipelines[blend ? 1 : 0])
         encoder.setDepthStencilState(depth ?? (blend ? depthTestOnly : depthWrite))
         encoder.setCullMode(.none)
         var d = PropDraw(model: model, color: color, flags: flags), e = eye
@@ -249,6 +235,37 @@ final class RoomProps {
         encoder.setFragmentTexture(texture, index: 0)
         encoder.setFragmentSamplerState(sampler(clamp: (true, true), mirror: (false, false)), index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: count)
+    }
+
+    /// This sample count's pipelines, made the first time it's drawn with
+    private func pipelines() -> [MTLRenderPipelineState]? {
+        if let set = pipelineSets[sampleCount] { return set }
+        func pipeline(_ vertex: String, _ fragment: String, blend: Bool) -> MTLRenderPipelineState? {
+            let d = MTLRenderPipelineDescriptor()
+            d.vertexFunction = library.makeFunction(name: vertex)
+            d.fragmentFunction = library.makeFunction(name: fragment)
+            d.depthAttachmentPixelFormat = depthFormat
+            d.colorAttachments[0].pixelFormat = colorFormat
+            d.rasterSampleCount = sampleCount
+            if blend {
+                d.colorAttachments[0].isBlendingEnabled = true
+                d.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+                d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+                d.colorAttachments[0].sourceAlphaBlendFactor = .one
+                d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            }
+            do { return try device.makeRenderPipelineState(descriptor: d) } catch {
+                print("Mario 64 MR: \(fragment) didn't build: \(error)")
+                return nil
+            }
+        }
+        let set = [pipeline("prop_vertex", "prop_fragment", blend: false),
+                   pipeline("prop_vertex", "prop_fragment", blend: true),
+                   pipeline("title_vertex", "title_fragment", blend: false),
+                   pipeline("title_vertex", "title_fragment", blend: true)].compactMap { $0 }
+        guard set.count == 4 else { return nil }
+        pipelineSets[sampleCount] = set
+        return set
     }
 
     private func sampler(clamp: (x: Bool, y: Bool), mirror: (x: Bool, y: Bool)) -> MTLSamplerState? {

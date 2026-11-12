@@ -78,6 +78,11 @@ final class GameFrameMaker {
     private let device: MTLDevice
     private var textures: [UInt32: (version: Int32, texture: MTLTexture)] = [:]
     private var number: UInt32 = 0
+    private lazy var queue = device.makeCommandQueue()
+    /// The options' Textures past N64: the game's textures with mipmaps (made again when it changes)
+    var mipmaps = false {
+        didSet { if mipmaps != oldValue { textures.removeAll() } }
+    }
 
     init(device: MTLDevice) { self.device = device }
 
@@ -136,12 +141,19 @@ final class GameFrameMaker {
         }
         if let cached = textures[id], cached.version == version { return cached.texture }
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .rgba8Unorm, width: Int(width), height: Int(height), mipmapped: false)
+            pixelFormat: .rgba8Unorm, width: Int(width), height: Int(height), mipmapped: mipmaps)
         descriptor.usage = .shaderRead
         descriptor.storageMode = .shared
         guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
         texture.replace(region: MTLRegionMake2D(0, 0, Int(width), Int(height)), mipmapLevel: 0,
                         withBytes: pixels, bytesPerRow: Int(width) * 4)
+        if texture.mipmapLevelCount > 1, let commands = queue?.makeCommandBuffer(),
+           let blit = commands.makeBlitCommandEncoder() {
+            blit.generateMipmaps(for: texture)
+            blit.endEncoding()
+            commands.commit()
+            commands.waitUntilCompleted()  // (before the room's queue draws with it; textures come seldom)
+        }
         textures[id] = (version, texture)
         return texture
     }
