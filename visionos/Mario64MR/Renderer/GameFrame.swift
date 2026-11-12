@@ -42,6 +42,8 @@ struct GameFrame {
     var marioOutside: Bool
     var size: SIMD2<Int32>  // the window the game draws for (1280×720 in the 60 fps build)
     var number: UInt32
+    /// The title screen's face (TitleScreen), drawn in the window in place of the game's own title
+    var title: TitleFrame? = nil
 }
 
 /// Makes GameFrames from the game's output. Game thread only. The game's textures become Metal textures once per

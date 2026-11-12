@@ -32,8 +32,9 @@ struct RoomMesh {
 
     /// A stand-in room for the simulator, which has no scene reconstruction: a floor, and a box like a counter,
     /// 1.2 m high, in front of the window's lower right (where the simulator's view sees it). Returns it and a
-    /// point just above the box. (The simulator's origin is at the head, not on the floor: `floor` is its height.)
-    static func standIn(window: RoomPlacement, floor floorHeight: Float) -> (RoomMesh, SIMD3<Float>) {
+    /// point just above the box, and the floor and the box's top as planes for the cartridge. (The simulator's origin
+    /// is at the head, not on the floor: `floor` is its height.)
+    static func standIn(window: RoomPlacement, floor floorHeight: Float) -> (RoomMesh, SIMD3<Float>, [RoomPlane]) {
         var mesh = RoomMesh()
         func quad(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, _ d: SIMD3<Float>) {
             mesh.triangles += [a, b, c, a, c, d]
@@ -51,7 +52,15 @@ struct RoomMesh {
         quad(center + x - z, center - x - z, center - x - z + y, center + x - z + y)
         quad(center - x - z, center - x + z, center - x + z + y, center - x - z + y)
         quad(center + x + z, center + x - z, center + x - z + y, center + x + z + y)
-        return (mesh, center + y + SIMD3(0, 0.25, 0))
+        func plane(_ corners: [SIMD3<Float>]) -> RoomPlane {
+            RoomPlane(height: corners[0].y, triangles: [0, 1, 2, 0, 2, 3].map { SIMD2(corners[$0].x, corners[$0].z) })
+        }
+        let planes = [
+            plane([under - right * floor - toward * floor, under - right * floor + toward * floor,
+                   under + right * floor + toward * floor, under + right * floor - toward * floor]),
+            plane([center - x - z + y, center - x + z + y, center + x + z + y, center + x - z + y]),
+        ]
+        return (mesh, center + y + SIMD3(0, 0.25, 0), planes)
     }
 }
 
@@ -119,5 +128,51 @@ final class RoomScanner: @unchecked Sendable {
             out += simd_dot(simd_cross(b - a, c - a), facing) < 0 ? [a, c, b] : [a, b, c]
         }
         return out
+    }
+}
+
+/// The room's horizontal planes (tables, desks, the floor) from plane detection, for the cartridge to land on
+final class PlaneFinder: @unchecked Sendable {
+    let provider = PlaneDetectionProvider(alignments: [.horizontal])
+    private let planes = OSAllocatedUnfairLock<[UUID: RoomPlane]>(initialState: [:])
+
+    static var isSupported: Bool { PlaneDetectionProvider.isSupported }
+
+    var current: [RoomPlane] { planes.withLock { Array($0.values) } }
+
+    func run() async {
+        for await update in provider.anchorUpdates {
+            let anchor = update.anchor
+            switch update.event {
+            case .added, .updated:
+                let plane = Self.plane(of: anchor)
+                planes.withLock { $0[anchor.id] = plane }
+            case .removed: planes.withLock { $0[anchor.id] = nil }
+            @unknown default: break
+            }
+        }
+    }
+
+    /// Its outline's triangles (the plane's mesh) in the room, flattened onto the floor's plane
+    private static func plane(of anchor: PlaneAnchor) -> RoomPlane? {
+        let vertices = anchor.geometry.meshVertices, faces = anchor.geometry.meshFaces
+        guard vertices.format == .float3, faces.primitive == .triangle, faces.bytesPerIndex == 4,
+              vertices.count > 0 else { return nil }
+        let base = vertices.buffer.contents().advanced(by: vertices.offset)
+        let transform = anchor.originFromAnchorTransform
+        var corners: [SIMD3<Float>] = []
+        for v in 0..<vertices.count {
+            let p = base.advanced(by: v * vertices.stride).assumingMemoryBound(to: Float.self)
+            let world = transform * SIMD4(p[0], p[1], p[2], 1)
+            corners.append(SIMD3(world.x, world.y, world.z))
+        }
+        let indices = faces.buffer.contents().assumingMemoryBound(to: UInt32.self)
+        var triangles: [SIMD2<Float>] = []
+        for i in 0..<(faces.count * 3) where Int(indices[i]) < corners.count {
+            let c = corners[Int(indices[i])]
+            triangles.append(SIMD2(c.x, c.z))
+        }
+        let height = corners.map(\.y).reduce(0, +) / Float(corners.count)
+        return RoomPlane(height: height, triangles: triangles)
     }
 }

@@ -17,6 +17,11 @@ struct HandState: Sendable {
     var surface: [SIMD3<Float>] = []
     /// The palm's middle, to move Mario with it while he stands on it
     var palm = SIMD3<Float>.zero
+    /// The way the palm faces (out of it)
+    var palmNormal = SIMD3<Float>(0, -1, 0)
+
+    /// The palm turned up: a pinch made like that is the menu gesture (Start)
+    var palmUp: Bool { palmNormal.y > 0.7 }
 }
 
 /// Reads both hands each frame (on the room's render thread), for the game thread (RoomLink.hands)
@@ -63,6 +68,9 @@ final class HandTracker: @unchecked Sendable {
         let wrist = at(.wrist), indexKnuckle = at(.indexFingerKnuckle), littleKnuckle = at(.littleFingerKnuckle)
         let middleTip = at(.middleFingerTip), littleTip = at(.littleFingerTip)
         hand.palm = (wrist + indexKnuckle + littleKnuckle) / 3
+        // (out of the right palm the knuckles turn clockwise from the wrist; the left is its mirror)
+        let normal = simd_cross(indexKnuckle - wrist, littleKnuckle - wrist) * (index == 1 ? 1 : -1)
+        if simd_length(normal) > 1e-6 { hand.palmNormal = simd_normalize(normal) }
         let corners = [(wrist, indexKnuckle, littleKnuckle), (indexKnuckle, middleTip, littleTip),
                        (indexKnuckle, littleTip, littleKnuckle)]
         for (a, b, c) in corners {

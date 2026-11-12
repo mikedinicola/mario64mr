@@ -13,9 +13,11 @@ struct RoomPlacement {
     var roomFromWindow: simd_float4x4
     /// Half the opening's width and height, metres (16:9, the 60 fps build's picture)
     var halfSize = SIMD2<Float>(0.6, 0.3375)
-    /// Game units a metre, in the window and in the room: Mario (about 160 units tall) is then about 27 cm
+    /// Game units a metre in the room, and in a window 1.2 m wide: Mario (about 160 units tall) is then about 27 cm.
+    /// The level in the window grows and shrinks with it.
     static let unitsPerMetre: Float = 600
-    var scale: Float = 1 / RoomPlacement.unitsPerMetre
+    static let aspect: Float = 16.0 / 9.0
+    var scale: Float { halfSize.x / 0.6 / Self.unitsPerMetre }
     /// How far the sky is from the camera, game units (about 30 m)
     var skyDistance: Float = 18000
 
@@ -28,6 +30,22 @@ struct RoomPlacement {
         let z = -forward, y = SIMD3<Float>(0, 1, 0), x = simd_cross(y, z)
         let center = position + forward * distance - SIMD3(0, 0.1, 0)
         roomFromWindow = simd_float4x4(SIMD4(x, 0), SIMD4(y, 0), SIMD4(z, 0), SIMD4(center, 1))
+    }
+
+    /// A window `width` metres wide at `center`, upright and turned to face `eye`
+    init(center: SIMD3<Float>, facing eye: SIMD3<Float>, width: Float) {
+        var z = SIMD3(eye.x - center.x, 0, eye.z - center.z)
+        z = simd_length(z) > 1e-3 ? simd_normalize(z) : SIMD3(0, 0, 1)
+        let y = SIMD3<Float>(0, 1, 0), x = simd_cross(y, z)
+        roomFromWindow = simd_float4x4(SIMD4(x, 0), SIMD4(y, 0), SIMD4(z, 0), SIMD4(center, 1))
+        halfSize = SIMD2(width / 2, width / 2 / Self.aspect)
+    }
+
+    var center: SIMD3<Float> { SIMD3(roomFromWindow.columns.3.x, roomFromWindow.columns.3.y, roomFromWindow.columns.3.z) }
+
+    /// Where "PRESS START" is on the title screen: in the window's plane, below the face (centre, half size)
+    var startLabel: (center: SIMD2<Float>, half: SIMD2<Float>) {
+        (SIMD2(0, -halfSize.y * 0.86), SIMD2(halfSize.y * 0.45, halfSize.y * 0.08))
     }
 
     /// The game camera's view space into the room, for a frame whose level was drawn with `projection` (as

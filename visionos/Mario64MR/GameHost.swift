@@ -58,7 +58,8 @@ final class GameHost {
         // The other two libraries load with the app (linked); touch each once to show they're there
         let slots = gd_api_texture_slot_count()
         var marioTexture = "no ROM"
-        if let rom = try? Data(contentsOf: resources.appendingPathComponent("baserom.us.z64")) {
+        let rom = try? Data(contentsOf: resources.appendingPathComponent("baserom.us.z64"))
+        if let rom {
             var texture = [UInt8](repeating: 0, count: Int(SM64_TEXTURE_WIDTH * SM64_TEXTURE_HEIGHT * 4))
             rom.withUnsafeBytes { sm64_global_init($0.bindMemory(to: UInt8.self).baseAddress, &texture) }
             marioTexture = texture.contains { $0 != 0 } ? "Mario's textures read from the ROM" : "no Mario textures"
@@ -77,10 +78,18 @@ final class GameHost {
         }
         audio.start()
         publish { $0.status = .running }
+        // The title screen's face in the room (libgoddard), and its sounds (libsm64)
+        let title = TitleScreen(device: device, pack: gameData.appendingPathComponent("res/base.zip"), rom: rom)
+        if title == nil { print("Mario 64 MR: the title screen's face didn't start") }
+        let titleHands = TitleHands()
+        var titleFrame: TitleFrame?
+        var startFrames = 0
+        var wasPinching = [false, false]
 
         #if DEBUG
         let demo = ProcessInfo.processInfo.arguments.contains("-demo")
         let carryDemo = ProcessInfo.processInfo.arguments.contains("-carry")
+        let cartDemo = ProcessInfo.processInfo.arguments.contains("-cart")
         #endif
         let carrier = MarioCarrier()
         let period = 1.0 / 30
@@ -93,6 +102,13 @@ final class GameHost {
             #endif
             // In the room: the level unculled (it's seen from your eyes, not the game camera), billboards facing you
             let room = self.room.current
+            // Shut in its cartridge, the game waits (unless Mario's out in the room)
+            if room.on, let geometry = room.geometry, !geometry.open, sm64unity_carry_mode() < 2 {
+                carrier.reset()
+                titleHands.reset()
+                sleep(until: &deadline, period: period)
+                continue
+            }
             sm64unity_mr_geometry(room.on ? 1 : 0)
             if let triangles = room.roomTriangles {  // (the room, for Mario out in it)
                 self.room.update { $0.roomTriangles = nil }
@@ -110,6 +126,35 @@ final class GameHost {
             } else {
                 carrier.reset()
             }
+            // The title screen in the room: the face, your hands on it, "PRESS START"; the menus: your hand's
+            // cursor and pinch (A); anywhere, a pinch with the palm up is Start
+            let stage = sm64unity_stage()
+            let hands = room.on ? room.hands : []
+            #if DEBUG
+            if cartDemo, stage == 2 || stage == 4, frame % 90 < 3 { pad.buttons |= GamePad.start }
+            #endif
+            if let geometry = room.geometry, room.on, geometry.open, stage == 1, let title {
+                let (cursors, start) = titleHands.update(hands: hands, geometry: geometry, frame: titleFrame)
+                if start { startFrames = 3 }
+                titleFrame = title.tick(cursors, pad: pad)
+            } else {
+                titleHands.reset()
+                titleFrame = nil
+            }
+            if let geometry = room.geometry, room.on, geometry.open, stage == 2 || stage == 4,
+               let pointing = Self.menuCursor(hands, geometry: geometry) {
+                sm64unity_cursor(stage == 2 ? 1 : 0, pointing.x, pointing.y)
+                if pointing.pinching { pad.buttons |= GamePad.a }
+            } else {
+                sm64unity_cursor(0, 0, 0)
+            }
+            for i in hands.indices where i < 2 {
+                let pinching = hands[i].tracked && hands[i].pinching
+                if pinching, !wasPinching[i], hands[i].palmUp { startFrames = 3 }
+                wasPinching[i] = pinching
+            }
+            if startFrames > 0 { pad.buttons |= GamePad.start; startFrames -= 1 }
+            if let title { title.audio(queued: audio.effectsBuffered) { audio.pushEffects($0, count: $1) } }
             if room.on, let head = room.head {
                 sm64unity_billboards(1, head.x, head.y, head.z, room.up.x, room.up.y, room.up.z)
             } else {
@@ -130,9 +175,12 @@ final class GameHost {
             }
             // 60 fps build: the tick drew the frame between the last tick and this one, shown now; render_current
             // draws this tick's own, shown half a tick later
-            let between = maker.make()
+            var between = maker.make()
+            between.title = titleFrame
             if sm64unity_interpolates() == 1, sm64unity_render_current() == 1 {
-                output.publish(between, then: maker.make(), after: period / 2)
+                var current = maker.make()
+                current.title = titleFrame
+                output.publish(between, then: current, after: period / 2)
             } else {
                 output.publish(between)
             }
@@ -145,14 +193,31 @@ final class GameHost {
                     $0.hasGamePad = pad
                 }
             }
-            deadline += period
-            let now = Date.now.timeIntervalSinceReferenceDate
-            if deadline > now {
-                Thread.sleep(forTimeInterval: deadline - now)
-            } else if now - deadline > 0.25 {
-                deadline = now  // (fell far behind, e.g. suspended: don't race to catch up)
-            }
+            sleep(until: &deadline, period: period)
         }
+    }
+
+    private func sleep(until deadline: inout TimeInterval, period: TimeInterval) {
+        deadline += period
+        let now = Date.now.timeIntervalSinceReferenceDate
+        if deadline > now {
+            Thread.sleep(forTimeInterval: deadline - now)
+        } else if now - deadline > 0.25 {
+            deadline = now  // (fell far behind, e.g. suspended: don't race to catch up)
+        }
+    }
+
+    /// A hand at the window, for the menus' cursor: where it points in the game's 320×240 screen (its 4:3 middle
+    /// in the window's plane), and whether it pinches
+    private static func menuCursor(_ hands: [HandState], geometry g: RoomGeometry)
+        -> (x: Float, y: Float, pinching: Bool)? {
+        let h = g.halfSize
+        for hand in hands.reversed() where hand.tracked {  // (the right hand first)
+            let p = g.inWindow(hand.pinch)
+            guard abs(p.x) < h.y * 4 / 3 * 1.1, abs(p.y) < h.y * 1.1, p.z > -0.2, p.z < 0.25 else { continue }
+            return (160 + p.x / (h.y * 4 / 3) * 160, 120 - p.y / h.y * 120, hand.pinching)
+        }
+        return nil
     }
 
     #if DEBUG

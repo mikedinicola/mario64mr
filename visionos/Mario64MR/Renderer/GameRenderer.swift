@@ -19,7 +19,7 @@ final class GameRenderer: NSObject, MTKViewDelegate {
     let device: MTLDevice
     let queue: MTLCommandQueue
     let target: Target
-    private let library: MTLLibrary
+    let library: MTLLibrary
     private let frames: GameFrames
     private var pipelines: [UInt64: MTLRenderPipelineState] = [:]
     private var depthStates: [Int: MTLDepthStencilState] = [:]
