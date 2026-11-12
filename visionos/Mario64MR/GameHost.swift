@@ -1,8 +1,9 @@
 import Foundation
+import Metal
 import Observation
 
 /// Runs the game (SM64Game) on a thread of its own at 30 game frames a second: the pad in, the frame's sound out to
-/// AudioOutput. Phase 0: nothing is drawn yet; the frame's batches are only counted.
+/// AudioOutput, the frame's draw calls out to `output` for GameRenderer.
 @Observable
 final class GameHost {
     enum Status: Equatable { case starting, running, failed(String) }
@@ -15,6 +16,10 @@ final class GameHost {
     private(set) var queuedAudio = 0
     private(set) var libraries = ""
 
+    private(set) var hasGamePad = false
+
+    @ObservationIgnored let device = MTLCreateSystemDefaultDevice()
+    @ObservationIgnored let output = GameFrames()
     @ObservationIgnored private let audio = AudioOutput()
     @ObservationIgnored private var thread: Thread?
 
@@ -57,6 +62,8 @@ final class GameHost {
             rom.withUnsafeBytes { sm64_global_init($0.bindMemory(to: UInt8.self).baseAddress, &texture) }
             marioTexture = texture.contains { $0 != 0 } ? "Mario's textures read from the ROM" : "no Mario textures"
         }
+        guard let device else { return fail("This device has no Metal GPU") }
+        let maker = GameFrameMaker(device: device)
         let size = Int(sm64unity_batch_size())
         guard size == MemoryLayout<SM64UnityBatch>.size else {
             return fail("SM64Game's batches are \(size) bytes, the host expects \(MemoryLayout<SM64UnityBatch>.size)")
@@ -70,11 +77,17 @@ final class GameHost {
         audio.start()
         publish { $0.status = .running }
 
+        #if DEBUG
+        let demo = ProcessInfo.processInfo.arguments.contains("-demo")
+        #endif
         let period = 1.0 / 30
         var deadline = Date.now.timeIntervalSinceReferenceDate
         var frame = 0
         while !Thread.current.isCancelled {
-            let pad = GamePad.read()
+            var pad = GamePad.read()
+            #if DEBUG
+            if demo { pad = Self.demoInput(frame) }
+            #endif
             sm64unity_audio_buffered(Int32(audio.buffered))
             guard sm64unity_tick(pad.buttons, pad.stickX, pad.stickY) == 1 else {
                 return fail("The game stopped (bridge error \(sm64unity_error()))")
@@ -83,16 +96,22 @@ final class GameHost {
             if let samples = sm64unity_audio(&count), count > 0 {
                 audio.push(samples, count: Int(count))
             }
-            // 60 fps build: the tick drew the in-between frame, this draws the frame itself
-            if sm64unity_interpolates() == 1 {
-                _ = sm64unity_render_current()
+            // 60 fps build: the tick drew the frame between the last tick and this one, shown now; render_current
+            // draws this tick's own, shown half a tick later
+            let between = maker.make()
+            if sm64unity_interpolates() == 1, sm64unity_render_current() == 1 {
+                output.publish(between, then: maker.make(), after: period / 2)
+            } else {
+                output.publish(between)
             }
-            var batchCount: Int32 = 0
-            _ = sm64unity_batches(&batchCount)
             frame += 1
             if frame % 15 == 0 {
-                let (stage, batches, queued) = (Int(sm64unity_stage()), Int(batchCount), audio.buffered)
-                publish { $0.frames = frame; $0.stage = stage; $0.batches = batches; $0.queuedAudio = queued }
+                let (stage, batches, queued) = (Int(sm64unity_stage()), between.draws.count, audio.buffered)
+                let pad = GamePad.connected
+                publish {
+                    $0.frames = frame; $0.stage = stage; $0.batches = batches; $0.queuedAudio = queued
+                    $0.hasGamePad = pad
+                }
             }
             deadline += period
             let now = Date.now.timeIntervalSinceReferenceDate
@@ -103,4 +122,19 @@ final class GameHost {
             }
         }
     }
+
+    #if DEBUG
+    /// Launched with -demo (debug builds only): into the game with no controller, for the simulator, which can't
+    /// send a gamepad or keys to the app. Start through the title and file select, then Mario runs and jumps.
+    private static func demoInput(_ frame: Int) -> GamePad.State {
+        var state = GamePad.State()
+        if [300, 450, 600].contains(where: { frame >= $0 && frame < $0 + 3 }) { state.buttons = GamePad.start }
+        if frame >= 900 {
+            state.stickY = 80
+            state.stickX = Int8(frame / 90 % 2 == 0 ? 30 : -30)
+            if frame % 60 < 3 { state.buttons |= GamePad.a }
+        }
+        return state
+    }
+    #endif
 }

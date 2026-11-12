@@ -395,8 +395,8 @@ To install it, follow [Install](#install) with `Mario64MR-Pico.apk` in place of 
 
 ## Apple Vision Pro (in progress)
 
-A native visionOS app is being written in [`visionos/`](visionos). **It doesn't play yet**: so far it builds the
-game for visionOS, runs it and plays its sound, with nothing drawn. visionOS runs no code that isn't signed into the
+A native visionOS app is being written in [`visionos/`](visionos). **There's no mixed reality yet**: so far the
+whole game plays in a flat window, with a paired gamepad (DualSense, Xbox) or a keyboard. visionOS runs no code that isn't signed into the
 app, so instead of an app to download you build it yourself in Xcode, with the game made from your ROM inside it.
 
 You need a Mac with Xcode 26 or later and its visionOS platform (Xcode › Settings › Components), and an Apple ID.

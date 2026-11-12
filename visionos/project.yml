@@ -21,6 +21,10 @@ targets:
     platform: visionOS
     sources:
       - path: Mario64MR
+        excludes:
+          - "**/*.msl"
+      - path: Mario64MR/Renderer/GameShaders.msl
+        buildPhase: resources  # (Metal source, compiled when the app starts: building needs no Metal toolchain)
       - path: Build/Data
         type: folder
         buildPhase: resources
@@ -37,6 +41,8 @@ targets:
         codeSign: true
       - sdk: GameController.framework
       - sdk: AVFAudio.framework
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
     info:
       path: Mario64MR/Info.plist
       properties:
