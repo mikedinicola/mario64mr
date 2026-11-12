@@ -15,6 +15,8 @@ struct GameFrame {
         var viewport: SIMD4<Int32>  // x, y, width, height in the game's window, OpenGL's origin at the bottom left
         var scissor: SIMD4<Int32>
         var kind: Kind
+        /// What it is (unity_set_tag): 0 the level, 1 Mario, 2 Mario's shadow, 3 the HUD
+        var tag: Int32
         /// The projection the game drew it with (as simd reads the game's row-vector matrix: clip = projection * v)
         var projection: simd_float4x4
     }
@@ -36,6 +38,8 @@ struct GameFrame {
     var draws: [Draw]
     /// The game camera (world to view, as simd reads it) of the frame
     var camera: simd_float4x4
+    /// Mario out in the room (sm64unity_carry_mode 2 or 3): his draws are then in the room's game coordinates
+    var marioOutside: Bool
     var size: SIMD2<Int32>  // the window the game draws for (1280×720 in the 60 fps build)
     var number: UInt32
 }
@@ -78,13 +82,14 @@ final class GameFrameMaker {
                     decal: b.decal != 0, blend: b.blend != 0,
                     viewport: SIMD4(b.viewport.0, b.viewport.1, b.viewport.2, b.viewport.3),
                     scissor: SIMD4(b.scissor.0, b.scissor.1, b.scissor.2, b.scissor.3),
-                    kind: kind, projection: projection))
+                    kind: kind, tag: tags?[i] ?? 0, projection: projection))
             }
         }
         number &+= 1
         let size = sm64unity_interpolates() == 1 ? SIMD2<Int32>(1280, 720) : SIMD2<Int32>(320, 240)
         let camera = sm64unity_camera().map { matrix($0) } ?? matrix_identity_float4x4
-        return GameFrame(vertices: buffer, draws: draws, camera: camera, size: size, number: number)
+        return GameFrame(vertices: buffer, draws: draws, camera: camera, marioOutside: sm64unity_carry_mode() >= 2,
+                         size: size, number: number)
     }
 
     /// The game's Mat4 (row vectors: v' = v * M) as simd's column-major matrix, which is then M transposed:

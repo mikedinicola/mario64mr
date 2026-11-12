@@ -27,11 +27,14 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private let link: RoomLink
     private let session = ARKitSession()
     private let world = WorldTrackingProvider()
+    private let scanner = RoomScanner()
     private var placement: RoomPlacement?
     private var placedFromHead = false
     private var started: TimeInterval?
     private var drewFirstFrame = false
     static let log = Logger(subsystem: "Mario64MR", category: "Room")
+    /// The room's surfaces for drawing (packed float3, metres), as the scanner last gave them
+    private let roomMesh = OSAllocatedUnfairLock<(buffer: MTLBuffer?, count: Int)>(uncheckedState: (nil, 0))
 
     private init?(layer: LayerRenderer, device: MTLDevice, frames: GameFrames, link: RoomLink) {
         let target = GameRenderer.Target(colorFormat: layer.configuration.colorFormat,
@@ -56,21 +59,32 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private func run() {
         // (where the head is: if tracking doesn't start, the room still shows, placed in front of where the head
         // would be, rather than staying empty)
-        let tracking = Task { [session, world] in
-            guard WorldTrackingProvider.isSupported else { return Self.log.info("No world tracking here") }
+        let tracking = Task { [session, world, scanner] in
+            var providers: [any DataProvider] = WorldTrackingProvider.isSupported ? [world] : []
+            if RoomScanner.isSupported,
+               await session.requestAuthorization(for: [.worldSensing])[.worldSensing] == .allowed {
+                providers.append(scanner.provider)
+            }
+            guard !providers.isEmpty else { return Self.log.info("No world tracking here") }
+            var running = false
             for attempt in 1...10 where !Task.isCancelled {
                 do {
-                    try await session.run([world])
-                    return Self.log.info("World tracking started")
+                    try await session.run(providers)
+                    Self.log.info("World tracking started")
+                    running = true
+                    break
                 } catch {
                     Self.log.error("World tracking didn't start (try \(attempt)): \(error)")
                     try? await Task.sleep(for: .seconds(1))
                 }
             }
+            if running, providers.contains(where: { $0 === scanner.provider }) {
+                await scanner.run { [weak self] mesh in self?.useRoom(mesh) }
+            }
         }
         link.update { $0.on = true }
         defer {
-            link.update { $0.on = false; $0.head = nil }
+            link.update { $0.on = false; $0.head = nil; $0.debugRelease = nil }
             link.onClose?()
             tracking.cancel()
             session.stop()
@@ -109,10 +123,19 @@ final class ImmersiveRenderer: @unchecked Sendable {
         if placement == nil || (!placedFromHead && realHead) {
             if realHead || !WorldTrackingProvider.isSupported || (placement == nil && now - (started ?? now) > 2) {
                 // (no tracked head after 2 s, as in the simulator: in front of the pose there is, wherever it is)
-                placement = RoomPlacement(facing: head)
+                let facing = head
+                let placement = RoomPlacement(facing: facing)
+                self.placement = placement
                 placedFromHead = realHead
                 let y = head.columns.3.y, tracked = anchor?.isTracked ?? false
                 Self.log.info("The window is placed (\(realHead ? "from the head" : "no tracked head yet"), head y \(y), tracked \(tracked))")
+                #if DEBUG
+                if !RoomScanner.isSupported {  // (the simulator: a floor and a table to try Mario out on)
+                    let (room, above) = RoomMesh.standIn(window: placement, floor: facing.columns.3.y - 1.5)
+                    useRoom(room)
+                    link.update { $0.debugRelease = above }
+                }
+                #endif
             }
         }
 
@@ -121,12 +144,22 @@ final class ImmersiveRenderer: @unchecked Sendable {
             let level = gameFrame.draws.first { $0.kind == .world }?.projection
             let roomFromView = placement.roomFromView(projection: level, xScale: xScale)
             let viewFromRoom = roomFromView.inverse
+            // The game camera and its near plane in the window's space, for the level reaching out of the window
+            let windowFromView = placement.roomFromWindow.inverse * roomFromView
+            let cameraInWindow = windowFromView * SIMD4(0, 0, 0, 1)
+            let nearInWindow = windowFromView * SIMD4(0, 0, -RoomPlacement.near(level), 1)
+            let gameCamera = SIMD4(cameraInWindow.x, cameraInWindow.y, cameraInWindow.z, nearInWindow.z)
             let up = simd_normalize(SIMD3(gameFrame.camera.columns.1.x, gameFrame.camera.columns.1.y,
                                           gameFrame.camera.columns.1.z))
             // Billboards turn to the head, in the game camera's view space (sm64unity_billboards, next tick)
             let headInView = viewFromRoom * head.columns.3
             link.update { $0.head = SIMD3(headInView.x, headInView.y, headInView.z); $0.up = up }
 
+            let camera = gameFrame.camera
+            let actorFromClip = { (draw: GameFrame.Draw) -> simd_float4x4 in
+                RoomPlacement.actorFromClip(draw.projection, xScale: xScale, camera: camera)
+            }
+            let room = roomMesh.withLockUnchecked { $0 }
             var cache: [SIMD16<Float>: simd_float4x4] = [:]  // (most draws share a few projections)
             let roomFromClip = { (draw: GameFrame.Draw) -> simd_float4x4 in
                 let c = draw.projection.columns
@@ -145,9 +178,17 @@ final class ImmersiveRenderer: @unchecked Sendable {
                     windowFromRoom: placement.roomFromWindow.inverse,
                     eye: placement.roomFromWindow.inverse * roomFromEye.columns.3,
                     window: SIMD4(placement.halfSize.x, placement.halfSize.y, placement.skyDistance, 0),
-                    up: SIMD4(up, 0))
+                    up: SIMD4(up, 0),
+                    camera: gameCamera)
                 guard let encoder = makeEncoder(commands, drawable: drawable, view: view) else { continue }
-                game.encodeRoom(gameFrame, into: encoder, eye: eye, roomFromClip: roomFromClip)
+                // The game; the room's surfaces into depth; then Mario, if he's out in the room, hidden by them
+                game.encodeRoom(gameFrame, into: encoder, eye: eye, actors: false,
+                                roomFromClip: roomFromClip, actorFromClip: actorFromClip)
+                if gameFrame.marioOutside {
+                    if let mesh = room.buffer { game.encodeRoomMesh(mesh, count: room.count, into: encoder, eye: eye) }
+                    game.encodeRoom(gameFrame, into: encoder, eye: eye, actors: true,
+                                    roomFromClip: roomFromClip, actorFromClip: actorFromClip)
+                }
                 encoder.endEncoding()
             }
             if !drewFirstFrame {
@@ -161,6 +202,15 @@ final class ImmersiveRenderer: @unchecked Sendable {
         }
         drawable.encodePresent(commandBuffer: commands)
         commands.commit()
+    }
+
+    /// A new room from the scanner: to the game (its collision, loaded on the game thread) and to the drawing
+    private func useRoom(_ mesh: RoomMesh) {
+        link.update { [triangles = mesh.gameTriangles()] in $0.roomTriangles = triangles }
+        let corners = mesh.triangles.prefix(RoomMesh.maxTriangles * 3).flatMap { [$0.x, $0.y, $0.z] }
+        let buffer = corners.isEmpty ? nil
+            : game.device.makeBuffer(bytes: corners, length: corners.count * 4, options: .storageModeShared)
+        roomMesh.withLockUnchecked { $0 = (buffer, corners.count / 3) }
     }
 
     private func makeEncoder(_ commands: MTLCommandBuffer, drawable: LayerRenderer.Drawable,
@@ -195,6 +245,10 @@ final class RoomLink: @unchecked Sendable {
         var on = false
         var head: SIMD3<Float>?   // in the game camera's view space
         var up = SIMD3<Float>(0, 1, 0)
+        /// The room's surfaces for the game to load (sm64unity_room_mesh), until it has
+        var roomTriangles: [Int16]?
+        /// (debug, the simulator's stand-in room) where -release drops Mario, metres
+        var debugRelease: SIMD3<Float>?
     }
     private let state = OSAllocatedUnfairLock(initialState: State())
     /// Called (on the room's thread) when the room closes

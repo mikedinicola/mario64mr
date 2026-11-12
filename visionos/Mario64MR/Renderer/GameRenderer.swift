@@ -127,12 +127,15 @@ final class GameRenderer: NSObject, MTKViewDelegate {
         var eye: SIMD4<Float>
         var window: SIMD4<Float>
         var up: SIMD4<Float>
+        var camera: SIMD4<Float>
     }
 
-    /// The frame's draws for one eye. `roomFromClip` gives each level draw's way from the game's clip space into
-    /// the room (RoomPlacement).
-    func encodeRoom(_ frame: GameFrame, into encoder: MTLRenderCommandEncoder, eye: RoomEye,
-                    roomFromClip: (GameFrame.Draw) -> simd_float4x4) {
+    /// The frame's draws for one eye: the game (`actors` false), or Mario out in the room (`actors` true, after the
+    /// room's depth). `roomFromClip` gives each level draw's way from the game's clip space into the room, and
+    /// `actorFromClip` Mario's while he's out in the room (RoomPlacement).
+    func encodeRoom(_ frame: GameFrame, into encoder: MTLRenderCommandEncoder, eye: RoomEye, actors: Bool,
+                    roomFromClip: (GameFrame.Draw) -> simd_float4x4,
+                    actorFromClip: (GameFrame.Draw) -> simd_float4x4) {
         guard let vertices = frame.vertices else { return }
         var number = frame.number
         var eye = eye
@@ -141,19 +144,42 @@ final class GameRenderer: NSObject, MTKViewDelegate {
         encoder.setVertexBytes(&eye, length: MemoryLayout<RoomEye>.stride, index: 2)
         encoder.setCullMode(.none)
         for draw in frame.draws {
-            guard prepare(draw, encoder: encoder) else { continue }
-            var room = RoomDraw(roomFromClip: draw.kind == .world ? roomFromClip(draw) : matrix_identity_float4x4,
-                                kind: SIMD4(draw.kind.rawValue, 0, 0, 0))
+            let actor = frame.marioOutside && (draw.tag == 1 || draw.tag == 2)
+            guard actor == actors, prepare(draw, encoder: encoder) else { continue }
+            var room = actor ? RoomDraw(roomFromClip: actorFromClip(draw), kind: SIMD4(3, 0, 0, 0))
+                : RoomDraw(roomFromClip: draw.kind == .world ? roomFromClip(draw) : matrix_identity_float4x4,
+                           kind: SIMD4(draw.kind.rawValue, 0, 0, 0))
             encoder.setVertexBytes(&room, length: MemoryLayout<RoomDraw>.stride, index: 1)
             encoder.setFragmentBytes(&room, length: MemoryLayout<RoomDraw>.stride, index: 2)
             // The sky behind everything, flat pictures over it all, each with a depth the compositor shows: on the
             // headset, what's left at depth 0 (the clear, infinitely far) is taken as empty and the room shows there
-            if draw.kind != .world {
+            if !actor, draw.kind != .world {
                 encoder.setDepthStencilState(overState)
             }
             encoder.setVertexBuffer(vertices, offset: draw.firstFloat * 4, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: draw.vertexCount)
         }
+    }
+
+    private lazy var roomMeshPipeline: MTLRenderPipelineState? = {
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction = library.makeFunction(name: "room_mesh_vertex")
+        descriptor.depthAttachmentPixelFormat = target.depthFormat
+        descriptor.colorAttachments[0].pixelFormat = target.colorFormat
+        descriptor.colorAttachments[0].writeMask = []
+        return try? device.makeRenderPipelineState(descriptor: descriptor)
+    }()
+
+    /// The room's surfaces (`count` vertices of packed float3, metres), into depth only
+    func encodeRoomMesh(_ mesh: MTLBuffer, count: Int, into encoder: MTLRenderCommandEncoder, eye: RoomEye) {
+        guard count > 0, let pipeline = roomMeshPipeline else { return }
+        var eye = eye
+        encoder.setRenderPipelineState(pipeline)
+        encoder.setDepthStencilState(depthState(test: true, write: true))
+        encoder.setDepthBias(0, slopeScale: 0, clamp: 0)
+        encoder.setVertexBytes(&eye, length: MemoryLayout<RoomEye>.stride, index: 2)
+        encoder.setVertexBuffer(mesh, offset: 0, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: count)
     }
 
     // ---------------------------------------------------------------- Both

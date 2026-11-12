@@ -85,7 +85,7 @@ vertex Varyings game_vertex(uint vid [[vertex_id]], const device float *floats [
 
 struct RoomDraw {
     float4x4 roomFromClip;  // the draw's projection undone, then the game camera's view space into the room
-    uint4 kind;             // x: GameFrame.Kind
+    uint4 kind;             // x: GameFrame.Kind, or 3: Mario out in the room (roomFromClip through the room)
 };
 
 struct RoomEye {
@@ -96,6 +96,7 @@ struct RoomEye {
     float4 eye;               // xyz: the eye in the window's space
     float4 window;            // xy: the opening's half size (metres), z: the sky's distance (game units)
     float4 up;                // xyz: the game's up in the game camera's view space
+    float4 camera;            // xyz: the game camera in the window's space (in front of it), w: its near plane's z there
 };
 
 // The sky's tiles as skybox.c lays them out (SCREEN_WIDTH 320 wide, 1280 units round, 4 units a degree up and
@@ -117,7 +118,7 @@ vertex Varyings game_vertex_room(uint vid [[vertex_id]], const device float *flo
     float4 clip;
     Varyings out = readVertex(vid, floats, clip);
     float4 room;
-    if (draw.kind.x == 0) {         // the level: back into the game camera's view space, and on into the room
+    if (draw.kind.x == 0 || draw.kind.x == 3) {  // the level, or Mario in the room: unprojected into the room
         room = draw.roomFromClip * clip;
     } else if (draw.kind.x == 1) {  // the sky: far away, round the camera
         float3 direction = skyDirection(clip.xy / clip.w, normalize(eye.up.xyz));
@@ -204,22 +205,34 @@ fragment float4 game_fragment(Varyings in [[stage_in]],
 
 // In the room the level is seen only through the window's opening: from outside, what's behind the window and seen
 // through the opening; from inside (the head past the window), everything but the room seen back through it.
+// The game camera stands in front of the window, so the level reaches out past it towards you: what lies between
+// the window and the camera's near plane, in the game's own picture (the camera's view through the opening), comes
+// out of the window, as the flat game shows it, rather than being cut off at the window like a near plane there.
 // The output is linear, as the layer's sRGB colour wants it.
 fragment float4 game_fragment_room(Varyings in [[stage_in]],
                                    texture2d<float> texture0 [[texture(0)]], texture2d<float> texture1 [[texture(1)]],
                                    sampler sampler0 [[sampler(0)]], sampler sampler1 [[sampler(1)]],
                                    constant uint &frame [[buffer(0)]], constant RoomEye &eye [[buffer(1)]],
                                    constant RoomDraw &draw [[buffer(2)]]) {
-    if (draw.kind.x != 2) {
+    if (draw.kind.x <= 1) {  // (the level and its sky; not flat pictures on the window, nor Mario in the room)
         float3 p = (eye.windowFromRoom * float4(in.room, 1)).xyz, e = eye.eye.xyz;
         bool crosses = (e.z > 0) != (p.z > 0);
         float2 at = mix(e.xy, p.xy, e.z / (e.z - p.z));
         bool throughOpening = crosses && all(abs(at) <= eye.window.xy);
         bool inside = e.z <= 0;
-        if (inside ? (p.z > 0 && throughOpening) : !throughOpening) discard_fragment();
+        float3 c = eye.camera.xyz;
+        bool outInFront = draw.kind.x == 0 && p.z > 0 && p.z <= eye.camera.w
+            && all(abs(mix(c.xy, p.xy, c.z / (c.z - p.z))) <= eye.window.xy);
+        if (inside ? (p.z > 0 && throughOpening) : !(throughOpening || outInFront)) discard_fragment();
     }
     float4 color = shade(in, texture0, texture1, sampler0, sampler1, frame);
     float3 c = saturate(color.rgb);
     float3 linear = select(pow((c + 0.055) / 1.055, 2.4), c / 12.92, c <= 0.04045);
     return float4(linear, opaque ? 1.0 : color.a);
+}
+
+// The room's own surfaces (scene reconstruction), into depth only: the real furniture hides Mario behind it
+vertex float4 room_mesh_vertex(uint vid [[vertex_id]], const device packed_float3 *positions [[buffer(0)]],
+                               constant RoomEye &eye [[buffer(2)]]) {
+    return eye.viewProjection * float4(float3(positions[vid]), 1);
 }
