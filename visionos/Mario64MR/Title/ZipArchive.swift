@@ -1,7 +1,8 @@
 import Compression
 import Foundation
 
-/// Reads files out of a zip (sm64ex's resource pack, base.zip): stored or deflated entries, no zip64
+/// Reads files out of a zip (sm64ex's resource pack, base.zip, and texture packs): stored or deflated entries, no
+/// zip64
 struct ZipArchive {
     private let data: Data
     private var entries: [String: (method: UInt16, compressed: Int, size: Int, header: Int)] = [:]
@@ -28,6 +29,9 @@ struct ZipArchive {
             at += 46 + skip
         }
     }
+
+    /// The entries' names (folders end in /)
+    var names: [String] { Array(entries.keys) }
 
     func read(_ name: String) -> Data? {
         guard let entry = entries[name], entry.header + 30 <= data.count,
