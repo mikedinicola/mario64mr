@@ -90,6 +90,10 @@ static float carry_pos[3];
 /* Where he was carried from: a warp to another level or area (exiting a course, a star, a death) brings him back
  * into the game, out of the room and out of the hand */
 static s16 carry_level=-1, carry_area=-1;
+/* Where he was in the level when first taken out of it: back there if the room has no floor under him (the game
+ * would count that as out of bounds and kill him, WARP_OP_DEATH: Bowser's laugh, over and over while he's still in
+ * the room after the warp) */
+static float carry_from[3];
 extern void unity_room_begin(void);
 extern void unity_room_end(void);
 extern int unity_room_surface_count(void);
@@ -123,11 +127,50 @@ EXPORT int sm64unity_mario(float *state) {
         && (gMarioState->action & ACT_GROUP_MASK)!=ACT_GROUP_CUTSCENE
         && gCamera && !gCamera->cutscene ? 2 : 1;
 }
+/* Is there a floor under this point of the room, as the game's own step (update_mario_geometry_inputs) finds it? */
+static int room_floor_under(float x,float y,float z) {
+    struct Surface *floor;
+    unity_room_begin();
+    find_floor(x,y,z,&floor);
+    unity_room_end();
+    return floor!=NULL;
+}
+/* Out in the room the stick steers by your head, as in the game it steers by the camera: the game camera's yaw
+ * means nothing in the room's coordinates (up on the stick went any way at all, depending on where it had
+ * looked). The host gives the way back towards you from where you look, level, in the room (sm64unity_room_facing) */
+static int room_facing_on;
+static float room_facing[2];
+EXPORT void sm64unity_room_facing(int on, float x, float z) {
+    room_facing_on = on && isfinite(x) && isfinite(z) && x * x + z * z > 1e-6f;
+    if (room_facing_on) { room_facing[0] = x; room_facing[1] = z; }
+}
+/* The camera's yaw for the stick (mario.c, update_mario_joystick_inputs): towards the camera from Mario */
+s16 unity_stick_yaw(s16 camera_yaw) {
+    if (carry_mode != 3 || !room_facing_on) return camera_yaw;
+    return atan2s(room_facing[1], room_facing[0]);
+}
+/* Back into the game where he was taken from, falling */
+static void return_to_game(void) {
+    carry_mode=0;
+    unity_skip_interpolation();
+    vec3f_copy(gMarioState->pos,carry_from);
+    vec3f_copy(gMarioObject->header.gfx.pos,carry_from);
+    vec3f_set(gMarioState->vel,0,0,0);
+    gMarioState->forwardVel=0;
+    set_mario_action(gMarioState,ACT_FREEFALL,0);
+}
+/* A warp (level_update.c, init_mario_after_warp) puts him at its spawn point, in the game */
+void unity_mario_warped(void) {
+    if (!carry_mode) return;
+    carry_mode=0;
+    unity_skip_interpolation();
+}
 EXPORT int sm64unity_carry(int mode, float x,float y,float z,float vx,float vy,float vz) {
     if (!gMarioObject || !gMarioState || !gMarioState->action || mode<0 || mode>3) return 0;
     if (!isfinite(x)||!isfinite(y)||!isfinite(z)||!isfinite(vx)||!isfinite(vy)||!isfinite(vz)) return 0;
-    if (mode==3 && unity_room_surface_count()==0) return 0;
+    if (mode==3 && (unity_room_surface_count()==0 || !room_floor_under(x,y,z))) return 0;
     int was_held=carry_mode==1 || carry_mode==2;
+    if (carry_mode==0 && mode!=0) vec3f_copy(carry_from,gMarioState->pos);
     if ((carry_mode>=2) != (mode>=2)) unity_skip_interpolation(); /* changing worlds: no in-between frame */
     carry_mode=mode;
     carry_level=gCurrLevelNum; carry_area=gCurrAreaIndex;
@@ -159,6 +202,12 @@ s32 unity_execute_mario_action(struct Object *o) {
         return 0;
     }
     if (!unity_mario_outside()) return execute_mario_action(o);
+    /* Off the edge of what the room has scanned (or moved there by a hand): no floor, which the game would take
+     * for out of bounds and kill him for. Back into the game instead */
+    if (!room_floor_under(gMarioState->pos[0],gMarioState->pos[1],gMarioState->pos[2])) {
+        return_to_game();
+        return execute_mario_action(o);
+    }
     unity_room_begin();
     s32 result=execute_mario_action(o);
     unity_room_end();

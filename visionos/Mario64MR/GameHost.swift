@@ -80,7 +80,9 @@ final class GameHost {
 
         #if DEBUG
         let demo = ProcessInfo.processInfo.arguments.contains("-demo")
+        let carryDemo = ProcessInfo.processInfo.arguments.contains("-carry")
         #endif
+        let carrier = MarioCarrier()
         let period = 1.0 / 30
         var deadline = Date.now.timeIntervalSinceReferenceDate
         var frame = 0
@@ -96,18 +98,27 @@ final class GameHost {
                 self.room.update { $0.roomTriangles = nil }
                 let loaded = triangles.withUnsafeBufferPointer { sm64unity_room_mesh($0.baseAddress, Int32($0.count / 9)) }
                 if loaded < 0 { print("Mario 64 MR: the room didn't load (\(loaded))") }
+                carrier.roomHasSurfaces = loaded > 0
             }
-            #if DEBUG
-            if demo, room.on, frame == 2300, let at = room.debugRelease, ProcessInfo.processInfo.arguments.contains("-release") {
-                // Out of the window onto the stand-in table, as a hand would let him go (sm64unity_carry 3)
-                let p = at * RoomPlacement.unitsPerMetre
-                _ = sm64unity_carry(3, p.x, p.y, p.z, 0, 0, 0)
+            // Your hands and Mario
+            if room.on, let geometry = room.geometry {
+                var hands = room.hands
+                #if DEBUG
+                if demo, carryDemo { hands = demoHand(frame, carrier: carrier, geometry: geometry, to: room.debugRelease) }
+                #endif
+                carrier.update(hands: hands, geometry: geometry)
+            } else {
+                carrier.reset()
             }
-            #endif
             if room.on, let head = room.head {
                 sm64unity_billboards(1, head.x, head.y, head.z, room.up.x, room.up.y, room.up.z)
             } else {
                 sm64unity_billboards(0, 0, 0, 0, 0, 1, 0)
+            }
+            if room.on, let facing = room.facing {
+                sm64unity_room_facing(1, facing.x, facing.y)
+            } else {
+                sm64unity_room_facing(0, 0, 0)
             }
             sm64unity_audio_buffered(Int32(audio.buffered))
             guard sm64unity_tick(pad.buttons, pad.stickX, pad.stickY) == 1 else {
@@ -147,17 +158,36 @@ final class GameHost {
     #if DEBUG
     /// Launched with -demo (debug builds only): into the game with no controller, for the simulator, which can't
     /// send a gamepad or keys to the app. Start through the title and file select, then Mario runs and jumps
-    /// (with -release, until he's let out into the room at frame 2300, where he stays put).
+    /// (with -carry, until frame 2250, standing still for a hand to take him out into the room at 2300).
     private static func demoInput(_ frame: Int) -> GamePad.State {
         var state = GamePad.State()
         if [300, 450, 600].contains(where: { frame >= $0 && frame < $0 + 3 }) { state.buttons = GamePad.start }
-        let released = frame >= 2300 && ProcessInfo.processInfo.arguments.contains("-release")
+        let released = frame >= 2250 && ProcessInfo.processInfo.arguments.contains("-carry")
         if frame >= 900, !released {
             state.stickY = 80
             state.stickX = Int8(frame / 90 % 2 == 0 ? 30 : -30)
             if frame % 60 < 3 { state.buttons |= GamePad.a }
         }
         return state
+    }
+    
+    @ObservationIgnored private var demoHandFrom: SIMD3<Float>?
+
+    /// With -carry (and -room): a hand, as the simulator has none, that pinches Mario in the level at frame 2300,
+    /// carries him out of the window to `target` (the stand-in room's counter) and lets go there
+    private func demoHand(_ frame: Int, carrier: MarioCarrier, geometry: RoomGeometry,
+                          to target: SIMD3<Float>?) -> [HandState] {
+        guard frame >= 2290, frame < 2400, let target else { return [] }
+        if frame == 2290 { demoHandFrom = carrier.marioInRoom(geometry: geometry) }
+        guard let from = demoHandFrom.map({ $0 + SIMD3<Float>(0, 0.09, 0) }) else { return [] }
+        var hand = HandState(tracked: true)
+        let t = Float(min(max(frame - 2300, 0), 60)) / 60
+        let to = target + SIMD3<Float>(0, 0.12, 0)
+        hand.pinch = from + (to - from) * t
+        hand.reach = hand.pinch
+        hand.palm = hand.pinch - SIMD3<Float>(0, 0.1, 0)
+        hand.pinching = frame >= 2300 && frame < 2370
+        return [hand, HandState()]
     }
     #endif
 }

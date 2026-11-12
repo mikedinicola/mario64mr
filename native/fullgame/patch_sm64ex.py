@@ -152,6 +152,11 @@ def prepare(root, rom, sixty=True, external_data=True):
     level = 'extern void unity_set_stage(int);\n' + level
     start = level.index('{', level.index('s32 lvl_init_from_save_file('))
     level = level[:start+1] + '\n    unity_set_stage(3);' + level[start+1:]
+    # Any warp (a death, a pipe, a door to the same area) brings Mario back into the game: his room coordinates
+    # mean nothing at the warp's spawn point (unity_mr.c)
+    level = 'extern void unity_mario_warped(void);\n' + level
+    level = replace_once(level, 'void init_mario_after_warp(void) {\n',
+                         'void init_mario_after_warp(void) {\n    unity_mario_warped();\n')
     area = original("src/game/area.c")
     if sixty:
         # (for MarioFace) The HUD (its icons, then its numbers, printed as text labels) is tagged 3, so the host can
@@ -246,6 +251,15 @@ def prepare(root, rom, sixty=True, external_data=True):
                              '    clear_dynamic_surfaces();\n    extern void unity_load_game_hands(void);\n'
                              '    unity_load_game_hands();\n\n    // Update spawners')
     (root / "src/game/object_list_processor.c").write_text(processor)
+    # Out in the room, the stick steers by your head rather than by the game camera (unity_mr.c, unity_stick_yaw)
+    mario = original("src/game/mario.c")
+    stick = 'atan2s(-controller->stickY, controller->stickX) + m->area->camera->yaw;'
+    if mario.count(stick) != 2:
+        raise ValueError("Upstream source changed: " + stick)
+    mario = replace_once(mario, '#include <PR/ultratypes.h>\n',
+                         '#include <PR/ultratypes.h>\nextern s16 unity_stick_yaw(s16);\n').replace(
+        stick, 'atan2s(-controller->stickY, controller->stickX) + unity_stick_yaw(m->area->camera->yaw);')
+    (root / "src/game/mario.c").write_text(mario)
     camera = original("src/game/camera.c")
     camera = 'extern int unity_camera_frozen(void);\n' + camera
     camera = replace_once(camera, 'void update_camera(struct Camera *c) {',

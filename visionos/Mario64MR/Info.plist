@@ -31,6 +31,8 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSHandsTrackingUsageDescription</key>
+	<string>Your hands pick Mario up, carry him out of the window and let him stand on your palm.</string>
 	<key>NSWorldSensingUsageDescription</key>
 	<string>Mario runs on your room's floor and furniture once you take him out of the window.</string>
 	<key>UIApplicationSceneManifest</key>
