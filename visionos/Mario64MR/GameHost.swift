@@ -52,7 +52,7 @@ final class GameHost {
             return fail("base.zip isn't in the app: run install_mario64mr.py --visionos, then build again")
         }
         FileManager.default.changeCurrentDirectoryPath(gameData.path)
-        // Saves (and the options) in the app's Documents folder, which stays when the app is rebuilt
+        // Saves in the app's Documents folder, which stays when the app is rebuilt
         let saves = URL.documentsDirectory.appendingPathComponent("sm64")
         try? FileManager.default.createDirectory(at: saves, withIntermediateDirectories: true)
 
@@ -79,6 +79,11 @@ final class GameHost {
         }
         audio.start()
         publish { $0.status = .running }
+        // The options menu's values, as you left them; the room applies the graphics
+        let options = GameOptions()
+        var graphics = options.graphics
+        self.room.update { [graphics] in $0.graphics = graphics }
+        maker.mipmaps = graphics.mipmaps
         // The title screen's face in the room (libgoddard), and its sounds (libsm64)
         let title = TitleScreen(device: device, pack: gameData.appendingPathComponent("res/base.zip"), rom: rom)
         if title == nil { print("Mario 64 MR: the title screen's face didn't start") }
@@ -179,6 +184,12 @@ final class GameHost {
             sm64unity_audio_buffered(Int32(audio.buffered))
             guard sm64unity_tick(pad.buttons, pad.stickX, pad.stickY) == 1 else {
                 return fail("The game stopped (bridge error \(sm64unity_error()))")
+            }
+            if options.sync() { carrier.bringBack(geometry: room.geometry) }
+            if options.graphics != graphics {
+                graphics = options.graphics
+                self.room.update { [graphics] in $0.graphics = graphics }
+                maker.mipmaps = graphics.mipmaps
             }
             var count: Int32 = 0
             if let samples = sm64unity_audio(&count), count > 0 {

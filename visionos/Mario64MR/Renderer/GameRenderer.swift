@@ -23,8 +23,13 @@ final class GameRenderer: NSObject, MTKViewDelegate {
     private let frames: GameFrames
     private var pipelines: [UInt64: MTLRenderPipelineState] = [:]
     private var depthStates: [Int: MTLDepthStencilState] = [:]
-    private var samplers: [GameFrame.Sampler: MTLSamplerState] = [:]
+    private struct SamplerKey: Hashable { var sampler: GameFrame.Sampler; var anisotropy: Int }
+    private var samplers: [SamplerKey: MTLSamplerState] = [:]
     private let blank: MTLTexture
+    /// In the room, the options': MSAA samples (the pipelines drawn with) and anisotropic filtering
+    var sampleCount = 1
+    var anisotropy = 1
+    private var roomMeshPipelines: [Int: MTLRenderPipelineState] = [:]
     private let inFlight = DispatchSemaphore(value: 3)
 
     init?(device: MTLDevice, frames: GameFrames, target: Target = .flat) {
@@ -198,14 +203,18 @@ final class GameRenderer: NSObject, MTKViewDelegate {
         }
     }
 
-    private lazy var roomMeshPipeline: MTLRenderPipelineState? = {
+    private var roomMeshPipeline: MTLRenderPipelineState? {
+        if let pipeline = roomMeshPipelines[sampleCount] { return pipeline }
         let descriptor = MTLRenderPipelineDescriptor()
         descriptor.vertexFunction = library.makeFunction(name: "room_mesh_vertex")
         descriptor.depthAttachmentPixelFormat = target.depthFormat
         descriptor.colorAttachments[0].pixelFormat = target.colorFormat
         descriptor.colorAttachments[0].writeMask = []
-        return try? device.makeRenderPipelineState(descriptor: descriptor)
-    }()
+        descriptor.rasterSampleCount = sampleCount
+        let pipeline = try? device.makeRenderPipelineState(descriptor: descriptor)
+        roomMeshPipelines[sampleCount] = pipeline
+        return pipeline
+    }
 
     /// The room's surfaces (`count` vertices of packed float3, metres), into depth only
     func encodeRoomMesh(_ mesh: MTLBuffer, count: Int, into encoder: MTLRenderCommandEncoder, eye: RoomEye) {
@@ -240,7 +249,7 @@ final class GameRenderer: NSObject, MTKViewDelegate {
     }
 
     private func pipeline(_ shaderId: UInt32, blend: Bool, depthOnly: Bool = false) -> MTLRenderPipelineState? {
-        let key = UInt64(shaderId) | (blend ? 1 << 32 : 0) | (depthOnly ? 1 << 48 : 0)
+        let key = UInt64(shaderId) | (blend ? 1 << 32 : 0) | UInt64(sampleCount) << 33 | (depthOnly ? 1 << 48 : 0)
         if let pipeline = pipelines[key] { return pipeline }
         do {
             let constants = MTLFunctionConstantValues()
@@ -256,6 +265,7 @@ final class GameRenderer: NSObject, MTKViewDelegate {
             descriptor.fragmentFunction = try library.makeFunction(
                 name: target.room ? "game_fragment_room" : "game_fragment", constantValues: constants)
             descriptor.depthAttachmentPixelFormat = target.depthFormat
+            descriptor.rasterSampleCount = sampleCount
             let color = descriptor.colorAttachments[0]!
             color.pixelFormat = target.colorFormat
             if depthOnly { color.writeMask = [] }
@@ -297,7 +307,8 @@ final class GameRenderer: NSObject, MTKViewDelegate {
     }
 
     private func sampler(_ s: GameFrame.Sampler) -> MTLSamplerState? {
-        if let state = samplers[s] { return state }
+        let key = SamplerKey(sampler: s, anisotropy: s.linear ? anisotropy : 1)
+        if let state = samplers[key] { return state }
         func address(_ mode: Int32) -> MTLSamplerAddressMode {
             mode & 2 != 0 ? .clampToEdge : mode & 1 != 0 ? .mirrorRepeat : .repeat
         }
@@ -306,8 +317,11 @@ final class GameRenderer: NSObject, MTKViewDelegate {
         descriptor.magFilter = s.linear ? .linear : .nearest
         descriptor.sAddressMode = address(s.wrapS)
         descriptor.tAddressMode = address(s.wrapT)
+        // (textures with mipmaps, the options' Textures: the mipmaps, and anisotropy; none have only the one)
+        descriptor.mipFilter = s.linear ? .linear : .notMipmapped
+        descriptor.maxAnisotropy = key.anisotropy
         let state = device.makeSamplerState(descriptor: descriptor)
-        samplers[s] = state
+        samplers[key] = state
         return state
     }
 }
