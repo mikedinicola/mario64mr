@@ -95,8 +95,11 @@ final class Diorama {
         return max(y0, y1) >= bottom && min(y0, y1) <= top
     }
 
+    /// The hands holding the base
+    var holding: Set<Int> { Set(grips.keys) }
+
     func update(hands: [HandState], gazes: [GazePinch], cameraStick: SIMD2<Float>, recenter: Bool,
-                mario: SIMD3<Float>?, dt: Float) {
+                mario: SIMD3<Float>?, dt: Float, controls: [Int: ControllerControl] = [:]) {
         appear = min(1, appear + dt / 0.8)
         if let mario {  // (follow his height smoothly: jumps barely move it)
             followY = followY.map { $0 + (mario.y - $0) * min(1, dt * 1.5) } ?? mario.y
@@ -154,8 +157,10 @@ final class Diorama {
             turn(by: twoFrom!.yaw + angle - twoFrom!.angle - yaw)
             scale = min(max(twoFrom!.scale * distance / twoFrom!.distance, Self.minScale), Self.maxScale)
         } else if let i = held.first, let p = position(i) {
-            // Moved as the hand moves: across, and up and down (the base, where it cuts the level, and Mario)
+            // Moved as the hand moves: across, and up and down (the base, where it cuts the level, and Mario); a
+            // controller's stick in it turns and scales it
             let from = grips[i]!.from
+            if let stick = controls[i]?.stick { turnAndZoom(stick, dt: dt) }
             center += p - from
             marioHeight += p.y - from.y
             grips[i]!.from = p

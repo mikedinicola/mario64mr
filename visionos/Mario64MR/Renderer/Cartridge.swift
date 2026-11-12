@@ -97,7 +97,7 @@ final class Cartridge {
     var heldByGaze: Bool { !gazeGrips.isEmpty }
 
     func update(hands: [HandState], gazes: [GazePinch], eye: SIMD3<Float>, planes: [RoomPlane], floor: Float,
-                dt: Float) {
+                dt: Float, controls: [Int: ControllerControl] = [:]) {
         let dt = min(max(dt, 0), 0.05)
         var hands = Array(hands.prefix(2))  // (untracked hands may be missing: they let go)
         while hands.count < 2 { hands.append(HandState()) }
@@ -119,6 +119,9 @@ final class Cartridge {
             updateWindow(hands, began: began, gazes: gazes, eye: eye)
         } else {
             updateClosed(hands, began: began, eye: eye)
+        }
+        for (i, control) in controls where grips[i] != nil && grips.count == 1 {
+            useController(control, hand: hands[i], index: i, eye: eye, dt: dt)
         }
         if !isOpen && grips.isEmpty && !resting { fall(planes: planes, floor: floor, dt: dt, eye: eye) }
     }
@@ -274,6 +277,28 @@ final class Cartridge {
             let offset = moved.roomFromWindow.transformDirection(SIMD3(grip.x, grip.y, 0))
             moved = RoomPlacement(center: pinch - offset, facing: eye, width: h.x * 2)
             window = moved
+        }
+    }
+
+    // ---------------------------------------------------------------- A Sense controller holding it
+
+    /// Its trigger opens the cartridge into the window, or closes the window; its stick up or down resizes it
+    private func useController(_ control: ControllerControl, hand: HandState, index i: Int, eye: SIMD3<Float>,
+                               dt: Float) {
+        if control.triggerBegan {
+            if isOpen {
+                isOpen = false
+                pose = Self.upright(at: hand.pinch, facing: eye)
+                grips[i] = .zero
+            } else {
+                window = RoomPlacement(center: center, facing: eye, width: Self.openWidth)
+                isOpen = true
+                grips[i] = window.roomFromWindow.inverse.transform(hand.pinch)
+            }
+            resizeFrom = nil
+        } else if isOpen, abs(control.stick.y) > 0.2 {
+            let width = min(max(window.halfSize.x * 2 * exp(control.stick.y * dt), Self.closeWidth), Self.maxWidth)
+            window = RoomPlacement(center: window.center, facing: eye, width: width)
         }
     }
 

@@ -31,6 +31,8 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSAccessoryTrackingUsageDescription</key>
+	<string>Your PlayStation VR2 Sense controllers are tracked so you can play with them and see them in your hands.</string>
 	<key>NSHandsTrackingUsageDescription</key>
 	<string>Your hands pick Mario up, carry him out of the window and let him stand on your palm.</string>
 	<key>NSWorldSensingUsageDescription</key>

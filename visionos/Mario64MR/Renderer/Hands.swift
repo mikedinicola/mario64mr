@@ -23,6 +23,10 @@ struct HandState: Sendable {
     /// The way the palm faces (out of it)
     var palmNormal = SIMD3<Float>(0, -1, 0)
 
+    /// A Sense controller standing in for the hand (its grip is the pinch); the right one doesn't pick Mario up
+    var controller = false
+    var grabsMario = true
+
     /// The palm turned up: a pinch made like that is the menu gesture (Start)
     var palmUp: Bool { palmNormal.y > 0.7 }
 }
