@@ -29,10 +29,13 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private let world = WorldTrackingProvider()
     private let scanner = RoomScanner()
     private let handTracker = HandTracker()
+    private let gazePinches = GazePinches()
     private let planeFinder = PlaneFinder()
     private let props: RoomProps
     /// The cartridge, and the window it opens into (made at the first frame, in front of you)
     private var cartridge: Cartridge?
+    /// The level as a diorama on a table, while it is one
+    private var diorama: Diorama?
     /// (the simulator's stand-in room's planes)
     private var standInPlanes: [RoomPlane] = []
     private var lastTime: TimeInterval?
@@ -62,6 +65,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
         guard let device = host.device,
               let renderer = ImmersiveRenderer(layer: layer, device: device, frames: host.output, link: host.room)
         else { return log.error("The room's renderer didn't start") }
+        Task { @MainActor in renderer.gazePinches.listen(to: layer) }
         let thread = Thread { renderer.run() }
         thread.name = "Room"
         thread.qualityOfService = .userInteractive
@@ -141,20 +145,24 @@ final class ImmersiveRenderer: @unchecked Sendable {
         // tracked head at standing or sitting height. Placed without one (after 2 s), it moves once one comes, if
         // it isn't open or in a hand by then.
         let realHead = anchor.map { $0.isTracked && $0.originFromAnchorTransform.columns.3.y > 0.5 } ?? false
-        let movable = cartridge.map { !$0.isOpen && $0.holding.isEmpty } ?? true
+        // (with no cartridge, the window opens at once, so it moves too until a hand takes it)
+        let movable = cartridge.map { (!$0.isOpen || !Cartridge.enabled) && $0.holding.isEmpty } ?? true
         if cartridge == nil || (!placedFromHead && realHead && movable) {
             if realHead || !WorldTrackingProvider.isSupported || (cartridge == nil && now - (started ?? now) > 2) {
                 // (no tracked head after 2 s, as in the simulator: in front of the pose there is, wherever it is)
                 let facing = head
                 let cartridge = Cartridge(facing: facing)
                 self.cartridge = cartridge
+                if !Cartridge.enabled { cartridge.open(RoomPlacement(facing: facing)) }
                 if startTime == nil { startTime = time }
                 placedFromHead = realHead
                 let y = head.columns.3.y, tracked = anchor?.isTracked ?? false
-                Self.log.info("The cartridge is placed (\(realHead ? "from the head" : "no tracked head yet"), head y \(y), tracked \(tracked))")
+                Self.log.info("The \(Cartridge.enabled ? "cartridge" : "window") is placed (\(realHead ? "from the head" : "no tracked head yet"), head y \(y), tracked \(tracked))")
                 #if DEBUG
                 let arguments = ProcessInfo.processInfo.arguments
-                if arguments.contains("-open") || arguments.contains("-carry") { cartridge.open(RoomPlacement(facing: facing)) }
+                if Cartridge.enabled, ["-open", "-carry", "-diorama"].contains(where: arguments.contains) {
+                    cartridge.open(RoomPlacement(facing: facing))
+                }
                 if !RoomScanner.isSupported {  // (the simulator: a floor and a table to try Mario out on)
                     let (room, above, planes) = RoomMesh.standIn(window: RoomPlacement(facing: facing),
                                                                   floor: facing.columns.3.y - 1.5)
@@ -178,16 +186,44 @@ final class ImmersiveRenderer: @unchecked Sendable {
         let eyePosition = SIMD3(head.columns.3.x, head.columns.3.y, head.columns.3.z)
         let gameFrame = frames.latest()
         var hands = handTracker.update(at: time)
+        var gazes = gazePinches.take()
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-cart") {
             hands = scriptedHands(time - (startTime ?? time), cartridge: cartridge, eye: eyePosition,
                                   title: gameFrame?.title != nil)
         }
+        if ProcessInfo.processInfo.arguments.contains("-diorama") {
+            (hands, gazes) = scriptedDioramaHands(time, cartridge: cartridge, stage: link.current.stage,
+                                                  eye: eyePosition)
+        }
         #endif
         let dt = Float(lastTime.map { time - $0 } ?? 0)
         lastTime = time
-        cartridge.update(hands: hands, eye: eyePosition, planes: planeFinder.current + standInPlanes,
-                         floor: min(0, head.columns.3.y - 1.5), dt: dt)
+        let planes = planeFinder.current + standInPlanes
+        let stage = link.current.stage
+        // Held by its lower part over a table (or the floor): the circle shows where it would go down
+        let low = cartridge.heldLow
+        let circle = low.flatMap { Self.circle(under: $0.bottom, planes: planes) }
+        cartridge.update(hands: hands, gazes: gazes, eye: eyePosition, planes: planes, floor: min(0, head.columns.3.y - 1.5), dt: dt)
+        if let low, let circle, stage == 3, let gameFrame, !cartridge.holding.contains(low.hand),
+           cartridge.isOpen, cartridge.heldLow == nil {
+            // Let go over it: the level rises out of it
+            diorama = Diorama(center: circle, eye: eyePosition, camera: gameFrame.camera, mario: gameFrame.mario,
+                              levelCenter: gameFrame.levelCenter())
+            cartridge.enterDiorama()
+        }
+        if let diorama {
+            let width = cartridge.window.halfSize.x * 2
+            diorama.update(hands: hands, gazes: gazes, cameraStick: GamePad.cameraStick(),
+                           recenter: GamePad.cameraStickPressed(), mario: gameFrame?.mario, dt: dt)
+            if stage != 3 {  // (left the course: the window back, standing on the base)
+                let h = cartridge.window.halfSize.y
+                cartridge.leaveDiorama(RoomPlacement(center: diorama.center + SIMD3(0, h + 0.05, 0),
+                                                     facing: eyePosition, width: width), hand: nil, grip: .zero)
+                self.diorama = nil
+            }
+            for i in hands.indices { hands[i].pinching = false }  // (hands are for the base, not the game)
+        }
         for i in cartridge.holding where i < hands.count { hands[i].pinching = false }
         let placement = cartridge.window
         let w = placement.roomFromWindow.columns.3
@@ -195,28 +231,32 @@ final class ImmersiveRenderer: @unchecked Sendable {
 
         let xScale = gameFrame.map { RoomPlacement.xScale($0.size) } ?? 0.75
         let level = gameFrame?.draws.first { $0.kind == .world }?.projection
-        let roomFromView = placement.roomFromView(projection: level, xScale: xScale)
+        let camera = gameFrame?.camera ?? matrix_identity_float4x4
+        let roomFromWorld = diorama?.roomFromWorld()
+        let roomFromView = roomFromWorld.map { $0 * camera.inverse }
+            ?? placement.roomFromView(projection: level, xScale: xScale)
         let viewFromRoom = roomFromView.inverse
         // The game camera and its near plane in the window's space, for the level reaching out of the window
         let windowFromView = placement.roomFromWindow.inverse * roomFromView
         let cameraInWindow = windowFromView * SIMD4(0, 0, 0, 1)
         let nearInWindow = windowFromView * SIMD4(0, 0, -RoomPlacement.near(level), 1)
         let gameCamera = SIMD4(cameraInWindow.x, cameraInWindow.y, cameraInWindow.z, nearInWindow.z)
-        let camera = gameFrame?.camera ?? matrix_identity_float4x4
         let up = simd_normalize(SIMD3(camera.columns.1.x, camera.columns.1.y, camera.columns.1.z))
         // Billboards turn to the head, in the game camera's view space (sm64unity_billboards, next tick)
         let headInView = viewFromRoom * head.columns.3
         let geometry = RoomGeometry(roomFromView: roomFromView, windowFromRoom: placement.roomFromWindow.inverse,
-                                    halfSize: placement.halfSize, open: cartridge.isOpen,
+                                    halfSize: placement.halfSize, open: cartridge.isOpen, diorama: diorama != nil,
                                     startLabel: placement.startLabel)
         // The way back towards you from where you look, level (the stick, out in the room: sm64unity_room_facing).
         // Looking down, the head's up points ahead, and looking up, behind
         let back = head.columns.2, headUp = head.columns.1
         let levelBack = back - headUp * (back.y >= 0 ? 1 : -1)
+        let lookForward = -SIMD3(head.columns.2.x, head.columns.2.y, head.columns.2.z)
+        let dioramaForward = diorama?.forwardInWorld(eyeForward: lookForward)
         link.update { [hands] in
             $0.head = SIMD3(headInView.x, headInView.y, headInView.z); $0.up = up
             $0.facing = SIMD2(levelBack.x, levelBack.z)
-            $0.geometry = geometry; $0.hands = hands
+            $0.geometry = geometry; $0.hands = hands; $0.dioramaForward = dioramaForward
         }
 
         let actorFromClip = { (draw: GameFrame.Draw) -> simd_float4x4 in
@@ -246,7 +286,12 @@ final class ImmersiveRenderer: @unchecked Sendable {
             guard let encoder = makeEncoder(commands, drawable: drawable, view: view) else { continue }
             // Open: the game through the window (or the title screen's face), in its frame. Closed: the cartridge.
             // Then the room's surfaces into depth and Mario, if he's out in the room, hidden by them
-            if cartridge.isOpen {
+            if let diorama, let roomFromWorld {
+                if let gameFrame {
+                    game.encodeDiorama(gameFrame, into: encoder, eye: eye, roomFromWorld: roomFromWorld,
+                                       table: diorama.table, xScale: xScale)
+                }
+            } else if cartridge.isOpen {
                 props.encodeFrame(placement, into: encoder, eye: eye)
                 if let gameFrame, let title = gameFrame.title {
                     props.encodeTitle(title, window: placement, time: time - (startTime ?? 0), into: encoder, eye: eye)
@@ -257,10 +302,20 @@ final class ImmersiveRenderer: @unchecked Sendable {
             } else {
                 props.encodeCartridge(cartridge.pose, into: encoder, eye: eye)
             }
-            if let gameFrame, gameFrame.marioOutside {
+            if diorama == nil, let gameFrame, gameFrame.marioOutside {
                 if let mesh = room.buffer { game.encodeRoomMesh(mesh, count: room.count, into: encoder, eye: eye) }
                 game.encodeRoom(gameFrame, into: encoder, eye: eye, actors: true,
                                 roomFromClip: roomFromClip, actorFromClip: actorFromClip)
+            }
+            // The handle, and where the window will go down, last: they're blended (into depth only where they
+            // show), so whatever came after them (the frame, the level reaching out of the window) would paint over
+            // their soft edges
+            if diorama == nil, cartridge.isOpen {
+                props.encodeHandle(placement, held: !cartridge.holding.isEmpty, into: encoder, eye: eye)
+            }
+            if diorama == nil, cartridge.isOpen, let circle {
+                let glow = Float(0.75 + 0.25 * sin(time * 6))
+                props.encodeCircle(at: circle, radius: Diorama.radius, glow: glow, into: encoder, eye: eye)
             }
             encoder.endEncoding()
         }
@@ -272,7 +327,84 @@ final class ImmersiveRenderer: @unchecked Sendable {
         commands.commit()
     }
 
+    /// The point on a plane under `p` (the window's bottom edge), if one is near enough below it to put it down on
+    private static func circle(under p: SIMD3<Float>, planes: [RoomPlane]) -> SIMD3<Float>? {
+        let below = planes.filter { $0.height <= p.y + 0.05 && $0.height >= p.y - 0.35 && $0.contains(SIMD2(p.x, p.z)) }
+        return below.max { $0.height < $1.height }.map { SIMD3(p.x, $0.height, p.z) }
+    }
+
     #if DEBUG
+    /// With -diorama (and -demo, to get into a course): once in a course, a hand in your lap pinches looking at the
+    /// window's handle and moves it a little; then a hand takes the window by its lower
+    /// part, puts it down over the stand-in room's counter, and lets go; then slides the base, turns it with two
+    /// hands, and pinches from afar while looking at it to move it back and up
+    private var dioramaSince: TimeInterval?
+    private var dioramaFrom: SIMD3<Float>?
+    private var slideFrom: SIMD3<Float>?
+    private var gazeFrom: SIMD3<Float>?
+    private var handleFrom: SIMD3<Float>?
+
+    private func scriptedDioramaHands(_ time: TimeInterval, cartridge: Cartridge, stage: Int32,
+                                      eye: SIMD3<Float>) -> ([HandState], [GazePinch]) {
+        let (hands, gaze) = scriptedDioramaInput(time, cartridge: cartridge, stage: stage, eye: eye)
+        return (hands, gaze.map { [$0] } ?? [])
+    }
+
+    private func scriptedDioramaInput(_ time: TimeInterval, cartridge: Cartridge, stage: Int32,
+                                      eye: SIMD3<Float>) -> ([HandState], GazePinch?) {
+        func hand(_ p: SIMD3<Float>, pinching: Bool) -> HandState {
+            var h = HandState(tracked: true)
+            h.pinch = p; h.reach = p; h.pinching = pinching
+            h.palm = p + SIMD3(0, -0.05, 0.08)
+            return h
+        }
+        if dioramaSince == nil {
+            guard stage == 3 else { return ([], nil) }
+            dioramaSince = time
+        }
+        let s = time - dioramaSince! - 4
+        let w = cartridge.window
+        if s > -3 && s < -1.5 {  // looking at the handle, pinch with a hand in your lap and move it 5 cm right
+            if handleFrom == nil { handleFrom = eye + SIMD3(0.15, -0.45, -0.25) }
+            let k = Float(min(max((s + 2.8) / 1, 0), 1))
+            let p = handleFrom! + SIMD3(0.05 * k, 0, 0), pinching = s > -2.9 && s < -1.6
+            let handle = w.roomFromWindow.transform(SIMD3(w.handle.center, 0))
+            let gaze = pinching ? GazePinch(id: 2_000_000, began: true, origin: eye,
+                                            direction: simd_normalize(handle - eye), hand: 1, position: p) : nil
+            return ([HandState(), hand(p, pinching: pinching)], gaze)
+        }
+        guard s > 0, let above = link.current.debugRelease else { return ([], nil) }
+        if s < 2.8 {
+            if dioramaFrom == nil { dioramaFrom = w.roomFromWindow.transform(SIMD3(0, -w.halfSize.y - 0.015, 0)) }
+            let to = above - SIMD3(0, 0.1 + 0.015, 0)  // (the window's bottom 15 cm over the counter)
+            let k = Float(min(max((s - 0.5) / 2, 0), 1))
+            return ([hand(dioramaFrom! + (to - dioramaFrom!) * k, pinching: s > 0.3 && s < 2.6), HandState()], nil)
+        }
+        guard let diorama else { return ([], nil) }
+        let c = diorama.center, r = Diorama.radius
+        if s > 6 && s < 8 {  // slide it 10 cm to the right
+            let k = Float(min(max((s - 6.3) / 1.2, 0), 1))
+            if slideFrom == nil { slideFrom = c }
+            let right = SIMD3<Float>(1, 0, 0)
+            return ([HandState(), hand(slideFrom! + right * (r * 0.9 + 0.1 * k) + SIMD3(0, 0.01, 0), pinching: s > 6.2)], nil)
+        }
+        if s > 10 && s < 12.5 {  // turn it 40° with two hands
+            let a = Float(min(max((s - 10.4) / 1.6, 0), 1)) * 0.7
+            let d = SIMD3(sin(a), 0, cos(a)) * r * 0.9
+            return ([hand(c - d + SIMD3(0, 0.01, 0), pinching: s > 10.3), hand(c + d + SIMD3(0, 0.01, 0), pinching: s > 10.3)], nil)
+        }
+        if s > 14 && s < 16.5 {  // looking at it, pinch with a hand in your lap: 10 cm back left, and 10 cm up
+            if gazeFrom == nil { gazeFrom = eye + SIMD3(0.15, -0.45, -0.25) }
+            let k = Float(min(max((s - 14.4) / 1.2, 0), 1))
+            let p = gazeFrom! + SIMD3(-0.1 * k, 0.1 * k, 0), pinching = s > 14.3 && s < 16.2
+            let toward = simd_normalize(SIMD3(c.x, c.y + 0.2, c.z) - eye)
+            let gaze = pinching ? GazePinch(id: 1_000_000, began: true, origin: eye, direction: toward,
+                                            hand: 1, position: p) : nil
+            return ([HandState(), hand(p, pinching: pinching)], gaze)
+        }
+        return ([], nil)
+    }
+
     /// With -cart (debug builds, for the simulator, which has no hands): two hands take the cartridge in front of
     /// you at 1 s and pull it open into a window 1.2 m wide, 1.2 m away. On the title screen they take Mario's
     /// face by the nose and an ear and pull, let go, and pinch "PRESS START".
@@ -387,6 +519,10 @@ final class RoomLink: @unchecked Sendable {
         /// The window and game camera in the room, and your hands, for MarioCarrier
         var geometry: RoomGeometry?
         var hands: [HandState] = []
+        /// (from the game) its stage: sm64unity_stage
+        var stage: Int32 = 0
+        /// In a diorama: your forward in the game's world, for the stick to move Mario the way you look
+        var dioramaForward: SIMD3<Float>?
     }
     private let state = OSAllocatedUnfairLock(initialState: State())
     /// Called (on the room's thread) when the room closes

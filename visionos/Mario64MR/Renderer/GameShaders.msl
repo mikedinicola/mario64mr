@@ -6,6 +6,7 @@ using namespace metal;
 
 constant uint shaderId [[function_constant(0)]];
 constant bool opaque [[function_constant(1)]];  // (in the room: not blended, so covering the passthrough)
+constant bool depthOnly [[function_constant(2)]];  // (a diorama's see-through surfaces, again into depth: GameRenderer.encodeDiorama)
 
 // gfx_cc.h: four 3-bit items per formula (colour, then alpha), then the options
 constant bool optAlpha = (shaderId & (1u << 24)) != 0;
@@ -85,7 +86,8 @@ vertex Varyings game_vertex(uint vid [[vertex_id]], const device float *floats [
 
 struct RoomDraw {
     float4x4 roomFromClip;  // the draw's projection undone, then the game camera's view space into the room
-    uint4 kind;             // x: GameFrame.Kind, or 3: Mario out in the room (roomFromClip through the room)
+    uint4 kind;             // x: GameFrame.Kind, 3: Mario out in the room (roomFromClip through the room),
+                            // 4: the level as a diorama on a table (y: the table's height, a float, below it cut away)
 };
 
 struct RoomEye {
@@ -118,7 +120,7 @@ vertex Varyings game_vertex_room(uint vid [[vertex_id]], const device float *flo
     float4 clip;
     Varyings out = readVertex(vid, floats, clip);
     float4 room;
-    if (draw.kind.x == 0 || draw.kind.x == 3) {  // the level, or Mario in the room: unprojected into the room
+    if (draw.kind.x == 0 || draw.kind.x >= 3) {  // the level, Mario in the room, the diorama: unprojected into the room
         room = draw.roomFromClip * clip;
     } else if (draw.kind.x == 1) {  // the sky: far away, round the camera
         float3 direction = skyDirection(clip.xy / clip.w, normalize(eye.up.xyz));
@@ -225,7 +227,9 @@ fragment float4 game_fragment_room(Varyings in [[stage_in]],
             && all(abs(mix(c.xy, p.xy, c.z / (c.z - p.z))) <= eye.window.xy);
         if (inside ? (p.z > 0 && throughOpening) : !(throughOpening || outInFront)) discard_fragment();
     }
+    if (draw.kind.x == 4 && in.room.y < as_type<float>(draw.kind.y)) discard_fragment();
     float4 color = shade(in, texture0, texture1, sampler0, sampler1, frame);
+    if (depthOnly && color.a < 0.03) discard_fragment();  // (only where it shows)
     float3 c = saturate(color.rgb);
     float3 linear = select(pow((c + 0.055) / 1.055, 2.4), c / 12.92, c <= 0.04045);
     return float4(linear, opaque ? 1.0 : color.a);
@@ -242,7 +246,8 @@ struct PropVertex { packed_float3 position; packed_float3 normal; packed_float2 
 struct PropDraw {
     float4x4 model;  // the prop's own space into the room (metres)
     float4 color;    // linear, multiplied by the texture
-    uint4 flags;     // x: lit, y: only where seen through the window's opening, z: alpha tested
+    uint4 flags;     // x: lit, y: only where seen through the window's opening, z: alpha tested, w: blended, but
+                     // where it shows (not nearly transparent) it's in the depth buffer
 };
 struct PropVaryings { float4 position [[position]]; float3 normal; float2 uv; float3 room; };
 
@@ -272,6 +277,7 @@ fragment float4 prop_fragment(PropVaryings in [[stage_in]], constant PropDraw &d
     if (draw.flags.y != 0 && !seenThroughOpening(in.room, eye)) discard_fragment();
     float4 color = draw.color * texture.sample(s, in.uv);
     if (draw.flags.z != 0 && color.a < 0.5) discard_fragment();
+    if (draw.flags.w != 0 && color.a < 0.03) discard_fragment();
     if (draw.flags.x != 0) {
         float light = 0.6 + 0.4 * saturate(dot(normalize(in.normal), normalize(float3(0.3, 1, 0.5))));
         color.rgb *= light;

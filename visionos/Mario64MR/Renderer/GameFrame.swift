@@ -9,6 +9,7 @@ struct GameFrame {
         var shaderId: UInt32
         var firstFloat: Int
         var vertexCount: Int
+        var floatsPerVertex: Int
         var textures: (MTLTexture?, MTLTexture?)
         var samplers: (Sampler, Sampler)
         var depthTest, depthWrite, decal, blend: Bool
@@ -44,6 +45,31 @@ struct GameFrame {
     var number: UInt32
     /// The title screen's face (TitleScreen), drawn in the window in place of the game's own title
     var title: TitleFrame? = nil
+    /// Mario in the level (game units), when he's there (for the diorama to follow)
+    var mario: SIMD3<Float>? = nil
+}
+
+extension GameFrame {
+    /// The middle of the level (x, z, game units): of its drawn vertices' bounds, each taken back from the game's
+    /// clip space through its projection and the game camera into the world. (In the room the level is drawn whole,
+    /// unculled: sm64unity_mr_geometry.)
+    func levelCenter() -> SIMD2<Float>? {
+        guard let vertices else { return nil }
+        let floats = vertices.contents().bindMemory(to: Float.self, capacity: vertices.length / 4)
+        let worldFromView = camera.inverse
+        var low = SIMD2<Float>(repeating: .infinity), high = -low
+        for draw in draws where draw.kind == .world && draw.tag == 0 && draw.floatsPerVertex >= 4 {
+            let worldFromClip = worldFromView * draw.projection.inverse
+            for i in 0..<draw.vertexCount {
+                let v = floats + draw.firstFloat + i * draw.floatsPerVertex
+                let world = worldFromClip * SIMD4(v[0], v[1], v[2], v[3])
+                guard abs(world.w) > 1e-6 else { continue }
+                let p = SIMD2(world.x, world.z) / world.w
+                low = simd_min(low, p); high = simd_max(high, p)
+            }
+        }
+        return low.x <= high.x ? (low + high) / 2 : nil
+    }
 }
 
 /// Makes GameFrames from the game's output. Game thread only. The game's textures become Metal textures once per
@@ -77,6 +103,7 @@ final class GameFrameMaker {
                     shaderId: b.shader_id,
                     firstFloat: Int(b.first_float),
                     vertexCount: Int(b.triangle_count) * 3,
+                    floatsPerVertex: Int(b.float_count) / (Int(b.triangle_count) * 3),
                     textures: (texture(b.texture0), texture(b.texture1)),
                     samplers: (GameFrame.Sampler(linear: b.filter0 != 0, wrapS: b.wraps0, wrapT: b.wrapt0),
                                GameFrame.Sampler(linear: b.filter1 != 0, wrapS: b.wraps1, wrapT: b.wrapt1)),

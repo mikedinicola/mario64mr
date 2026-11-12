@@ -43,6 +43,14 @@ struct RoomPlacement {
 
     var center: SIMD3<Float> { SIMD3(roomFromWindow.columns.3.x, roomFromWindow.columns.3.y, roomFromWindow.columns.3.z) }
 
+    /// The frame's bars' thickness around the opening, metres
+    var frameThickness: Float { 0.018 + 0.012 * halfSize.x / 0.6 }
+
+    /// The handle under the window, as visionOS's windows have: a pill in the window's plane (centre, half size)
+    var handle: (center: SIMD2<Float>, half: SIMD2<Float>) {
+        (SIMD2(0, -halfSize.y - frameThickness - 0.028), SIMD2(0.06, 0.0075))
+    }
+
     /// Where "PRESS START" is on the title screen: in the window's plane, below the face (centre, half size)
     var startLabel: (center: SIMD2<Float>, half: SIMD2<Float>) {
         (SIMD2(0, -halfSize.y * 0.86), SIMD2(halfSize.y * 0.45, halfSize.y * 0.08))

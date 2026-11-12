@@ -13,6 +13,29 @@ enum GamePad {
 
     static var connected: Bool { GCController.controllers().contains { $0.extendedGamepad != nil } }
 
+    /// The camera stick (the right thumbstick, or the arrow keys), -1 to 1 each way: in a diorama it turns and
+    /// zooms the diorama instead of being C buttons
+    static func cameraStick() -> SIMD2<Float> {
+        var stick = SIMD2<Float>.zero
+        for pad in GCController.controllers().compactMap(\.extendedGamepad) {
+            let c = SIMD2(pad.rightThumbstick.xAxis.value, pad.rightThumbstick.yAxis.value)
+            if abs(c.x) + abs(c.y) > abs(stick.x) + abs(stick.y) { stick = c }
+        }
+        if stick == .zero, let keys = GCKeyboard.coalesced?.keyboardInput {
+            func down(_ code: GCKeyCode) -> Float { keys.button(forKeyCode: code)?.isPressed ?? false ? 1 : 0 }
+            stick = SIMD2(down(.rightArrow) - down(.leftArrow), down(.upArrow) - down(.downArrow))
+        }
+        return stick
+    }
+
+    /// The camera stick clicked in (R3, or C on a keyboard): in a diorama it brings Mario back to the base's centre
+    static func cameraStickPressed() -> Bool {
+        if GCController.controllers().contains(where: { $0.extendedGamepad?.rightThumbstickButton?.isPressed ?? false }) {
+            return true
+        }
+        return GCKeyboard.coalesced?.keyboardInput?.button(forKeyCode: .keyC)?.isPressed ?? false
+    }
+
     /// Every extended gamepad and the keyboard (a Mac's, in the simulator) together: a pair of PS VR2 Sense
     /// controllers is two controllers, each with half the buttons
     static func read() -> State {

@@ -252,9 +252,10 @@ An Xbox controller paired with the headset works too (A = A, X / B = B, triggers
 **Diorama (tabletop)**
 - Hold the open window by its **lower part** (with your hand, or the controller's grip) and bring it down near a
   table, desk or the floor: a glowing circle appears on the surface below.
-- Let go over the circle: the window dives into it and the level rises out of it as a diorama, about 2 m across,
+- Let go over the circle: the window dives into it and the level rises out of it as a diorama, about 50 cm across,
   sky and HUD gone. Play on as usual: the stick moves Mario the way you're looking.
-- The circle stays as the diorama's base, the same size whatever the diorama's:
+- The circle goes away once the diorama is down, but where it was stays the diorama's base, the same size
+  whatever the diorama's:
   - pinch it (or grip it with the controller) and move your hand to slide the diorama across the table;
   - pinch it with both hands (or a hand and the controller) to turn it and scale it, pulling apart or together;
   - holding it with the controller, the thumbstick up / down scales it and left / right turns it.
@@ -397,13 +398,18 @@ To install it, follow [Install](#install) with `Mario64MR-Pico.apk` in place of 
 
 A native visionOS app is being written in [`visionos/`](visionos). **Early**: the whole game plays in a flat window,
 with a paired gamepad (DualSense, Xbox) or a keyboard, and "Open a window into the game" puts it in your room, in 3D
-behind a window floating in front of you (press the Digital Crown to go back). In the room the game starts as a
-cartridge in front of you: pinch it to pick it up and throw it (it lands on your tables), or pinch it with both hands
-and pull it open into the window. Pinch the frame to move it, with both hands to resize it, and squeeze it shut. On
+behind a window floating in front of you (press the Digital Crown to go back). Pinch the frame or the handle under
+it to move it, with both hands to resize it, or just look at the frame or the handle and pinch from where you are. (Launched with `-cartridge`, the game starts instead as a cartridge in front of you: pinch it to
+pick it up and throw it (it lands on your tables), or pinch it with both hands and pull it open into the window, and
+squeeze the window shut.) On
 the title screen, pinch Mario's face with both hands and pull, and pinch "PRESS START" (or press Start, or pinch with
 your palm up). Pinch Mario to pick him up, carry him out of the window and let go: he lands in your room and runs on
-it. To put your own label on the cartridge, copy a `label.png` or `label.jpg` into the app's folder in the Files app.
-No diorama yet.
+it. To put your own label on the cartridge (with `-cartridge`), copy a `label.png` or `label.jpg` into the app's folder in the Files app.
+Hold the window by its handle (or its lower part) down near a table and let go over the glowing circle: the level
+becomes a diorama on it. Look at it and pinch (anywhere, your hand can stay in your lap) to move it, up and down too,
+with both hands to turn and scale it; pinching its base works too. The gamepad's right stick (the arrow keys on a
+keyboard) turns it left / right and zooms it up / down, in place of the camera; click it in (R3, or C on a keyboard)
+to bring Mario back to the middle of the base (it then turns about him there). Press the Digital Crown to end it.
 visionOS runs no code that isn't signed into the
 app, so instead of an app to download you build it yourself in Xcode, with the game made from your ROM inside it.
 

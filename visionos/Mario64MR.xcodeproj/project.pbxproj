@@ -16,6 +16,7 @@
 		31D7F8F7465595A350AFD00F /* RoomProps.swift in Sources */ = {isa = PBXBuildFile; fileRef = 194C5C257E8D09FFA5448CA8 /* RoomProps.swift */; };
 		404DF67DE2B85CEAF1B7D879 /* N64Texture.swift in Sources */ = {isa = PBXBuildFile; fileRef = CF233E5AB95DE6BC17C8FD9B /* N64Texture.swift */; };
 		42460A2B357519EDF80BE817 /* GamePad.swift in Sources */ = {isa = PBXBuildFile; fileRef = 106C8D9566DE1035288922AF /* GamePad.swift */; };
+		42AE68490F935D0275857A81 /* Diorama.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4A92C8EA421D615DA6690C3 /* Diorama.swift */; };
 		43E1013DAAA260DEE0D418C6 /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9DD4CFD5E67B1A2DED671C72 /* MetalKit.framework */; };
 		49758A8AF61B65E3303DC9BA /* AudioOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68CB7AAC7557608A6803DF2B /* AudioOutput.swift */; };
 		5624D0B90790FD7FD31EDD56 /* SM64Game.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BE83807C8E67A0F0C77270C6 /* SM64Game.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -77,6 +78,7 @@
 		943F5996D2653E5553963EF2 /* Data */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Data; path = Build/Data; sourceTree = SOURCE_ROOT; };
 		9804ACE3F4CB94673186F407 /* GameHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameHost.swift; sourceTree = "<group>"; };
 		9DD4CFD5E67B1A2DED671C72 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		A4A92C8EA421D615DA6690C3 /* Diorama.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diorama.swift; sourceTree = "<group>"; };
 		ADA9A7BA4F339B75DE635C04 /* MarioCarrier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarioCarrier.swift; sourceTree = "<group>"; };
 		AED565824E6717B29E252745 /* TitleScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TitleScreen.swift; sourceTree = "<group>"; };
 		B76ACB4BACE212A1D0E7938D /* Mario64MRApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Mario64MRApp.swift; sourceTree = "<group>"; };
@@ -88,7 +90,7 @@
 		E201BEFE8AF929559A79171F /* ImmersiveRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImmersiveRenderer.swift; sourceTree = "<group>"; };
 		FA91C4F5557E9231F3E72B88 /* RoomMesh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomMesh.swift; sourceTree = "<group>"; };
 		FB1BEFCF61DEC99C3DA05E63 /* Mario64MR-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Mario64MR-Bridging-Header.h"; sourceTree = "<group>"; };
-		"TEMP_DB16479C-F0C3-4651-B000-54FA6E4DC419" /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
+		"TEMP_E3E1C4AD-B401-4222-853C-6B31425E10DC" /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -192,6 +194,7 @@
 			isa = PBXGroup;
 			children = (
 				7676E3B3887EFCF59AB82C3A /* Cartridge.swift */,
+				A4A92C8EA421D615DA6690C3 /* Diorama.swift */,
 				294CA9B017B6EA2F7E38A37C /* GameFrame.swift */,
 				5F43AEDE2DB291E5E35525CD /* GameRenderer.swift */,
 				7ACFB0947ABEBB5BE4664230 /* GameShaders.msl */,
@@ -208,7 +211,7 @@
 		EBE1C43830A6C0FB004720B7 /* Recovered References */ = {
 			isa = PBXGroup;
 			children = (
-				"TEMP_DB16479C-F0C3-4651-B000-54FA6E4DC419" /* Signing.xcconfig */,
+				"TEMP_E3E1C4AD-B401-4222-853C-6B31425E10DC" /* Signing.xcconfig */,
 			);
 			name = "Recovered References";
 			sourceTree = "<group>";
@@ -288,6 +291,7 @@
 			files = (
 				49758A8AF61B65E3303DC9BA /* AudioOutput.swift in Sources */,
 				EF26E1B89871844570516234 /* Cartridge.swift in Sources */,
+				42AE68490F935D0275857A81 /* Diorama.swift in Sources */,
 				6319E7FE739C371509FD2B5F /* GameFrame.swift in Sources */,
 				786CA4ED2C07B599D71568B4 /* GameHost.swift in Sources */,
 				42460A2B357519EDF80BE817 /* GamePad.swift in Sources */,
@@ -361,7 +365,7 @@
 		};
 		6B6E954D46A5765CD201A233 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_DB16479C-F0C3-4651-B000-54FA6E4DC419" /* Signing.xcconfig */;
+			baseConfigurationReference = "TEMP_E3E1C4AD-B401-4222-853C-6B31425E10DC" /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -420,7 +424,7 @@
 		};
 		D7D7EEBEE6D2867210D52EDC /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = "TEMP_DB16479C-F0C3-4651-B000-54FA6E4DC419" /* Signing.xcconfig */;
+			baseConfigurationReference = "TEMP_E3E1C4AD-B401-4222-853C-6B31425E10DC" /* Signing.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;

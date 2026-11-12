@@ -8,6 +8,8 @@ struct RoomGeometry: Sendable {
     var halfSize: SIMD2<Float>        // the opening's half width and height, metres
     /// The cartridge is open into the window (closed, nothing goes through it)
     var open = true
+    /// The level is a diorama on a table: no window to carry Mario through
+    var diorama = false
     /// "PRESS START" on the title screen, in the window's plane (RoomPlacement.startLabel)
     var startLabel: (center: SIMD2<Float>, half: SIMD2<Float>) = (.zero, .zero)
 
