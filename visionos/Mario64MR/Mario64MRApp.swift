@@ -79,12 +79,21 @@ struct GameWindow: View {
         }
     }
 
-    /// The game moves from this window into the room; when you leave the room (the Digital Crown), this window
-    /// comes back
+    /// The game moves from this window into the room. The Digital Crown steps back out: from a diorama to the
+    /// window in the room (visionOS closes the room either way, so it opens again at once), and from the window in
+    /// the room to this one
     private func openRoom() async {
         guard case .opened = await openImmersiveSpace(id: Self.roomSpace) else { return }
-        let openWindow = openWindow
-        game.room.onClose = { DispatchQueue.main.async { openWindow(id: Self.flatWindow) } }
+        let (openWindow, openImmersiveSpace, room) = (openWindow, openImmersiveSpace, game.room)
+        room.onClose = {
+            Task { @MainActor in
+                if room.current.reopenWidth != nil {
+                    if case .opened = await openImmersiveSpace(id: Self.roomSpace) { return }
+                    room.update { $0.reopenWidth = nil }
+                }
+                openWindow(id: Self.flatWindow)
+            }
+        }
         dismissWindow(id: Self.flatWindow)
     }
 
