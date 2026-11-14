@@ -59,6 +59,9 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private var lastTime: TimeInterval?
     private var startTime: TimeInterval?
     private var placedFromHead = false
+    /// Opened again out of a diorama (the Digital Crown, RoomLink.reopenWidth): the window open from the start,
+    /// this wide, in front of you
+    private var reopenWidth: Float?
     private var loggedRoom = false
     private var started: TimeInterval?
     private var drewFirstFrame = false
@@ -134,8 +137,12 @@ final class ImmersiveRenderer: @unchecked Sendable {
                 }
             }
         }
-        link.update { $0.on = true }
+        reopenWidth = link.current.reopenWidth
+        link.update { $0.on = true; $0.reopenWidth = nil }
         defer {
+            // The Digital Crown in a diorama: back to the window (the room opens again), not out of the room
+            let width = diorama != nil ? cartridge.map { $0.window.halfSize.x * 2 } : nil
+            link.update { $0.reopenWidth = width }
             link.update { $0.on = false; $0.head = nil; $0.facing = nil; $0.debugRelease = nil; $0.geometry = nil; $0.hands = [] }
             link.onClose?()
             tracking.cancel()
@@ -157,12 +164,14 @@ final class ImmersiveRenderer: @unchecked Sendable {
         guard let timing = frame.predictTiming() else { return }
         LayerRenderer.Clock().wait(until: timing.optimalInputTime)
         frame.startSubmission()
-        defer { frame.endSubmission() }
         // (usually one; a second while the view is being recorded or shared, at its own quality and without
         // foveation: each gets the same frame)
         let drawables = frame.queryDrawables()
-        guard let drawable = drawables.first,
-              let commands = game.queue.makeCommandBuffer() else { return }
+        // None as the room closes (the Digital Crown): the frame isn't valid, and ending its submission aborts
+        // the app
+        guard let drawable = drawables.first else { return }
+        defer { frame.endSubmission() }
+        guard let commands = game.queue.makeCommandBuffer() else { return }
 
         applyOptions()
         let time = Self.seconds(LayerRenderer.Clock.Instant.epoch.duration(to: drawable.frameTiming.presentationTime))
@@ -178,14 +187,21 @@ final class ImmersiveRenderer: @unchecked Sendable {
         // it isn't open or in a hand by then.
         let realHead = anchor.map { $0.isTracked && $0.originFromAnchorTransform.columns.3.y > 0.5 } ?? false
         // (with no cartridge, the window opens at once, so it moves too until a hand takes it)
-        let movable = cartridge.map { (!$0.isOpen || !Cartridge.enabled) && $0.holding.isEmpty } ?? true
+        let movable = cartridge.map { (!$0.isOpen || !Cartridge.enabled || reopenWidth != nil) && $0.holding.isEmpty }
+            ?? true
         if cartridge == nil || (!placedFromHead && realHead && movable) {
             if realHead || !WorldTrackingProvider.isSupported || (cartridge == nil && now - (started ?? now) > 2) {
                 // (no tracked head after 2 s, as in the simulator: in front of the pose there is, wherever it is)
                 let facing = head
                 let cartridge = Cartridge(facing: facing)
                 self.cartridge = cartridge
-                if !Cartridge.enabled { cartridge.open(RoomPlacement(facing: facing)) }
+                if let width = reopenWidth {
+                    let eye = SIMD3(facing.columns.3.x, facing.columns.3.y, facing.columns.3.z)
+                    cartridge.open(RoomPlacement(center: RoomPlacement(facing: facing).center, facing: eye, width: width))
+                    if realHead { reopenWidth = nil }  // (until then it moves to the head when one comes)
+                } else if !Cartridge.enabled {
+                    cartridge.open(RoomPlacement(facing: facing))
+                }
                 if startTime == nil { startTime = time }
                 placedFromHead = realHead
                 let y = head.columns.3.y, tracked = anchor?.isTracked ?? false
@@ -632,6 +648,9 @@ final class RoomLink: @unchecked Sendable {
         /// The Sense controllers (by side, 0 left, 1 right) whose grip holds the cartridge, the window or the base:
         /// their stick and trigger work it, not the game
         var busy: Set<Int> = []
+        /// The room closed out of a diorama (the Digital Crown): it opens again at once, the window open this wide
+        /// (metres), rather than going back to the flat window
+        var reopenWidth: Float?
         /// (from the game) the options menu's graphics
         var graphics = GameOptions.savedGraphics
     }
