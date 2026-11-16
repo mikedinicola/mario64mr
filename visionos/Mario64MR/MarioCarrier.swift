@@ -12,6 +12,8 @@ struct RoomGeometry: Sendable {
     var diorama = false
     /// "PRESS START" on the title screen, in the window's plane (RoomPlacement.startLabel)
     var startLabel: (center: SIMD2<Float>, half: SIMD2<Float>) = (.zero, .zero)
+    /// A diorama's level: the room (metres) into the game's world (units), as it was drawn (Diorama.roomFromWorld)
+    var worldFromRoom: simd_float4x4?
 
     /// A room point in the window's own space
     func inWindow(_ p: SIMD3<Float>) -> SIMD3<Float> {
@@ -81,14 +83,7 @@ final class MarioCarrier {
         _ = gameTriangles.withUnsafeBufferPointer { sm64unity_game_hands($0.baseAddress, Int32($0.count / 9)) }
         // ...and their joints through the window, fingertips too (which the surface leaves out): what touches a
         // coin or a star collects it (native/fullgame/unity_hands.inc.h)
-        var gamePoints: [Float] = []
-        for hand in hands where hand.tracked {
-            for p in (hand.joints.isEmpty ? [hand.reach, hand.pinch] : hand.joints) where inGame(p) {
-                let w = world(p)
-                gamePoints += [w.x, w.y, w.z]
-            }
-        }
-        _ = gamePoints.withUnsafeBufferPointer { sm64unity_game_hand_points($0.baseAddress, Int32($0.count / 3)) }
+        Self.touch(hands, where: inGame, world)
 
         // Standing on a hand: he moves with it
         let onHand = sm64unity_mario_on_hand()
@@ -159,6 +154,34 @@ final class MarioCarrier {
         }
     }
 
+    /// A diorama: nothing to carry or stand on, but your fingers over the level collect what they touch (coins,
+    /// stars, 1-ups)
+    func touchDiorama(hands: [HandState], geometry g: RoomGeometry) {
+        reset()
+        guard let worldFromRoom = g.worldFromRoom else { return }
+        Self.touch(hands, where: { _ in true }) { xyz(worldFromRoom * SIMD4($0, 1)) }
+    }
+
+    /// The hands' joints (fingertips too, which their surface leaves out) where `inside` says, into the game's
+    /// world: each touches what is within a centimetre or so of it (native/fullgame/unity_hands.inc.h)
+    private static func touch(_ hands: [HandState], where inside: (SIMD3<Float>) -> Bool,
+                              _ world: (SIMD3<Float>) -> SIMD3<Float>) {
+        var points: [Float] = []
+        var radius: Float = 0
+        for hand in hands where hand.tracked {
+            for p in (hand.joints.isEmpty ? [hand.reach, hand.pinch] : hand.joints) where inside(p) {
+                let w = world(p)
+                points += [w.x, w.y, w.z]
+                if radius == 0 { radius = simd_distance(w, world(p + SIMD3(touchRadius, 0, 0))) }
+            }
+        }
+        _ = points.withUnsafeBufferPointer {
+            sm64unity_game_hand_points($0.baseAddress, Int32($0.count / 3), radius)
+        }
+    }
+    /// How near a fingertip has to come to a coin to collect it, metres
+    private static let touchRadius: Float = 0.012
+
     /// The options menu's Bring Mario back: out in the room (or held), back where he was in the level
     func bringBack(geometry g: RoomGeometry?) {
         let mode = sm64unity_carry_mode()
@@ -189,7 +212,7 @@ final class MarioCarrier {
         lastPalm = [nil, nil]
         sm64unity_room_hands(nil, 0)
         sm64unity_game_hands(nil, 0)
-        sm64unity_game_hand_points(nil, 0)
+        sm64unity_game_hand_points(nil, 0, 0)
         sm64unity_hold_camera(0)
     }
 

@@ -44,7 +44,7 @@ void sm64unity_hold_camera(int hold);
 int sm64unity_room_mesh(const int16_t *triangles, int count);
 int sm64unity_room_hands(const int16_t *triangles, int count);
 int sm64unity_game_hands(const int16_t *triangles, int count);
-int sm64unity_game_hand_points(const float *points, int count);  // (unity_hands.inc.h: joints through the window)
+int sm64unity_game_hand_points(const float *points, int count, float radius);  // (unity_hands.inc.h: joints that touch)
 int sm64unity_object_grab(float x, float y, float z, float reach);  // (unity_hands.inc.h: pinch to pick up)
 int sm64unity_object_hold(float x, float y, float z);
 void sm64unity_object_release(float vx, float vy, float vz);
