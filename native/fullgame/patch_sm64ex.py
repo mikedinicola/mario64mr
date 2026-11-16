@@ -284,6 +284,13 @@ def prepare(root, rom, sixty=True, external_data=True):
     processor = replace_once(processor, '    clear_dynamic_surfaces();\n\n    // Update spawners',
                              '    clear_dynamic_surfaces();\n    extern void unity_load_game_hands(void);\n'
                              '    unity_load_game_hands();\n\n    // Update spawners')
+    # Hands touching objects (unity_hands.inc.h): what they touch Mario touches, once the game has found what he
+    # touches; what stands on them is found once everything has moved, and carried with them next frame
+    processor = replace_once(processor, '    detect_object_collisions();\n',
+                             '    detect_object_collisions();\n    extern void unity_hands_touch(void);\n    unity_hands_touch();\n')
+    processor = replace_once(processor, '    unload_deactivated_objects();\n\n    // Check if Mario is on a platform',
+                             '    extern void unity_hands_find_riders(void);\n    unity_hands_find_riders();\n'
+                             '    unload_deactivated_objects();\n\n    // Check if Mario is on a platform')
     (root / "src/game/object_list_processor.c").write_text(processor)
     # Out in the room, the stick steers by your head rather than by the game camera (unity_mr.c, unity_stick_yaw)
     mario = original("src/game/mario.c")
@@ -465,7 +472,7 @@ Gfx *geo_offset_klepto_held_object(""")
                        "    unity_note_sky(background, colorIndex);\n    return init_skybox_display_list(player, background, colorIndex);\n}")
     sky = sky.replace('extern int unity_is_mr(void);\n', 'extern int unity_is_mr(void);\nextern void unity_note_sky(int background, int color);\n', 1)
     (root / "src/game/skybox.c").write_text(sky)
-    surface = original("src/engine/surface_load.c") + '\n#include "pc/unity_room.inc.h"\n'
+    surface = original("src/engine/surface_load.c") + '\n#include "pc/unity_room.inc.h"\n#include "pc/unity_hands.inc.h"\n'
     surface = 'extern int unity_draw_far(void);\n' + replace_once(surface, "#ifndef NODRAWINGDISTANCE\n    if (marioDist < gCurrentObject->oDrawingDistance) {",
                                                                "#ifndef NODRAWINGDISTANCE\n    if (unity_draw_far() || marioDist < gCurrentObject->oDrawingDistance) {")
     (root / "src/engine/surface_load.c").write_text(surface)
@@ -483,7 +490,7 @@ Gfx *geo_offset_klepto_held_object(""")
     strings = original("include/text_options_strings.h.in")
     strings = replace_once(strings, "#endif // TEXT_OPTIONS_STRINGS_H", MR_STRINGS + "\n#endif // TEXT_OPTIONS_STRINGS_H")
     (root / "include/text_options_strings.h.in").write_text(strings)
-    for name in ("unity_bridge.h", "unity_bridge.c", "unity_mr.c", "unity_room.inc.h", "unity_options.h", "unity_options.inc.h"):
+    for name in ("unity_bridge.h", "unity_bridge.c", "unity_mr.c", "unity_room.inc.h", "unity_hands.inc.h", "unity_options.h", "unity_options.inc.h"):
         shutil.copy2(HERE / name, root / "src/pc" / name)
     (root / "baserom.us.z64").write_bytes(rom)
     # Sequence zero is authored as data-only assembly upstream. Read its exact
