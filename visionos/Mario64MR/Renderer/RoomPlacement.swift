@@ -53,7 +53,8 @@ struct RoomPlacement {
 
     /// Where "PRESS START" is on the title screen: in the window's plane, below the face (centre, half size)
     var startLabel: (center: SIMD2<Float>, half: SIMD2<Float>) {
-        (SIMD2(0, -halfSize.y * 0.86), SIMD2(halfSize.y * 0.45, halfSize.y * 0.08))
+        // (as wide as its picture is: RoomProps.labelAspect)
+        (SIMD2(0, -halfSize.y * 0.86), SIMD2(halfSize.y * 0.08 * RoomProps.labelAspect, halfSize.y * 0.08))
     }
 
     /// The game camera's view space into the room, for a frame whose level was drawn with `projection` (as
