@@ -157,15 +157,17 @@ final class TitleScreen {
     }
 }
 
-/// Your hands on the title screen (game thread): each pinch that starts at the window takes hold of the face where
-/// it points (seen from Goddard's camera, in front of the window), and pulls it as the hand moves; a pinch on
-/// "PRESS START" presses Start
+/// Your hands on the title screen (game thread): each pinch takes hold of the face where it is as you see it (from
+/// your eyes, through the pinch, onto the window: at arm's length or at the glass), and pulls it as the hand moves;
+/// a pinch on "PRESS START" presses Start
 final class TitleHands {
     private var held: [Float?] = [nil, nil]  // (the window-space depth each pinch took hold at)
     private var wasPinching = [false, false]
 
-    /// The cursors for TitleScreen.tick, and whether Start was pinched
-    func update(hands: [HandState], geometry g: RoomGeometry, frame: TitleFrame?) -> (cursors: [TitleCursor?], start: Bool) {
+    /// The cursors for TitleScreen.tick, and whether Start was pinched; `eye` is your head in the window's space
+    /// (without it, the pinch is seen from Goddard's camera)
+    func update(hands: [HandState], geometry g: RoomGeometry, frame: TitleFrame?,
+                eye: SIMD3<Float>?) -> (cursors: [TitleCursor?], start: Bool) {
         var cursors: [TitleCursor?] = [nil, nil]
         var start = false
         let h = g.halfSize
@@ -180,12 +182,16 @@ final class TitleHands {
             defer { wasPinching[i] = pinching }
             guard hand.tracked else { held[i] = nil; continue }
             let p = g.inWindow(hand.pinch)
-            let at = SIMD2(p.x, p.y) * (distance / max(distance - p.z, 0.05))
-            let near = abs(at.x) < h.y * 4 / 3 * 1.1 && abs(at.y) < h.y * 1.1 && p.z > -0.35 && p.z < 0.3
+            // Where it is on the window as you see it: from your eyes, through the pinch (at the glass, the pinch
+            // itself), else from Goddard's camera
+            let from = eye.flatMap { $0.z > 0.1 ? $0 : nil } ?? SIMD3(0, 0, distance)
+            let ahead = from.z - p.z  // (how far in front of the eyes, towards the window)
+            let at = SIMD2(from.x, from.y) + (SIMD2(p.x, p.y) - SIMD2(from.x, from.y)) * (from.z / max(ahead, 0.05))
+            let near = abs(at.x) < h.y * 4 / 3 * 1.1 && abs(at.y) < h.y * 1.1 && p.z > -0.35 && ahead > 0.15
             if pinching && !wasPinching[i] {
                 let label = g.startLabel
-                if abs(p.x - label.center.x) < label.half.x + 0.02, abs(p.y - label.center.y) < label.half.y + 0.03,
-                   p.z > -0.1, p.z < 0.12 {
+                if abs(at.x - label.center.x) < label.half.x + 0.02, abs(at.y - label.center.y) < label.half.y + 0.03,
+                   p.z > -0.1, ahead > 0.15 {
                     start = true
                 } else if near {
                     held[i] = p.z

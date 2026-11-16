@@ -155,8 +155,22 @@ final class GameHost {
                 // (and the camera stick turns and zooms the diorama, not the game camera: Diorama.update)
                 pad.buttons &= ~(GamePad.cUp | GamePad.cDown | GamePad.cLeft | GamePad.cRight)
             }
+            if frame % 15 == 0, stage <= 1 {  // TEMP face-pinch diagnostics
+                var line = "FACEDBG stage=\(stage) on=\(room.on) geo=\(room.geometry != nil) open=\(room.geometry?.open ?? false) title=\(title != nil)"
+                for (i, h) in hands.enumerated() where h.tracked {
+                    let p = room.geometry.map { $0.inWindow(h.pinch) } ?? .zero
+                    line += String(format: " h%d[pinch=%d ctl=%d palmUp=%d w=(%.2f,%.2f,%.2f)]", i, h.pinching ? 1 : 0,
+                                   h.controller ? 1 : 0, h.palmUp ? 1 : 0, p.x, p.y, p.z)
+                }
+                fputs(line + "\n", stderr)
+            }
             if let geometry = room.geometry, room.on, geometry.open, stage == 1, let title {
-                let (cursors, start) = titleHands.update(hands: hands, geometry: geometry, frame: titleFrame)
+                // (your head, from the game camera's view space into the window's)
+                let eye = room.head.map { geometry.inWindow(geometry.roomFromView.transform($0)) }
+                let (cursors, start) = titleHands.update(hands: hands, geometry: geometry, frame: titleFrame, eye: eye)
+                if frame % 15 == 0 {  // TEMP face-pinch diagnostics
+                    fputs("FACEDBG cursors \(cursors.map { $0.map { String(format: "(%.0f,%.0f a=%d)", $0.x, $0.y, $0.pinching ? 1 : 0) } ?? "nil" })\n", stderr)
+                }
                 if start { startFrames = 3 }
                 titleFrame = title.tick(cursors, pad: pad)
             } else {
