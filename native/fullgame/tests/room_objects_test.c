@@ -39,6 +39,7 @@ struct UnityBatch { uint32_t a; int b, c, triangles; uint32_t d, e; int f[4]; in
 const struct UnityBatch *sm64unity_batches(int *);
 int sm64unity_render_current(void);
 void unity_room_objects_warped(void);
+int sm64unity_game_hands(const s16 *, int);
 int unity_object_in_room(struct Object *);
 
 static int failures;
@@ -174,6 +175,20 @@ static void out_onto_table(const char *name, struct Object *o) {
     (void) from;
 }
 
+/* A palm slapped straight down through (x, z), game coordinates, from well above y to below it. 1 if o was squashed
+ * (gone within a few seconds after) */
+static int slap(struct Object *o, float x, float y, float z) {
+    for (float h = y + 300; h > y - 100; h -= 40) {
+        s16 palm[18];
+        quad(palm, x - 80, z - 80, x + 80, z + 80, h);
+        sm64unity_game_hands(palm, 2);
+        tick(0);
+    }
+    sm64unity_game_hands(NULL, 0);
+    for (int i = 0; i < 150 && (o->activeFlags & ACTIVE_FLAG_ACTIVE); i++) tick(0);
+    return !(o->activeFlags & ACTIVE_FLAG_ACTIVE);
+}
+
 int main(int argc, char **argv) {
     gCLIOpts.SkipIntro = 1;
     if (!sm64unity_init(argc > 1 ? argv[1] : ".")) { printf("init failed\n"); return 1; }
@@ -242,6 +257,21 @@ int main(int argc, char **argv) {
     sm64unity_object_release_room(0, 0, 0); ticks(5);
     sm64unity_room_objects_return();
     CHECK(!unity_object_in_room(o), "back in the game");
+
+    printf("Squash with your palm:\n");
+    struct Object *g = spawn(bhvGoomba, MODEL_GOOMBA, 0, 900);
+    ticks(30);
+    sm64unity_object_grab(g->oPosX, g->oPosY + 20, g->oPosZ, 30);
+    sm64unity_object_hold_room(1450, 650, 0); tick(0);
+    sm64unity_object_release_room(0, 0, 0); ticks(20);
+    CHECK(unity_object_in_room(g), "a Goomba out on the table");
+    /* (a hand in the game, slapping where its room coordinates would be in the level) */
+    CHECK(!slap(g, g->oPosX, g->oPosY, g->oPosZ) && unity_object_in_room(g), "a slap in the game doesn't squash it out there");
+    float out[32];
+    sm64unity_room_objects(out, 4);
+    sm64unity_room_object_return((int) out[0], gMarioObject->oPosX, gMarioObject->oPosY + 20, gMarioObject->oPosZ + 900, 0, 0, 0);
+    ticks(30);
+    CHECK(slap(g, g->oPosX, g->oPosY, g->oPosZ), "back in the game, a slap squashes it");
 
     printf("Excluded: a Thwomp can't be pinched\n");
     struct Object *t = spawn(bhvThwomp, MODEL_NONE, 0, -900);
