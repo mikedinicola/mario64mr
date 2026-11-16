@@ -67,15 +67,6 @@ struct RoomPlacement {
         return roomFromWindow * translate * scaling
     }
 
-    /// The near plane's distance (game units) of a level drawn with `projection` (guPerspective's: clip z is
-    /// a z + b, a = (n + f) / (n - f), b = 2nf / (n - f), so n = b / (a - 1)); the game's usual 100 without one
-    static func near(_ projection: simd_float4x4?) -> Float {
-        guard let p = projection, p.columns.2.w != 0 else { return 100 }
-        let a = p.columns.2.z, b = p.columns.3.z
-        let n = abs(a - 1) > 1e-6 ? b / (a - 1) : 0
-        return n.isFinite && n > 0 ? n : 100
-    }
-
     /// The x narrowing of a game picture `size` pixels wide and high (gfx_adjust_x_for_aspect_ratio)
     static func xScale(_ size: SIMD2<Int32>) -> Float {
         (4.0 / 3.0) / (Float(size.x) / Float(size.y))

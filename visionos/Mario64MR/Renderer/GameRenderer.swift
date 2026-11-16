@@ -83,13 +83,15 @@ final class GameRenderer: NSObject, MTKViewDelegate {
     }
 
     /// The frame's draws into a render pass whose target is `size` pixels, the game's window stretched over it
-    func encode(_ frame: GameFrame, into encoder: MTLRenderCommandEncoder, target size: SIMD2<Double>) {
+    /// (`worldOnly`: the level alone, no sky or HUD)
+    func encode(_ frame: GameFrame, into encoder: MTLRenderCommandEncoder, target size: SIMD2<Double>,
+                worldOnly: Bool = false) {
         guard let vertices = frame.vertices else { return }
         let scale = size / SIMD2(Double(frame.size.x), Double(frame.size.y))
         var number = frame.number
         encoder.setFragmentBytes(&number, length: 4, index: 0)
         encoder.setCullMode(.none)
-        for draw in frame.draws {
+        for draw in frame.draws where !worldOnly || draw.kind == .world {
             // OpenGL's rectangles count from the bottom left of the game's window, Metal's from the top left
             let v = draw.viewport
             encoder.setViewport(MTLViewport(
@@ -132,23 +134,34 @@ final class GameRenderer: NSObject, MTKViewDelegate {
         var eye: SIMD4<Float>
         var window: SIMD4<Float>
         var up: SIMD4<Float>
-        var camera: SIMD4<Float>
     }
 
     /// The frame's draws for one eye: the game (`actors` false), or Mario out in the room (`actors` true, after the
     /// room's depth). `roomFromClip` gives each level draw's way from the game's clip space into the room, and
-    /// `actorFromClip` Mario's while he's out in the room (RoomPlacement).
+    /// `actorFromClip` Mario's while he's out in the room (RoomPlacement). `beforeScreen` is called after the
+    /// level and before the HUD and the game's other flat pictures (it draws its own state: the frame's is set again).
     func encodeRoom(_ frame: GameFrame, into encoder: MTLRenderCommandEncoder, eye: RoomEye, actors: Bool,
                     roomFromClip: (GameFrame.Draw) -> simd_float4x4,
-                    actorFromClip: (GameFrame.Draw) -> simd_float4x4) {
+                    actorFromClip: (GameFrame.Draw) -> simd_float4x4,
+                    beforeScreen: (() -> Void)? = nil) {
         guard let vertices = frame.vertices else { return }
         var number = frame.number
         var eye = eye
-        encoder.setFragmentBytes(&number, length: 4, index: 0)
-        encoder.setFragmentBytes(&eye, length: MemoryLayout<RoomEye>.stride, index: 1)
-        encoder.setVertexBytes(&eye, length: MemoryLayout<RoomEye>.stride, index: 2)
-        encoder.setCullMode(.none)
+        func setFrame() {
+            encoder.setFragmentBytes(&number, length: 4, index: 0)
+            encoder.setFragmentBytes(&eye, length: MemoryLayout<RoomEye>.stride, index: 1)
+            encoder.setVertexBytes(&eye, length: MemoryLayout<RoomEye>.stride, index: 2)
+            encoder.setCullMode(.none)
+        }
+        setFrame()
+        var before = beforeScreen
+        defer { before?() }
         for draw in frame.draws {
+            if draw.kind == .screen, let call = before {
+                before = nil
+                call()
+                setFrame()
+            }
             let actor = frame.marioOutside && (draw.tag == 1 || draw.tag == 2)
             guard actor == actors, prepare(draw, encoder: encoder) else { continue }
             var room = actor ? RoomDraw(roomFromClip: actorFromClip(draw), kind: SIMD4(3, 0, 0, 0))

@@ -114,6 +114,30 @@ final class RoomProps {
         }
     }
 
+    /// What the level has between the game camera and the window, painted on the glass (window_picture_fragment):
+    /// `picture` and `depth` the game's flat picture of its level, `nearer` the window's depth in it
+    func encodeWindowPicture(_ window: RoomPlacement, picture: MTLTexture, depth: MTLTexture, nearer: Float,
+                             into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
+        guard let pipelines = pipelines() else { return }
+        let h = window.halfSize
+        // (a millimetre out of the window: in front of the level behind it, behind the HUD at 2 mm)
+        let model = window.roomFromWindow * Self.translate(0, 0, 0.001) * Self.scale(SIMD3(h.x * 2, h.y * 2, 1))
+        encoder.setRenderPipelineState(pipelines[5])
+        encoder.setDepthStencilState(depthWrite)
+        encoder.setDepthBias(0, slopeScale: 0, clamp: 0)
+        encoder.setCullMode(.none)
+        var d = PropDraw(model: model, color: SIMD4(1, 1, 1, 1), flags: SIMD4(0, 0, 0, 0)), e = eye, n = nearer
+        encoder.setVertexBuffer(quad, offset: 0, index: 0)
+        encoder.setVertexBytes(&d, length: MemoryLayout<PropDraw>.stride, index: 1)
+        encoder.setVertexBytes(&e, length: MemoryLayout<GameRenderer.RoomEye>.stride, index: 2)
+        encoder.setFragmentBytes(&e, length: MemoryLayout<GameRenderer.RoomEye>.stride, index: 2)
+        encoder.setFragmentBytes(&n, length: 4, index: 3)
+        encoder.setFragmentTexture(picture, index: 0)
+        encoder.setFragmentTexture(depth, index: 1)
+        encoder.setFragmentSamplerState(sampler(clamp: (true, true), mirror: (false, false)), index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+    }
+
     /// The handle under the window, as visionOS draws its windows' bar: a soft white pill, brighter and a little
     /// wider while held
     func encodeHandle(_ window: RoomPlacement, held: Bool, into encoder: MTLRenderCommandEncoder,
@@ -292,8 +316,9 @@ final class RoomProps {
                    pipeline("prop_vertex", "prop_fragment", blend: true),
                    pipeline("title_vertex", "title_fragment", blend: false),
                    pipeline("title_vertex", "title_fragment", blend: true),
-                   pipeline("glove_vertex", "glove_fragment", blend: false, overDrawn: true)].compactMap { $0 }
-        guard set.count == 5 else { return nil }
+                   pipeline("glove_vertex", "glove_fragment", blend: false, overDrawn: true),
+                   pipeline("prop_vertex", "window_picture_fragment", blend: false)].compactMap { $0 }
+        guard set.count == 6 else { return nil }
         pipelineSets[sampleCount] = set
         return set
     }

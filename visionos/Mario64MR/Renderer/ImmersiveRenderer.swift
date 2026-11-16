@@ -50,6 +50,10 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private let controllerTracker = ControllerTracker()
     private let planeFinder = PlaneFinder()
     private let props: RoomProps
+    /// The game's flat picture of its level, each frame, for what it has between its camera and the window (painted
+    /// on the glass: RoomProps.encodeWindowPicture)
+    private let flat: GameRenderer
+    private var windowPicture: (color: MTLTexture, depth: MTLTexture)?
     /// The cartridge, and the window it opens into (made at the first frame, in front of you)
     private var cartridge: Cartridge?
     /// The level as a diorama on a table, while it is one
@@ -77,9 +81,11 @@ final class ImmersiveRenderer: @unchecked Sendable {
         let target = GameRenderer.Target(colorFormat: layer.configuration.colorFormat,
                                          depthFormat: layer.configuration.depthFormat, room: true)
         guard let game = GameRenderer(device: device, frames: frames, target: target),
+              let flat = GameRenderer(device: device, frames: frames, target: .flat),
               let props = RoomProps(device: device, library: game.library, colorFormat: target.colorFormat,
                                     depthFormat: target.depthFormat) else { return nil }
         self.props = props
+        self.flat = flat
         self.layer = layer
         self.game = game
         self.frames = frames
@@ -294,11 +300,18 @@ final class ImmersiveRenderer: @unchecked Sendable {
         let roomFromView = roomFromWorld.map { $0 * camera.inverse }
             ?? placement.roomFromView(projection: level, xScale: xScale)
         let viewFromRoom = roomFromView.inverse
-        // The game camera and its near plane in the window's space, for the level reaching out of the window
-        let windowFromView = placement.roomFromWindow.inverse * roomFromView
-        let cameraInWindow = windowFromView * SIMD4(0, 0, 0, 1)
-        let nearInWindow = windowFromView * SIMD4(0, 0, -RoomPlacement.near(level), 1)
-        let gameCamera = SIMD4(cameraInWindow.x, cameraInWindow.y, cameraInWindow.z, nearInWindow.z)
+        // What the level has between the game camera and the window: the game's flat picture of it, to paint on
+        // the glass where its nearest surface is nearer than the window (in its depth, `nearer`). And a centimetre
+        // past it (in a window 1.2 m wide): the level is cut off at the window a pixel at a time, the painting a
+        // pixel of its picture at a time, and along where the two meet some pixels would be neither, a thin gap
+        var nearPicture: (color: MTLTexture, depth: MTLTexture, nearer: Float)?
+        if diorama == nil, cartridge.isOpen, let gameFrame, gameFrame.title == nil, let level,
+           let picture = renderWindowPicture(gameFrame, commands: commands) {
+            let cameraInWindow = placement.roomFromWindow.inverse * roomFromView * SIMD4<Float>(0, 0, 0, 1)
+            let overlap = 0.01 * placement.halfSize.x / 0.6
+            let clip = level * SIMD4(0, 0, -(cameraInWindow.z + overlap) / placement.scale, 1)
+            if clip.w > 0 { nearPicture = (picture.color, picture.depth, (clip.z / clip.w + 1) / 2) }
+        }
         let up = simd_normalize(SIMD3(camera.columns.1.x, camera.columns.1.y, camera.columns.1.z))
         // Billboards turn to the head, in the game camera's view space (sm64unity_billboards, next tick)
         let headInView = viewFromRoom * head.columns.3
@@ -342,8 +355,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
                     windowFromRoom: placement.roomFromWindow.inverse,
                     eye: placement.roomFromWindow.inverse * roomFromEye.columns.3,
                     window: SIMD4(placement.halfSize.x, placement.halfSize.y, placement.skyDistance, 0),
-                    up: SIMD4(up, 0),
-                    camera: gameCamera)
+                    up: SIMD4(up, 0))
                 guard let encoder = makeEncoder(commands, drawable: drawable, slot: slot, view: view) else { continue }
                 // Open: the game through the window (or the title screen's face), in its frame. Closed: the cartridge.
                 // Then the room's surfaces into depth and Mario, if he's out in the room, hidden by them
@@ -358,7 +370,12 @@ final class ImmersiveRenderer: @unchecked Sendable {
                         props.encodeTitle(title, window: placement, time: time - (startTime ?? 0), into: encoder, eye: eye)
                     } else if let gameFrame {
                         game.encodeRoom(gameFrame, into: encoder, eye: eye, actors: false,
-                                        roomFromClip: roomFromClip, actorFromClip: actorFromClip)
+                                        roomFromClip: roomFromClip, actorFromClip: actorFromClip) { [props] in
+                            if let near = nearPicture {
+                                props.encodeWindowPicture(placement, picture: near.color, depth: near.depth,
+                                                          nearer: near.nearer, into: encoder, eye: eye)
+                            }
+                        }
                     }
                 } else {
                     props.encodeCartridge(cartridge.pose, into: encoder, eye: eye)
@@ -369,7 +386,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
                                     roomFromClip: roomFromClip, actorFromClip: actorFromClip)
                 }
                 // The handle, and where the window will go down, last: they're blended (into depth only where they
-                // show), so whatever came after them (the frame, the level reaching out of the window) would paint over
+                // show), so whatever came after them (the frame, Mario out in the room) would paint over
                 // their soft edges
                 if diorama == nil, cartridge.isOpen {
                     props.encodeHandle(placement, held: !cartridge.holding.isEmpty, into: encoder, eye: eye)
@@ -541,6 +558,39 @@ final class ImmersiveRenderer: @unchecked Sendable {
         let buffer = corners.isEmpty ? nil
             : game.device.makeBuffer(bytes: corners, length: corners.count * 4, options: .storageModeShared)
         roomMesh.withLockUnchecked { $0 = (buffer, corners.count / 3) }
+    }
+
+    /// The game's flat picture of its level (no sky or HUD) and its depth, into textures 1920 wide
+    private func renderWindowPicture(_ frame: GameFrame, commands: MTLCommandBuffer)
+        -> (color: MTLTexture, depth: MTLTexture)? {
+        let width = 1920, height = max(1, Int(Float(width) * Float(frame.size.y) / Float(max(frame.size.x, 1))))
+        if windowPicture.map({ $0.color.width != width || $0.color.height != height }) ?? true {
+            func make(_ format: MTLPixelFormat) -> MTLTexture? {
+                let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height,
+                                                                 mipmapped: false)
+                d.usage = [.renderTarget, .shaderRead]
+                d.storageMode = .private
+                return device.makeTexture(descriptor: d)
+            }
+            guard let color = make(GameRenderer.Target.flat.colorFormat),
+                  let depth = make(GameRenderer.Target.flat.depthFormat) else { return nil }
+            windowPicture = (color, depth)
+        }
+        guard let picture = windowPicture else { return nil }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = picture.color
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        pass.colorAttachments[0].storeAction = .store
+        pass.depthAttachment.texture = picture.depth
+        pass.depthAttachment.loadAction = .clear
+        pass.depthAttachment.clearDepth = 1
+        pass.depthAttachment.storeAction = .store
+        guard let encoder = commands.makeRenderCommandEncoder(descriptor: pass) else { return nil }
+        flat.anisotropy = game.anisotropy
+        flat.encode(frame, into: encoder, target: SIMD2(Double(width), Double(height)), worldOnly: true)
+        encoder.endEncoding()
+        return picture
     }
 
     /// The options menu's graphics, as the game last gave them: the render quality, MSAA, anisotropy
