@@ -10,6 +10,7 @@ final class RoomProps {
         var model: simd_float4x4
         var color: SIMD4<Float>
         var flags: SIMD4<UInt32>  // x lit, y only through the opening, z alpha tested, w blended into depth
+        var uvTransform = SIMD4<Float>(1, 1, 0, 0)  // uv * xy + zw
     }
     private struct TitleDraw {
         var roomFromGd: simd_float4x4
@@ -38,6 +39,8 @@ final class RoomProps {
     private let pressStart: MTLTexture
     private let ring: MTLTexture
     private let pill: MTLTexture
+    /// The title screen's backdrop tile ("SUPER MARIO 64", 80 × 80 of the game's 320 × 240), if the game has it
+    private let titleTile: MTLTexture?
     private var samplers: [Int: MTLSamplerState] = [:]
 
     /// The cartridge's plastic, and the backdrop behind the face (linear)
@@ -83,7 +86,9 @@ final class RoomProps {
         }.first { FileManager.default.fileExists(atPath: $0.path) }
         label = custom.flatMap { try? loader.newTexture(URL: $0, options: options) }
             ?? (try? loader.newTexture(cgImage: Self.plainLabel(), options: options)) ?? white
-        pressStart = (try? loader.newTexture(cgImage: Self.pressStartImage(), options: options)) ?? white
+        pressStart = (try? loader.newTexture(cgImage: Self.gameFontImage("PRESS START") ?? Self.pressStartImage(),
+                                              options: options)) ?? white
+        titleTile = Self.titleTileImage().flatMap { try? loader.newTexture(cgImage: $0, options: options) }
         ring = (try? loader.newTexture(cgImage: Self.ringImage(), options: options)) ?? white
         pill = (try? loader.newTexture(cgImage: Self.pillImage(), options: options)) ?? white
         guard pipelines() != nil else { print("Mario 64 MR: the room's props didn't build"); return nil }
@@ -193,8 +198,24 @@ final class RoomProps {
     func encodeTitle(_ title: TitleFrame, window: RoomPlacement, time: Double, into encoder: MTLRenderCommandEncoder,
                      eye: GameRenderer.RoomEye) {
         let h = window.halfSize
-        let back = window.roomFromWindow * Self.translate(0, 0, -1.5) * Self.scale(SIMD3(h.x * 16, h.y * 16, 1))
-        drawQuad(back, color: backdrop, texture: white, flags: SIMD4(0, 1, 0, 0), into: encoder, eye: eye)
+        let depth: Float = 1.5, size = SIMD2(h.x * 16, h.y * 16)
+        let back = window.roomFromWindow * Self.translate(0, 0, -depth) * Self.scale(SIMD3(size, 1))
+        if let titleTile {
+            // The game's tiles, laid out as from Goddard's camera (where the game camera would be) they cover its
+            // picture: 80 of its 240 rows tall, from its bottom left corner (intro_backdrop_one_image)
+            let xScale = (4.0 / 3.0) / RoomPlacement.aspect
+            let p00 = abs(title.projection.columns.0.x) * xScale
+            let camera = h.x * (p00 > 0.01 ? p00 : 1)
+            let grow = (camera + depth) / camera  // (the window's size, out at the backdrop)
+            let tile = 80 * h.y / 120 * grow, origin = -h * grow
+            // (the quad's uv: x = (u - 0.5) size.x, y = (0.5 - v) size.y; the tile's v runs down from its top)
+            let uv = SIMD4(size.x / tile, size.y / tile,
+                           (-0.5 * size.x - origin.x) / tile, 1 - (0.5 * size.y - origin.y) / tile)
+            draw(quad, count: 6, model: back, color: SIMD4(1, 1, 1, 1), texture: titleTile, flags: SIMD4(0, 1, 0, 0),
+                 blend: false, uvTransform: uv, repeating: true, into: encoder, eye: eye)
+        } else {
+            drawQuad(back, color: backdrop, texture: white, flags: SIMD4(0, 1, 0, 0), into: encoder, eye: eye)
+        }
 
         if let vertices = title.vertices {
             let roomFromGd3D = Self.roomFromTitle(title, window: window)
@@ -267,19 +288,20 @@ final class RoomProps {
 
     private func draw(_ mesh: MTLBuffer, count: Int, model: simd_float4x4, color: SIMD4<Float>, texture: MTLTexture,
                       flags: SIMD4<UInt32>, blend: Bool, depth: MTLDepthStencilState? = nil,
+                      uvTransform: SIMD4<Float> = SIMD4(1, 1, 0, 0), repeating: Bool = false,
                       into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
         guard let pipelines = pipelines() else { return }
         encoder.setRenderPipelineState(pipelines[blend ? 1 : 0])
         encoder.setDepthStencilState(depth ?? (blend ? depthTestOnly : depthWrite))
         encoder.setCullMode(.none)
-        var d = PropDraw(model: model, color: color, flags: flags), e = eye
+        var d = PropDraw(model: model, color: color, flags: flags, uvTransform: uvTransform), e = eye
         encoder.setVertexBuffer(mesh, offset: 0, index: 0)
         encoder.setVertexBytes(&d, length: MemoryLayout<PropDraw>.stride, index: 1)
         encoder.setFragmentBytes(&d, length: MemoryLayout<PropDraw>.stride, index: 1)
         encoder.setVertexBytes(&e, length: MemoryLayout<GameRenderer.RoomEye>.stride, index: 2)
         encoder.setFragmentBytes(&e, length: MemoryLayout<GameRenderer.RoomEye>.stride, index: 2)
         encoder.setFragmentTexture(texture, index: 0)
-        encoder.setFragmentSamplerState(sampler(clamp: (true, true), mirror: (false, false)), index: 0)
+        encoder.setFragmentSamplerState(sampler(clamp: (!repeating, !repeating), mirror: (false, false)), index: 0)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: count)
     }
 
@@ -462,16 +484,81 @@ final class RoomProps {
                        provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
     }
 
+    /// `text` (capitals and spaces) in the game's colourful HUD letters, as print_text lays them out: 16×16 glyphs
+    /// every 12 pixels (segment2's, from your texture packs first, else base.zip). Nil if a letter isn't there.
+    /// Its picture is `labelAspect` wide for "PRESS START".
+    private static func gameFontImage(_ text: String) -> CGImage? {
+        let letters = Array(Set(text).subtracting([" "]))
+        // (segment2's letters: A at 0x1400, each 0x200 on)
+        var paths: [String] = []
+        for c in letters {
+            guard let a = Character("A").asciiValue, let v = c.asciiValue, v >= a, v <= a + 25 else { return nil }
+            paths.append(String(format: "gfx/textures/segment2/segment2.%05X.rgba16.png", 0x1400 + Int(v - a) * 0x200))
+        }
+        guard let pictures = gamePictures(paths) else { return nil }
+        let glyphs = Dictionary(uniqueKeysWithValues: zip(letters, pictures))
+        // (an HD pack's letters are bigger: the picture is made at their size)
+        let k = max(1, (glyphs.values.map { $0.width }.max() ?? 16) / 16)
+        let count = text.count
+        let size = CGSize(width: ((count - 1) * 12 + 16) * k, height: 16 * k)
+        return image(size) { context in
+            context.clear(CGRect(origin: .zero, size: size))
+            context.interpolationQuality = .none
+            // (UIKit's context is flipped: drawn the right way up)
+            context.translateBy(x: 0, y: size.height)
+            context.scaleBy(x: 1, y: -1)
+            for (i, c) in text.enumerated() {
+                guard let glyph = glyphs[c] else { continue }
+                context.draw(glyph, in: CGRect(x: i * 12 * k, y: 0, width: 16 * k, height: 16 * k))
+            }
+        }
+    }
+
+    /// The game's pictures at `paths` in its resource pack (your texture packs' first, else base.zip); nil if one
+    /// isn't there
+    private static func gamePictures(_ paths: [String]) -> [CGImage]? {
+        guard let base = Bundle.main.resourceURL?.appendingPathComponent("Data/sm64/res/base.zip"),
+              let zip = ZipArchive(url: base) else { return nil }
+        let packs = TexturePacks.Reader()
+        var pictures: [CGImage] = []
+        for path in paths {
+            guard let png = packs.read(path) ?? zip.read(path), let picture = UIImage(data: png)?.cgImage else { return nil }
+            pictures.append(picture)
+        }
+        return pictures
+    }
+
+    /// The title screen's backdrop tile, as intro_geo.c draws it: mario_title_texture_table's four 80 × 20 strips,
+    /// top to bottom (at an HD pack's size, if it has them)
+    private static func titleTileImage() -> CGImage? {
+        let strips = ["001C0", "00E40", "01AC0", "02740"].map { "gfx/textures/title_screen_bg/title_screen_bg.\($0).rgba16.png" }
+        guard let pictures = gamePictures(strips) else { return nil }
+        let k = max(1, (pictures.map { $0.width }.max() ?? 80) / 80)
+        let size = CGSize(width: 80 * k, height: 80 * k)
+        return image(size) { context in
+            context.interpolationQuality = .none
+            context.translateBy(x: 0, y: size.height)
+            context.scaleBy(x: 1, y: -1)
+            for (i, strip) in pictures.enumerated() {  // (the first at the top)
+                context.draw(strip, in: CGRect(x: 0, y: (3 - i) * 20 * k, width: 80 * k, height: 20 * k))
+            }
+        }
+    }
+
+    /// "PRESS START"'s picture, width over height (gameFontImage's: 10 × 12 + 16 by 16)
+    static let labelAspect: Float = 136.0 / 16.0
+
+    /// (without the game's letters) "PRESS START" in the system's font, the same shape
     private static func pressStartImage() -> CGImage {
-        image(CGSize(width: 512, height: 92)) { context in
-            context.clear(CGRect(x: 0, y: 0, width: 512, height: 92))
-            let font = UIFont.systemFont(ofSize: 64, weight: .heavy)
+        image(CGSize(width: 544, height: 64)) { context in
+            context.clear(CGRect(x: 0, y: 0, width: 544, height: 64))
+            let font = UIFont.systemFont(ofSize: 48, weight: .heavy)
             let shadow = NSAttributedString(string: "PRESS START", attributes: [
                 .font: font, .foregroundColor: UIColor(red: 0.55, green: 0.05, blue: 0.05, alpha: 1)])
             let text = NSAttributedString(string: "PRESS START", attributes: [
                 .font: font, .foregroundColor: UIColor(red: 1, green: 0.9, blue: 0.2, alpha: 1)])
-            let size = text.size(), at = CGPoint(x: (512 - size.width) / 2, y: (92 - size.height) / 2)
-            shadow.draw(at: CGPoint(x: at.x + 4, y: at.y + 4))
+            let size = text.size(), at = CGPoint(x: (544 - size.width) / 2, y: (64 - size.height) / 2)
+            shadow.draw(at: CGPoint(x: at.x + 3, y: at.y + 3))
             text.draw(at: at)
         }
     }

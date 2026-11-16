@@ -245,6 +245,7 @@ struct PropDraw {
     float4 color;    // linear, multiplied by the texture
     uint4 flags;     // x: lit, y: only where seen through the window's opening, z: alpha tested, w: blended, but
                      // where it shows (not nearly transparent) it's in the depth buffer
+    float4 uvTransform;  // the texture's coordinates: uv * xy + zw (repeating past 1: the title's backdrop)
 };
 struct PropVaryings { float4 position [[position]]; float3 normal; float2 uv; float3 room; };
 
@@ -263,7 +264,7 @@ vertex PropVaryings prop_vertex(uint vid [[vertex_id]], const device PropVertex 
     float4 room = draw.model * float4(float3(v.position), 1);
     out.position = eye.viewProjection * room;
     out.normal = (draw.model * float4(float3(v.normal), 0)).xyz;
-    out.uv = float2(v.uv);
+    out.uv = float2(v.uv) * draw.uvTransform.xy + draw.uvTransform.zw;
     out.room = room.xyz;
     return out;
 }
