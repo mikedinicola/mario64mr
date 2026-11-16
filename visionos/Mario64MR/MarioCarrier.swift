@@ -32,6 +32,9 @@ struct RoomGeometry: Sendable {
 /// room's origin); the level in the game's world units, through the game camera and the window.
 final class MarioCarrier {
     private var held: Int?                       // the hand holding him
+    private var holding: Int?                    // the hand holding an enemy or NPC (unity_hands.inc.h)
+    /// How near a pinch has to be to an enemy or NPC to pick it up, metres
+    private let objectReach: Float = 0.04
     private var wasPinching = [false, false]
     private var lastPalm: [SIMD3<Float>?] = [nil, nil]
     private var heldFrom = SIMD3<Float>.zero     // (where he was in the level when picked up: back there if he can't go out)
@@ -76,6 +79,16 @@ final class MarioCarrier {
         }
         _ = roomTriangles.withUnsafeBufferPointer { sm64unity_room_hands($0.baseAddress, Int32($0.count / 9)) }
         _ = gameTriangles.withUnsafeBufferPointer { sm64unity_game_hands($0.baseAddress, Int32($0.count / 9)) }
+        // ...and their joints through the window, fingertips too (which the surface leaves out): what touches a
+        // coin or a star collects it (native/fullgame/unity_hands.inc.h)
+        var gamePoints: [Float] = []
+        for hand in hands where hand.tracked {
+            for p in (hand.joints.isEmpty ? [hand.reach, hand.pinch] : hand.joints) where inGame(p) {
+                let w = world(p)
+                gamePoints += [w.x, w.y, w.z]
+            }
+        }
+        _ = gamePoints.withUnsafeBufferPointer { sm64unity_game_hand_points($0.baseAddress, Int32($0.count / 3)) }
 
         // Standing on a hand: he moves with it
         let onHand = sm64unity_mario_on_hand()
@@ -90,17 +103,34 @@ final class MarioCarrier {
 
         // A hand in the window holds the game still; standing on one there, it starts again from him after
         let reaching = hands.contains { $0.tracked && inGame($0.reach) }
-        sm64unity_hold_camera(onHand == 2 ? 2 : reaching || held != nil ? 1 : 0)
+        sm64unity_hold_camera(onHand == 2 ? 2 : reaching || held != nil || holding != nil ? 1 : 0)
 
-        // Picking him up
+        // Picking him up; a pinch through the window anywhere else picks up the enemy or NPC nearest it
         for (i, hand) in hands.enumerated() {
             let began = hand.tracked && hand.pinching && !wasPinching[i]
             if began, held == nil, seen >= 1, hand.grabsMario,
                simd_distance(hand.pinch, marioInRoom + SIMD3(0, hang * 0.7, 0)) < 0.12 {
                 held = i
                 heldFrom = mode >= 2 ? world(marioInRoom) : position
+            } else if began, holding == nil, held == nil, mode == 0, !hand.palmUp, inGame(hand.pinch) {
+                // (within a few centimetres of it, in the level's units there)
+                let at = world(hand.pinch), reach = simd_distance(at, world(hand.pinch + SIMD3(objectReach, 0, 0)))
+                if sm64unity_object_grab(at.x, at.y, at.z, reach) == 1 { holding = i }
             }
             wasPinching[i] = hand.tracked && hand.pinching
+        }
+
+        // Holding it at the pinch; letting go, thrown with the hand (or the pinch out of the window: dropped there)
+        if let h = holding {
+            let hand = hands[h]
+            if hand.tracked && hand.pinching && inGame(hand.pinch) {
+                let at = world(hand.pinch)
+                if sm64unity_object_hold(at.x, at.y, at.z) == 0 { holding = nil }  // (gone: killed, say)
+            } else {
+                holding = nil
+                let w = worldDirection(hand.velocity / 30)  // (metres a frame)
+                sm64unity_object_release(w.x, w.y, w.z)
+            }
         }
 
         // Carrying him, and letting him go
@@ -151,10 +181,15 @@ final class MarioCarrier {
             held = nil
             _ = sm64unity_carry(0, heldFrom.x, heldFrom.y, heldFrom.z, 0, 0, 0)
         }
+        if holding != nil {
+            holding = nil
+            sm64unity_object_release(0, 0, 0)
+        }
         wasPinching = [false, false]
         lastPalm = [nil, nil]
         sm64unity_room_hands(nil, 0)
         sm64unity_game_hands(nil, 0)
+        sm64unity_game_hand_points(nil, 0)
         sm64unity_hold_camera(0)
     }
 

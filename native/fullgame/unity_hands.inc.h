@@ -1,12 +1,14 @@
 /* Your hands reaching into the game, touching its objects. Included after unity_room.inc.h (in surface_load.c), whose
- * hand triangles (sm64unity_game_hands, game coordinates) it reads. Everything here is the game's side alone: the host
- * sends the hands' shape and nothing else, so there is no grip, only touch.
+ * hand triangles (sm64unity_game_hands, game coordinates) it reads, with the hands' joints if the host sends them
+ * (sm64unity_game_hand_points: fingertips, which the triangles leave out). There is no grip, only touch.
  *
  * - Touch to collect: a coin, cap or 1-up your hand touches is collected as if Mario had touched it (it is put on
  *   his list of things he collided with this frame, which the game's own interactions then handle). Not stars or
  *   keys: those are Mario's to reach.
  * - Carry on your palm: an enemy or NPC standing on your hand moves with it (and turns with it), as the game moves
  *   things on its platforms. Tip your hand and it falls off; its own physics do the rest.
+ * - Pinch to pick up: the host grabs the enemy or NPC nearest a pinch (sm64unity_object_grab), holds it at the pinch
+ *   (sm64unity_object_hold) and lets go of it, thrown with the hand (sm64unity_object_release).
  *
  * Bosses, racers and others with scripted paths are left alone, as are platforms, poles and anything Mario holds.
  * UNITY_HANDS_TOUCH and UNITY_HANDS_CARRY turn each off. */
@@ -18,17 +20,30 @@
 
 extern int unity_mario_carried(void);
 
-/* The hands' triangles last frame, which the riders' places were measured on */
-static s16 unity_prev_hand_triangles[UNITY_HAND_SURFACES*9];
-static int unity_prev_hand_count;
+/* The hands' joints through the window (game coordinates): what touches, besides the triangles */
+#define UNITY_HAND_POINTS 64
+static float unity_game_hand_points[UNITY_HAND_POINTS * 3];
+static int unity_game_hand_point_count;
+EXPORT int sm64unity_game_hand_points(const float *points, int count) {
+    if (count < 0 || (count && !points)) return -1;
+    if (count > UNITY_HAND_POINTS) count = UNITY_HAND_POINTS;
+    int kept = 0;
+    for (int i = 0; i < count; i++) {
+        const float *p = points + i * 3;
+        if (!isfinite(p[0]) || !isfinite(p[1]) || !isfinite(p[2])) continue;
+        vec3f_copy(&unity_game_hand_points[kept++ * 3], (float *) p);
+    }
+    unity_game_hand_point_count = kept;
+    return kept;
+}
 
 #define UNITY_MAX_RIDERS 32
 struct UnityRider {
     struct Object *obj;
     const BehaviorScript *behavior; /* (the slot reused by another object: not the same rider) */
-    int triangle;
-    float u, v;   /* where it stands on its triangle, in the triangle's own terms */
-    float x, z;   /* the triangle's first edge, flat, for how far the hand turned */
+    float corners[9]; /* the triangle it stood on: found again next frame by its corners (the host's triangles come
+                       * and go as the hand crosses the window's edge, so their order is no guide) */
+    float u, v;       /* where it stands on its triangle, in the triangle's own terms */
 };
 static struct UnityRider unity_riders[UNITY_MAX_RIDERS];
 static int unity_rider_count;
@@ -38,13 +53,9 @@ static void unity_hand_vertex(const s16 *triangles, int triangle, int corner, fl
     out[0] = v[0]; out[1] = v[1]; out[2] = v[2];
 }
 
-/* A point on a triangle from its two barycentric weights (on b and on c) */
-static void unity_hand_point(const s16 *triangles, int triangle, float u, float v, float out[3]) {
-    float a[3], b[3], c[3];
-    unity_hand_vertex(triangles, triangle, 0, a);
-    unity_hand_vertex(triangles, triangle, 1, b);
-    unity_hand_vertex(triangles, triangle, 2, c);
-    for (int i = 0; i < 3; i++) out[i] = a[i] + u * (b[i] - a[i]) + v * (c[i] - a[i]);
+/* A point on a triangle (its nine corner coordinates) from its two barycentric weights (on b and on c) */
+static void unity_corners_point(const float *t, float u, float v, float out[3]) {
+    for (int i = 0; i < 3; i++) out[i] = t[i] + u * (t[3 + i] - t[i]) + v * (t[6 + i] - t[i]);
 }
 
 /* Is it a floor (as read_surface_data decides, from its winding), and over it, where on it (u, v) and how high? */
@@ -117,10 +128,17 @@ static int unity_object_usable(struct Object *o) {
 /* The hands' bounds this frame, to pass over objects nowhere near them */
 static float unity_hand_min[3], unity_hand_max[3];
 static int unity_hand_bounds(void) {
-    if (unity_game_hand_count <= 0) return 0;
+    if (unity_game_hand_count <= 0 && unity_game_hand_point_count <= 0) return 0;
     for (int i = 0; i < 3; i++) { unity_hand_min[i] = 1e9f; unity_hand_max[i] = -1e9f; }
     for (int i = 0; i < unity_game_hand_count * 3; i++) {
         const s16 *v = unity_game_hand_triangles + i * 3;
+        for (int j = 0; j < 3; j++) {
+            if (v[j] < unity_hand_min[j]) unity_hand_min[j] = v[j];
+            if (v[j] > unity_hand_max[j]) unity_hand_max[j] = v[j];
+        }
+    }
+    for (int i = 0; i < unity_game_hand_point_count; i++) {
+        const float *v = &unity_game_hand_points[i * 3];
         for (int j = 0; j < 3; j++) {
             if (v[j] < unity_hand_min[j]) unity_hand_min[j] = v[j];
             if (v[j] > unity_hand_max[j]) unity_hand_max[j] = v[j];
@@ -155,6 +173,11 @@ static int unity_hand_touches(struct Object *o) {
     float height = o->hitboxHeight > 40.f ? o->hitboxHeight : 40.f;
     float bottom = o->oPosY - o->hitboxDownOffset, top = bottom + height;
     float centre[3] = { o->oPosX, (bottom + top) * 0.5f, o->oPosZ };
+    for (int i = 0; i < unity_game_hand_point_count; i++) {
+        const float *p = &unity_game_hand_points[i * 3];
+        float dx = p[0] - centre[0], dz = p[2] - centre[2], reach = radius + 20.f;
+        if (dx * dx + dz * dz <= reach * reach && p[1] >= bottom - 20.f && p[1] <= top + 20.f) return 1;
+    }
     for (int i = 0; i < unity_game_hand_count; i++) {
         float a[3], b[3], c[3], p[3];
         unity_hand_vertex(unity_game_hand_triangles, i, 0, a);
@@ -191,8 +214,9 @@ void unity_hands_touch(void) {
 
 /* ---- Carry on your palm ---- */
 
+static struct Object *unity_held_obj;
 static int unity_carryable(struct Object *o) {
-    if (o->collisionData || o->oHeldState != HELD_FREE) return 0;
+    if (o == unity_held_obj || o->collisionData || o->oHeldState != HELD_FREE) return 0;
     const BehaviorScript *b = o->behavior;
 #define UNITY_IS(bhv) (b == segmented_to_virtual(bhv))
     /* bosses, racers, and things on rails or scripts that a move would break */
@@ -211,64 +235,156 @@ static int unity_carryable(struct Object *o) {
     return 1;
 }
 
+/* How far apart two triangles' corners are, on average */
+static float unity_corner_distance(const float *t, const s16 *n) {
+    float d = 0;
+    for (int i = 0; i < 9; i++) d += (t[i] - n[i]) * (t[i] - n[i]);
+    return sqrtf(d / 3);
+}
+
 /* At the start of the frame, with the hands where they are now: everything that stood on them last frame goes where
- * its place on its triangle has gone, and turns as far as the triangle turned */
+ * its place on its triangle has gone (the triangle now nearest the one it stood on), and turns as it turned */
+void unity_hands_place_held(void);
 void unity_hands_carry_riders(void) {
+    unity_hands_place_held();
     int count = unity_rider_count;
     unity_rider_count = 0;
-    if (!UNITY_HANDS_CARRY || count == 0 || unity_game_hand_count != unity_prev_hand_count) return;
+    if (!UNITY_HANDS_CARRY || count == 0 || unity_game_hand_count == 0) return;
     for (int i = 0; i < count; i++) {
         struct UnityRider *r = &unity_riders[i];
         struct Object *o = r->obj;
         if (o->behavior != r->behavior || !unity_object_usable(o) || o->oHeldState != HELD_FREE) continue;
-        float was[3], now[3];
-        unity_hand_point(unity_prev_hand_triangles, r->triangle, r->u, r->v, was);
-        unity_hand_point(unity_game_hand_triangles, r->triangle, r->u, r->v, now);
-        float d[3] = { now[0] - was[0], now[1] - was[1], now[2] - was[2] };
-        if (!isfinite(d[0]) || !isfinite(d[1]) || !isfinite(d[2])) continue;
-        if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > 400.f * 400.f) continue; /* a jump, not a carry */
-        o->oPosX += d[0]; o->oPosY += d[1]; o->oPosZ += d[2];
-        float a[3], b[3];
-        unity_hand_vertex(unity_game_hand_triangles, r->triangle, 0, a);
-        unity_hand_vertex(unity_game_hand_triangles, r->triangle, 1, b);
-        float x = b[0] - a[0], z = b[2] - a[2];
-        if (x * x + z * z > 1.f && r->x * r->x + r->z * r->z > 1.f) {
-            s16 turn = atan2s(z, x) - atan2s(r->z, r->x);
+        int best = -1;
+        float bestDistance = 400.f; /* (further: a different triangle, or a jump, not a carry) */
+        for (int t = 0; t < unity_game_hand_count; t++) {
+            float d = unity_corner_distance(r->corners, unity_game_hand_triangles + t * 9);
+            if (d < bestDistance) { bestDistance = d; best = t; }
+        }
+        if (best < 0) continue;
+        float now[9];
+        for (int k = 0; k < 9; k++) now[k] = unity_game_hand_triangles[best * 9 + k];
+        float was[3], at[3];
+        unity_corners_point(r->corners, r->u, r->v, was);
+        unity_corners_point(now, r->u, r->v, at);
+        o->oPosX += at[0] - was[0]; o->oPosY += at[1] - was[1]; o->oPosZ += at[2] - was[2];
+        float x0 = r->corners[3] - r->corners[0], z0 = r->corners[5] - r->corners[2];
+        float x1 = now[3] - now[0], z1 = now[5] - now[2];
+        if (x0 * x0 + z0 * z0 > 1.f && x1 * x1 + z1 * z1 > 1.f) {
+            s16 turn = atan2s(z1, x1) - atan2s(z0, x0);
             o->oFaceAngleYaw += turn; o->oMoveAngleYaw += turn;
         }
     }
 }
 
-/* At the end of the frame, after every object has moved: what is standing on a hand now */
+/* At the end of the frame, after every object has moved: what is standing on a hand now. A palm come up into
+ * something from below (by up to 100 units this frame, more than the game's own floors catch) scoops it up */
 void unity_hands_find_riders(void) {
+    unity_hands_place_held();
     unity_rider_count = 0;
-    unity_prev_hand_count = unity_game_hand_count;
-    if (unity_game_hand_count > 0)
-        memcpy(unity_prev_hand_triangles, unity_game_hand_triangles, unity_game_hand_count * 9 * sizeof(s16));
-    if (!UNITY_HANDS_CARRY || (gTimeStopState & TIME_STOP_ACTIVE) || unity_room_depth || !unity_hand_bounds()) return;
+    if (!UNITY_HANDS_CARRY || (gTimeStopState & TIME_STOP_ACTIVE) || unity_room_depth || unity_game_hand_count <= 0
+        || !unity_hand_bounds()) return;
     static const int lists[] = { OBJ_LIST_PUSHABLE, OBJ_LIST_GENACTOR, OBJ_LIST_DESTRUCTIVE, OBJ_LIST_LEVEL, OBJ_LIST_DEFAULT };
     for (int l = 0; l < (int) (sizeof(lists) / sizeof(lists[0])); l++) {
         struct ObjectNode *head = &gObjectLists[lists[l]];
         for (struct ObjectNode *node = head->next; node != head; node = node->next) {
             struct Object *o = (struct Object *) node;
             if (unity_rider_count >= UNITY_MAX_RIDERS) return;
-            if (!unity_object_usable(o) || !unity_near_hands(o, 40.f) || !unity_carryable(o)) continue;
+            if (!unity_object_usable(o) || !unity_near_hands(o, 100.f) || !unity_carryable(o)) continue;
             int best = -1;
-            float bestGap = 1e9f, bestU = 0, bestV = 0;
+            float bestGap = 1e9f, bestU = 0, bestV = 0, bestHeight = 0;
             for (int t = 0; t < unity_game_hand_count; t++) {
                 float u, v, height;
                 if (!unity_hand_floor_under(unity_game_hand_triangles, t, o->oPosX, o->oPosZ, &u, &v, &height)) continue;
-                float gap = o->oPosY - height; /* standing on it: at it, or just over it */
-                if (gap < -30.f || gap > 30.f || fabsf(gap) >= fabsf(bestGap)) continue;
-                best = t; bestGap = gap; bestU = u; bestV = v;
+                float gap = o->oPosY - height; /* standing on it: at it, just over it, or the palm come up into it */
+                if (gap < -100.f || gap > 30.f || fabsf(gap) >= fabsf(bestGap)) continue;
+                best = t; bestGap = gap; bestU = u; bestV = v; bestHeight = height;
             }
             if (best < 0) continue;
+            if (bestGap < 0) o->oPosY = bestHeight; /* (on top of it, not inside it) */
             struct UnityRider *r = &unity_riders[unity_rider_count++];
-            r->obj = o; r->behavior = o->behavior; r->triangle = best; r->u = bestU; r->v = bestV;
-            float a[3], b[3];
-            unity_hand_vertex(unity_game_hand_triangles, best, 0, a);
-            unity_hand_vertex(unity_game_hand_triangles, best, 1, b);
-            r->x = b[0] - a[0]; r->z = b[2] - a[2];
+            r->obj = o; r->behavior = o->behavior; r->u = bestU; r->v = bestV;
+            for (int k = 0; k < 9; k++) r->corners[k] = unity_game_hand_triangles[best * 9 + k];
         }
     }
+}
+
+/* ---- Pinch to pick up ---- */
+
+static const BehaviorScript *unity_held_behavior;
+static float unity_held_offset[3], unity_held_at[3]; /* (where it is from the pinch, as it was grabbed) */
+static s16 unity_held_level, unity_held_area;
+
+/* Still there to hold? (killed, collected, unloaded, or another level: let go of) */
+static int unity_still_held(void) {
+    struct Object *o = unity_held_obj;
+    if (!o) return 0;
+    if (o->behavior != unity_held_behavior || !(o->activeFlags & ACTIVE_FLAG_ACTIVE) || o->oHeldState != HELD_FREE
+        || gCurrLevelNum != unity_held_level || gCurrAreaIndex != unity_held_area) {
+        unity_held_obj = NULL;
+        return 0;
+    }
+    return 1;
+}
+
+/* A pinch at (x, y, z), game coordinates: picks up the enemy or NPC nearest it, its hitbox within reach of it.
+ * 1 if it picked one up */
+EXPORT int sm64unity_object_grab(float x, float y, float z, float reach) {
+    if (!isfinite(x) || !isfinite(y) || !isfinite(z) || !isfinite(reach) || unity_room_depth) return 0;
+    if (!gMarioObject || unity_mario_carried() || unity_still_held()) return 0;
+    static const int lists[] = { OBJ_LIST_PUSHABLE, OBJ_LIST_GENACTOR, OBJ_LIST_DESTRUCTIVE, OBJ_LIST_DEFAULT };
+    struct Object *best = NULL;
+    float bestDistance = reach;
+    for (int l = 0; l < (int) (sizeof(lists) / sizeof(lists[0])); l++) {
+        struct ObjectNode *head = &gObjectLists[lists[l]];
+        for (struct ObjectNode *node = head->next; node != head; node = node->next) {
+            struct Object *o = (struct Object *) node;
+            if (!unity_object_usable(o) || !unity_carryable(o)) continue;
+            /* how far the pinch is outside its hitbox (a cylinder) */
+            float radius = o->hitboxRadius > 40.f ? o->hitboxRadius : 40.f;
+            float height = o->hitboxHeight > 40.f ? o->hitboxHeight : 40.f;
+            float bottom = o->oPosY - o->hitboxDownOffset, top = bottom + height;
+            float dx = x - o->oPosX, dz = z - o->oPosZ;
+            float across = sqrtf(dx * dx + dz * dz) - radius;
+            float up = y < bottom ? bottom - y : y > top ? y - top : 0;
+            if (across < 0) across = 0;
+            float distance = sqrtf(across * across + up * up);
+            if (distance <= bestDistance) { bestDistance = distance; best = o; }
+        }
+    }
+    if (!best) return 0;
+    unity_held_obj = best; unity_held_behavior = best->behavior;
+    unity_held_level = gCurrLevelNum; unity_held_area = gCurrAreaIndex;
+    unity_held_offset[0] = best->oPosX - x; unity_held_offset[1] = best->oPosY - y; unity_held_offset[2] = best->oPosZ - z;
+    unity_held_at[0] = x; unity_held_at[1] = y; unity_held_at[2] = z;
+    return 1;
+}
+/* Where the pinch holding it is now. 1 while it holds something, 0 once it is gone */
+EXPORT int sm64unity_object_hold(float x, float y, float z) {
+    if (!unity_still_held()) return 0;
+    if (isfinite(x) && isfinite(y) && isfinite(z)) { unity_held_at[0] = x; unity_held_at[1] = y; unity_held_at[2] = z; }
+    return 1;
+}
+/* Let go of it, moving as the hand was (game units a frame) */
+EXPORT void sm64unity_object_release(float vx, float vy, float vz) {
+    if (!unity_still_held()) return;
+    struct Object *o = unity_held_obj;
+    unity_held_obj = NULL;
+    if (!isfinite(vx) || !isfinite(vy) || !isfinite(vz)) return;
+    float along = sqrtf(vx * vx + vz * vz);
+    o->oVelY = vy > 60.f ? 60.f : vy;
+    o->oForwardVel = along > 60.f ? 60.f : along;
+    if (along > 1.f) o->oMoveAngleYaw = atan2s(vz, vx);
+}
+
+/* It goes where the pinch is, before the objects move and after (whatever its own behaviour did with it): held still
+ * in the air, no speed of its own to fall with */
+void unity_hands_place_held(void) {
+    if (!unity_still_held()) return;
+    struct Object *o = unity_held_obj;
+    o->oPosX = unity_held_at[0] + unity_held_offset[0];
+    o->oPosY = unity_held_at[1] + unity_held_offset[1];
+    o->oPosZ = unity_held_at[2] + unity_held_offset[2];
+    o->oVelX = o->oVelY = o->oVelZ = 0;
+    o->oForwardVel = 0;
+    o->header.gfx.pos[0] = o->oPosX; o->header.gfx.pos[1] = o->oPosY; o->header.gfx.pos[2] = o->oPosZ;
 }
