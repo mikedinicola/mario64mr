@@ -16,7 +16,8 @@ struct GameFrame {
         var viewport: SIMD4<Int32>  // x, y, width, height in the game's window, OpenGL's origin at the bottom left
         var scissor: SIMD4<Int32>
         var kind: Kind
-        /// What it is (unity_set_tag): 0 the level, 1 Mario, 2 Mario's shadow, 3 the HUD
+        /// What it is (unity_set_tag): 0 the level, 1 Mario, 2 Mario's shadow, 3 the HUD, 4 an enemy or NPC out in
+        /// the room (unity_room_objects.inc.h), 5 its shadow
         var tag: Int32
         /// The projection the game drew it with (as simd reads the game's row-vector matrix: clip = projection * v)
         var projection: simd_float4x4
@@ -41,6 +42,15 @@ struct GameFrame {
     var camera: simd_float4x4
     /// Mario out in the room (sm64unity_carry_mode 2 or 3): his draws are then in the room's game coordinates
     var marioOutside: Bool
+    /// Anything else out in the room (draws tagged 4 and 5, in the room's game coordinates as Mario's are there)
+    var objectsOutside = false
+    /// Something to draw in the room, past the window
+    var actorsOutside: Bool { marioOutside || objectsOutside }
+
+    /// Whether a draw is in the room (drawn as an actor, RoomPlacement.actorFromClip) rather than in the level
+    func outside(_ draw: Draw) -> Bool {
+        (marioOutside && (draw.tag == 1 || draw.tag == 2)) || draw.tag == 4 || draw.tag == 5
+    }
     var size: SIMD2<Int32>  // the window the game draws for (1280×720 in the 60 fps build)
     var number: UInt32
     /// The title screen's face (TitleScreen), drawn in the window in place of the game's own title
@@ -123,7 +133,7 @@ final class GameFrameMaker {
         let size = sm64unity_interpolates() == 1 ? SIMD2<Int32>(1280, 720) : SIMD2<Int32>(320, 240)
         let camera = sm64unity_camera().map { matrix($0) } ?? matrix_identity_float4x4
         return GameFrame(vertices: buffer, draws: draws, camera: camera, marioOutside: sm64unity_carry_mode() >= 2,
-                         size: size, number: number)
+                         objectsOutside: draws.contains { $0.tag == 4 || $0.tag == 5 }, size: size, number: number)
     }
 
     /// The game's Mat4 (row vectors: v' = v * M) as simd's column-major matrix, which is then M transposed:
