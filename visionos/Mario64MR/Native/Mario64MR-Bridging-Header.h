@@ -48,6 +48,13 @@ int sm64unity_game_hand_points(const float *points, int count, float radius);  /
 int sm64unity_object_grab(float x, float y, float z, float reach);  // (unity_hands.inc.h: pinch to pick up)
 int sm64unity_object_hold(float x, float y, float z);
 void sm64unity_object_release(float vx, float vy, float vz);
+// (unity_room_objects.inc.h: what a pinch picked up, carried out into the room and living there; room game units)
+int sm64unity_object_hold_room(float x, float y, float z);
+int sm64unity_object_release_room(float vx, float vy, float vz);
+int sm64unity_object_grab_room(float x, float y, float z, float reach);
+int sm64unity_room_objects(float *out, int max);
+int sm64unity_room_object_return(int slot, float x, float y, float z, float vx, float vy, float vz);
+void sm64unity_room_objects_return(void);
 float sm64unity_room_floor(float x, float y, float z);
 int sm64unity_carry(int mode, float x, float y, float z, float vx, float vy, float vz);
 int sm64unity_carry_mode(void);

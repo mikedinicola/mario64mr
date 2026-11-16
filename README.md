@@ -395,7 +395,9 @@ pick it up and throw it (it lands on your tables), or pinch it with both hands a
 squeeze the window shut.) On
 the title screen, pinch Mario's face with both hands and pull, and pinch "PRESS START" (or press Start, or pinch with
 your palm up). Pinch Mario to pick him up, carry him out of the window and let go: he lands in your room and runs on
-it. To put your own label on the cartridge (with `-cartridge`), copy a `label.png` or `label.jpg` into the app's folder
+it. A Goomba, a Koopa or another enemy or NPC pinched through the window can come out too: put it down on a table
+and it walks about there (on what the headset has scanned of your room), until you carry it back in or it walks back
+through the window. (Not bosses, racers, Thwomps, Piranha Plants or others on a scripted path.) To put your own label on the cartridge (with `-cartridge`), copy a `label.png` or `label.jpg` into the app's folder
 in the Files app (it wins over one from `--label`).
 Hold the window by its handle (or its lower part) down near a table and let go over the glowing circle: the level
 becomes a diorama on it. Look at it and pinch (anywhere, your hand can stay in your lap) to move it, up and down too,

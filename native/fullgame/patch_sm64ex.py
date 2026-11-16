@@ -198,9 +198,10 @@ def prepare(root, rom, sixty=True, external_data=True):
                            '    struct DisplayListNode *next;\n    int unityTag;')
     (root / "src/engine/graph_node.h").write_text(graph_h)
     graph = original("src/game/rendering_graph_node.c")
-    graph = '#include "game/object_list_processor.h"\nextern int unity_is_mr(void);\nextern void unity_set_camera(const float *);\nextern void unity_set_camera_interpolated(const float *);\nstatic int unity_shadow_tag;\n' + graph
+    graph = '#include "game/object_list_processor.h"\nextern int unity_is_mr(void);\nextern void unity_set_camera(const float *);\nextern void unity_set_camera_interpolated(const float *);\nstatic int unity_shadow_tag;\n' \
+        'extern int unity_graph_tag(struct GraphNodeObject *node, int shadow);\nextern int unity_graph_in_room(struct GraphNodeObject *node);\n' + graph
     graph = replace_once(graph, '        listNode->displayList = displayList;',
-                         '        listNode->displayList = displayList;\n        listNode->unityTag = gMarioObject && gCurGraphNodeObject == &gMarioObject->header.gfx ? (unity_shadow_tag ? 2 : 1) : 0;')
+                         '        listNode->displayList = displayList;\n        listNode->unityTag = unity_graph_tag(gCurGraphNodeObject, unity_shadow_tag);')
     tag_begin = '                gDisplayListHead->words.w0 = 0xD2000000;\n                (gDisplayListHead++)->words.w1 = currList->unityTag;\n'
     tag_end = '\n                gDisplayListHead->words.w0 = 0xD2000000;\n                (gDisplayListHead++)->words.w1 = 0;'
     if sixty:
@@ -259,7 +260,8 @@ def prepare(root, rom, sixty=True, external_data=True):
     graph = replace_once(graph, '    if (node->fnNode.func != NULL) {\n        node->fnNode.func(GEO_CONTEXT_RENDER, &node->fnNode.node, gMatStack[gMatStackIndex]);\n    }\n    mtxf_rotate_xy',
                          '    if (node->fnNode.func != NULL && !unity_camera_frozen()) {\n        node->fnNode.func(GEO_CONTEXT_RENDER, &node->fnNode.node, gMatStack[gMatStackIndex]);\n    }\n    mtxf_rotate_xy')
     shadow_call = '        shadowList = create_shadow_below_xyz(shadowPos[0], shadowPos[1], shadowPos[2], shadowScale,\n                                             node->shadowSolidity, node->shadowType);'
-    room_begin = '        int roomShadow = unity_mario_outside() && gMarioObject && gCurGraphNodeObject == &gMarioObject->header.gfx;\n        if (roomShadow) unity_room_begin();\n'
+    # (Mario's shadow out in the room falls on the room, as do those of objects out there: unity_room_objects.inc.h)
+    room_begin = '        int roomShadow = unity_graph_in_room(gCurGraphNodeObject);\n        if (roomShadow) unity_room_begin();\n'
     if sixty:
         graph = replace_once(graph, '        extern u8 gInterpolatingSurfaces;\n', room_begin + '        extern u8 gInterpolatingSurfaces;\n')
     else:
@@ -275,7 +277,8 @@ def prepare(root, rom, sixty=True, external_data=True):
     graph = replace_once(graph, last_shadow, last_shadow + '\n            unity_shadow_tag = 0;')
     # Carried from one world into the other Mario jumps: his next frame is not drawn halfway between
     graph += ('\nvoid unity_skip_interpolation(void) {\n    if (gMarioObject) gMarioObject->header.gfx.skipInterpolationTimestamp = gGlobalTimer;\n}\n'
-              if sixty else '\nvoid unity_skip_interpolation(void) {}\n')
+              '\nvoid unity_skip_object_interpolation(struct Object *o) {\n    o->header.gfx.skipInterpolationTimestamp = gGlobalTimer;\n}\n'
+              if sixty else '\nvoid unity_skip_interpolation(void) {}\nvoid unity_skip_object_interpolation(struct Object *o) { (void) o; }\n')
     (root / "src/game/rendering_graph_node.c").write_text(graph)
     processor = original("src/game/object_list_processor.c")
     processor = replace_once(processor, '    particleFlags = execute_mario_action(gCurrentObject);',
@@ -283,7 +286,13 @@ def prepare(root, rom, sixty=True, external_data=True):
     # Hands reaching into the game are moving surfaces like the game's own, loaded right after it clears them
     processor = replace_once(processor, '    clear_dynamic_surfaces();\n\n    // Update spawners',
                              '    clear_dynamic_surfaces();\n    extern void unity_load_game_hands(void);\n'
+                             '    extern void unity_room_objects_frame(void);\n    unity_room_objects_frame();\n'
                              '    unity_load_game_hands();\n\n    // Update spawners')
+    # Objects carried out into the room update against it (unity_room_objects.inc.h, unity_object_update)
+    if processor.count(' cur_obj_update();\n') != 2:  # (update_objects_starting_at, update_objects_during_time_stop)
+        raise ValueError("Upstream source changed: cur_obj_update")
+    processor = processor.replace(' cur_obj_update();\n', ' unity_object_update();\n')
+    processor = replace_once(processor, '#include "spawn_object.h"\n', '#include "spawn_object.h"\nextern void unity_object_update(void);\n')
     # Hands touching objects (unity_hands.inc.h): what they touch Mario touches, once the game has found what he
     # touches; what stands on them is found once everything has moved, and carried with them next frame
     processor = replace_once(processor, '    detect_object_collisions();\n',
@@ -292,6 +301,12 @@ def prepare(root, rom, sixty=True, external_data=True):
                              '    extern void unity_hands_find_riders(void);\n    unity_hands_find_riders();\n'
                              '    unload_deactivated_objects();\n\n    // Check if Mario is on a platform')
     (root / "src/game/object_list_processor.c").write_text(processor)
+    # ...and touch nothing in the level, nor anything in it them
+    collision = original("src/game/object_collision.c")
+    collision = replace_once(collision, '#include "spawn_object.h"\n', '#include "spawn_object.h"\nextern int unity_object_in_room(struct Object *o);\n')
+    collision = replace_once(collision, '    if (a->oIntangibleTimer == 0) {', '    if (a->oIntangibleTimer == 0 && !unity_object_in_room(a)) {')
+    collision = replace_once(collision, '            if (b->oIntangibleTimer == 0) {', '            if (b->oIntangibleTimer == 0 && !unity_object_in_room(b)) {')
+    (root / "src/game/object_collision.c").write_text(collision)
     # Out in the room, the stick steers by your head rather than by the game camera (unity_mr.c, unity_stick_yaw)
     mario = original("src/game/mario.c")
     stick = 'atan2s(-controller->stickY, controller->stickX) + m->area->camera->yaw;'
@@ -472,7 +487,7 @@ Gfx *geo_offset_klepto_held_object(""")
                        "    unity_note_sky(background, colorIndex);\n    return init_skybox_display_list(player, background, colorIndex);\n}")
     sky = sky.replace('extern int unity_is_mr(void);\n', 'extern int unity_is_mr(void);\nextern void unity_note_sky(int background, int color);\n', 1)
     (root / "src/game/skybox.c").write_text(sky)
-    surface = original("src/engine/surface_load.c") + '\n#include "pc/unity_room.inc.h"\n#include "pc/unity_hands.inc.h"\n'
+    surface = original("src/engine/surface_load.c") + '\n#include "pc/unity_room.inc.h"\n#include "pc/unity_hands.inc.h"\n#include "pc/unity_room_objects.inc.h"\n'
     surface = 'extern int unity_draw_far(void);\n' + replace_once(surface, "#ifndef NODRAWINGDISTANCE\n    if (marioDist < gCurrentObject->oDrawingDistance) {",
                                                                "#ifndef NODRAWINGDISTANCE\n    if (unity_draw_far() || marioDist < gCurrentObject->oDrawingDistance) {")
     (root / "src/engine/surface_load.c").write_text(surface)
@@ -490,7 +505,7 @@ Gfx *geo_offset_klepto_held_object(""")
     strings = original("include/text_options_strings.h.in")
     strings = replace_once(strings, "#endif // TEXT_OPTIONS_STRINGS_H", MR_STRINGS + "\n#endif // TEXT_OPTIONS_STRINGS_H")
     (root / "include/text_options_strings.h.in").write_text(strings)
-    for name in ("unity_bridge.h", "unity_bridge.c", "unity_mr.c", "unity_room.inc.h", "unity_hands.inc.h", "unity_options.h", "unity_options.inc.h"):
+    for name in ("unity_bridge.h", "unity_bridge.c", "unity_mr.c", "unity_room.inc.h", "unity_hands.inc.h", "unity_room_objects.inc.h", "unity_options.h", "unity_options.inc.h"):
         shutil.copy2(HERE / name, root / "src/pc" / name)
     (root / "baserom.us.z64").write_bytes(rom)
     # Sequence zero is authored as data-only assembly upstream. Read its exact

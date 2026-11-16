@@ -28,13 +28,17 @@ struct RoomGeometry: Sendable {
 /// - letting go puts him back in the game (0) inside the window, or into the room (3), thrown with the hand;
 /// - out in the room, running or jumping back through the window puts him back in the game;
 /// - your hands are surfaces he stands on (sm64unity_room_hands / _game_hands), and move him with them;
-/// - a hand in the window holds the game still (sm64unity_hold_camera).
+/// - a hand in the window holds the game still (sm64unity_hold_camera);
+/// - an enemy or NPC picked up with a pinch can be carried out of the window too, put down in the room and live
+///   there (native/fullgame/unity_room_objects.inc.h), picked up again there, and goes back into the game when it's
+///   carried or walks back through the window.
 ///
 /// Coordinates: the room in metres; the game's room space in game units (RoomPlacement.unitsPerMetre from the
 /// room's origin); the level in the game's world units, through the game camera and the window.
 final class MarioCarrier {
     private var held: Int?                       // the hand holding him
     private var holding: Int?                    // the hand holding an enemy or NPC (unity_hands.inc.h)
+    private var holdingInRoom = false            // ...out in the room (unity_room_objects.inc.h)
     /// How near a pinch has to be to an enemy or NPC to pick it up, metres
     private let objectReach: Float = 0.04
     private var wasPinching = [false, false]
@@ -110,22 +114,55 @@ final class MarioCarrier {
             } else if began, holding == nil, held == nil, mode == 0, !hand.palmUp, inGame(hand.pinch) {
                 // (within a few centimetres of it, in the level's units there)
                 let at = world(hand.pinch), reach = simd_distance(at, world(hand.pinch + SIMD3(objectReach, 0, 0)))
-                if sm64unity_object_grab(at.x, at.y, at.z, reach) == 1 { holding = i }
+                if sm64unity_object_grab(at.x, at.y, at.z, reach) == 1 { holding = i; holdingInRoom = false }
+            } else if began, holding == nil, held == nil, !hand.palmUp, !inGame(hand.pinch) {
+                // (one out in the room)
+                let at = hand.pinch * units
+                if sm64unity_object_grab_room(at.x, at.y, at.z, objectReach * units) == 1 { holding = i; holdingInRoom = true }
             }
             wasPinching[i] = hand.tracked && hand.pinching
         }
 
-        // Holding it at the pinch; letting go, thrown with the hand (or the pinch out of the window: dropped there)
+        // Holding it at the pinch, in the game or out in the room (carried through the window, it goes too);
+        // letting go, thrown with the hand: in the game, or put down in the room to live there
         if let h = holding {
             let hand = hands[h]
-            if hand.tracked && hand.pinching && inGame(hand.pinch) {
-                let at = world(hand.pinch)
-                if sm64unity_object_hold(at.x, at.y, at.z) == 0 { holding = nil }  // (gone: killed, say)
+            if hand.tracked && hand.pinching {
+                let result: Int32
+                if inGame(hand.pinch) {
+                    let at = world(hand.pinch)
+                    result = sm64unity_object_hold(at.x, at.y, at.z)
+                    holdingInRoom = false
+                } else {
+                    let at = hand.pinch * units
+                    // (-1: it can't go out, no room scanned yet: held where it was, in the game)
+                    result = roomHasSurfaces ? sm64unity_object_hold_room(at.x, at.y, at.z) : -1
+                    if result == 1 { holdingInRoom = true }
+                }
+                if result == 0 { holding = nil }  // (gone: killed, say)
             } else {
                 holding = nil
-                let w = worldDirection(hand.velocity / 30)  // (metres a frame)
-                sm64unity_object_release(w.x, w.y, w.z)
+                let v = hand.velocity / 30  // (metres a frame)
+                if holdingInRoom {
+                    // (nothing under it: back where it was picked up in the level)
+                    _ = sm64unity_object_release_room(v.x * units, v.y * units, v.z * units)
+                } else {
+                    let w = worldDirection(v)
+                    sm64unity_object_release(w.x, w.y, w.z)
+                }
+                holdingInRoom = false
             }
+        }
+
+        // Out in the room, walking back through the window: back into the game there, going the way it was
+        var outside = [Float](repeating: 0, count: 8 * 4)
+        let count = Int(sm64unity_room_objects(&outside, 4))
+        for k in 0..<count where outside[k * 8 + 1] == 0 {
+            let o = outside[(k * 8)..<(k * 8 + 8)].map { $0 }
+            let at = SIMD3(o[2], o[3], o[4]) / units
+            guard inGame(at) else { continue }
+            let p = world(at), w = worldDirection(SIMD3(o[5], o[6], o[7]) / units)
+            _ = sm64unity_room_object_return(Int32(o[0]), p.x, p.y, p.z, w.x, w.y, w.z)
         }
 
         // Carrying him, and letting him go
@@ -206,8 +243,10 @@ final class MarioCarrier {
         }
         if holding != nil {
             holding = nil
-            sm64unity_object_release(0, 0, 0)
+            holdingInRoom = false
+            sm64unity_object_release(0, 0, 0)  // (out in the room: back where it was picked up)
         }
+        sm64unity_room_objects_return()
         wasPinching = [false, false]
         lastPalm = [nil, nil]
         sm64unity_room_hands(nil, 0)

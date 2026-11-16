@@ -380,7 +380,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
                 } else {
                     props.encodeCartridge(cartridge.pose, into: encoder, eye: eye)
                 }
-                if diorama == nil, let gameFrame, gameFrame.marioOutside {
+                if diorama == nil, let gameFrame, gameFrame.actorsOutside {
                     if let mesh = room.buffer { game.encodeRoomMesh(mesh, count: room.count, into: encoder, eye: eye) }
                     game.encodeRoom(gameFrame, into: encoder, eye: eye, actors: true,
                                     roomFromClip: roomFromClip, actorFromClip: actorFromClip)

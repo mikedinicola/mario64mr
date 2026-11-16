@@ -162,7 +162,7 @@ final class GameRenderer: NSObject, MTKViewDelegate {
                 call()
                 setFrame()
             }
-            let actor = frame.marioOutside && (draw.tag == 1 || draw.tag == 2)
+            let actor = frame.outside(draw)
             guard actor == actors, prepare(draw, encoder: encoder) else { continue }
             var room = actor ? RoomDraw(roomFromClip: actorFromClip(draw), kind: SIMD4(3, 0, 0, 0))
                 : RoomDraw(roomFromClip: draw.kind == .world ? roomFromClip(draw) : matrix_identity_float4x4,

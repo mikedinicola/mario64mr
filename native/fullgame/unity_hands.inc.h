@@ -19,6 +19,10 @@
 #define UNITY_HANDS_CARRY 1
 
 extern int unity_mario_carried(void);
+/* (unity_room_objects.inc.h: enemies and NPCs carried out into the room) */
+int unity_object_in_room(struct Object *o);
+static int unity_room_object_bring_in(struct Object *o, const float p[3]);
+static float unity_held_from[3];
 
 /* The hands' joints (game coordinates): what touches, besides the triangles. Through the window, or anywhere over a
  * diorama, which has no triangles (and where a coin is a few millimetres across). Each touches within `radius` game
@@ -125,8 +129,9 @@ static void unity_closest_on_triangle(const float p[3], const float a[3], const 
 }
 
 static int unity_object_usable(struct Object *o) {
-    /* (far from Mario is fine: it's out of sight unless a diorama draws it, and moves all the same) */
-    return o != gMarioObject && (o->activeFlags & ACTIVE_FLAG_ACTIVE)
+    /* (far from Mario is fine: it's out of sight unless a diorama draws it, and moves all the same. Out in the room it
+     * isn't the level's: nothing in the game touches, squashes, carries or picks it up there) */
+    return o != gMarioObject && !unity_object_in_room(o) && (o->activeFlags & ACTIVE_FLAG_ACTIVE)
         && (o->header.gfx.node.flags & GRAPH_RENDER_ACTIVE) && !(o->header.gfx.node.flags & GRAPH_RENDER_INVISIBLE);
 }
 
@@ -438,6 +443,24 @@ static int unity_still_held(void) {
     return 1;
 }
 
+/* How far a pinch is outside an object's hitbox (a cylinder) */
+static float unity_pinch_distance(struct Object *o, float x, float y, float z) {
+    float radius = o->hitboxRadius > 40.f ? o->hitboxRadius : 40.f;
+    float height = o->hitboxHeight > 40.f ? o->hitboxHeight : 40.f;
+    float bottom = o->oPosY - o->hitboxDownOffset, top = bottom + height;
+    float dx = x - o->oPosX, dz = z - o->oPosZ;
+    float across = sqrtf(dx * dx + dz * dz) - radius;
+    float up = y < bottom ? bottom - y : y > top ? y - top : 0;
+    if (across < 0) across = 0;
+    return sqrtf(across * across + up * up);
+}
+static void unity_hold(struct Object *o, float x, float y, float z) {
+    unity_held_obj = o; unity_held_behavior = o->behavior;
+    unity_held_level = gCurrLevelNum; unity_held_area = gCurrAreaIndex;
+    unity_held_offset[0] = o->oPosX - x; unity_held_offset[1] = o->oPosY - y; unity_held_offset[2] = o->oPosZ - z;
+    unity_held_at[0] = x; unity_held_at[1] = y; unity_held_at[2] = z;
+}
+
 /* A pinch at (x, y, z), game coordinates: picks up the enemy or NPC nearest it, its hitbox within reach of it.
  * 1 if it picked one up */
 EXPORT int sm64unity_object_grab(float x, float y, float z, float reach) {
@@ -451,36 +474,38 @@ EXPORT int sm64unity_object_grab(float x, float y, float z, float reach) {
         for (struct ObjectNode *node = head->next; node != head; node = node->next) {
             struct Object *o = (struct Object *) node;
             if (!unity_object_usable(o) || !unity_carryable(o)) continue;
-            /* how far the pinch is outside its hitbox (a cylinder) */
-            float radius = o->hitboxRadius > 40.f ? o->hitboxRadius : 40.f;
-            float height = o->hitboxHeight > 40.f ? o->hitboxHeight : 40.f;
-            float bottom = o->oPosY - o->hitboxDownOffset, top = bottom + height;
-            float dx = x - o->oPosX, dz = z - o->oPosZ;
-            float across = sqrtf(dx * dx + dz * dz) - radius;
-            float up = y < bottom ? bottom - y : y > top ? y - top : 0;
-            if (across < 0) across = 0;
-            float distance = sqrtf(across * across + up * up);
+            float distance = unity_pinch_distance(o, x, y, z);
             if (distance <= bestDistance) { bestDistance = distance; best = o; }
         }
     }
     if (!best) return 0;
-    unity_held_obj = best; unity_held_behavior = best->behavior;
-    unity_held_level = gCurrLevelNum; unity_held_area = gCurrAreaIndex;
-    unity_held_offset[0] = best->oPosX - x; unity_held_offset[1] = best->oPosY - y; unity_held_offset[2] = best->oPosZ - z;
-    unity_held_at[0] = x; unity_held_at[1] = y; unity_held_at[2] = z;
+    unity_hold(best, x, y, z);
+    unity_held_from[0] = best->oPosX; unity_held_from[1] = best->oPosY; unity_held_from[2] = best->oPosZ;
     return 1;
 }
-/* Where the pinch holding it is now. 1 while it holds something, 0 once it is gone */
+/* Where the pinch holding it is now, in the game (carried back in through the window, if it was out in the room).
+ * 1 while it holds something, 0 once it is gone */
 EXPORT int sm64unity_object_hold(float x, float y, float z) {
     if (!unity_still_held()) return 0;
-    if (isfinite(x) && isfinite(y) && isfinite(z)) { unity_held_at[0] = x; unity_held_at[1] = y; unity_held_at[2] = z; }
+    if (isfinite(x) && isfinite(y) && isfinite(z)) {
+        unity_held_at[0] = x; unity_held_at[1] = y; unity_held_at[2] = z;
+        if (unity_object_in_room(unity_held_obj)) {
+            float p[3] = { x + unity_held_offset[0], y + unity_held_offset[1], z + unity_held_offset[2] };
+            unity_room_object_bring_in(unity_held_obj, p);
+        }
+    }
     return 1;
 }
-/* Let go of it, moving as the hand was (game units a frame) */
+/* Let go of it in the game, moving as the hand was (game units a frame). (Held out in the room, it goes back where it
+ * was picked up in the level: sm64unity_object_release_room lets go of it out there) */
 EXPORT void sm64unity_object_release(float vx, float vy, float vz) {
     if (!unity_still_held()) return;
     struct Object *o = unity_held_obj;
     unity_held_obj = NULL;
+    if (unity_object_in_room(o)) {
+        unity_room_object_bring_in(o, unity_held_from);
+        return;
+    }
     if (!isfinite(vx) || !isfinite(vy) || !isfinite(vz)) return;
     float along = sqrtf(vx * vx + vz * vz);
     o->oVelY = vy > 60.f ? 60.f : vy;
