@@ -1,5 +1,5 @@
 /* Headless test of your hands touching the game (unity_hands.inc.h), from the hand triangles alone
- * (sm64unity_game_hands): touch a coin to collect it, slap a Goomba to squash it.
+ * (sm64unity_game_hands): touch a coin to collect it, slap a Goomba to squash it, carry one on your palm.
  * Run by run_headless_test.sh. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -121,6 +121,33 @@ int main(int argc, char **argv) {
     CHECK(!bring_down(g, g->oPosX, g->oPosY, g->oPosZ, 4), "lowered gently onto a Goomba, it isn't squashed");
     ticks(30);
     CHECK(bring_down(g, g->oPosX, g->oPosY, g->oPosZ, 40), "slapped down onto it, it is");
+
+    printf("Carry on your palm:\n");
+    g = spawn(bhvGoomba, MODEL_GOOMBA, 0, -900);
+    ticks(30);
+    float y = g->oPosY;
+    /* a palm come up under it, scooping it up, then carried 600 units along */
+    for (float h = y - 60; h <= y + 1; h += 6) { palm(g->oPosX, h, g->oPosZ); tick(0); }
+    float x0 = g->oPosX, z0 = g->oPosZ, px = x0, pz = z0;
+    int on = 1;
+    for (int i = 0; i < 60; i++) {
+        px += 10;
+        palm(px, y + 100, pz); /* (held up off the ground too) */
+        tick(0);
+        if (!(g->activeFlags & ACTIVE_FLAG_ACTIVE)) { on = 0; break; }
+    }
+    CHECK(on && g->oPosX - x0 > 400 && g->oPosY > y + 50, "it goes with the hand (moved %.0f along, %.0f up)", g->oPosX - x0, g->oPosY - y);
+    sm64unity_game_hands(NULL, 0);
+    ticks(60);
+    CHECK((g->activeFlags & ACTIVE_FLAG_ACTIVE) && g->oPosY < y + 50, "taken away, it falls back down (%.0f up)", g->oPosY - y);
+
+    printf("Excluded: a Thwomp isn't carried\n");
+    struct Object *t = spawn(bhvThwomp, MODEL_NONE, 900, 0);
+    ticks(2);
+    float tx = t->oPosX, ty = t->oPosY;
+    for (int i = 0; i < 30; i++) { palm(tx + i * 10, ty, t->oPosZ); tick(0); }
+    sm64unity_game_hands(NULL, 0);
+    CHECK(fabsf(t->oPosX - tx) < 1, "stays where it is");
 
     printf("%s (%d failures)\n", failures ? "FAILED" : "PASSED", failures);
     return failures != 0;

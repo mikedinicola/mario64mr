@@ -7,14 +7,28 @@
  *   keys: those are Mario's to reach.
  * - Squash with your palm: a hand slapped down onto a Goomba (or anything Mario can stomp) from above squashes it, as
  *   Mario's stomp does: it is attacked from above, and its own code does the rest (flattened, its coin dropped).
+ * - Carry on your palm: an enemy or NPC standing on your hand moves with it (and turns with it), as the game moves
+ *   things on its platforms. Tip your hand and it falls off; its own physics do the rest.
  *
- * UNITY_HANDS_TOUCH turns touch-to-collect off. */
+ * Bosses, racers and others with scripted paths are left alone, as are platforms, poles and anything Mario holds.
+ * UNITY_HANDS_TOUCH and UNITY_HANDS_CARRY turn touch-to-collect and carry-on-your-palm off. */
 #include "game/interaction.h"
 #include "engine/math_util.h"
 
 #define UNITY_HANDS_TOUCH 1
+#define UNITY_HANDS_CARRY 1
 
 extern int unity_mario_carried(void);
+#define UNITY_MAX_RIDERS 32
+struct UnityRider {
+    struct Object *obj;
+    const BehaviorScript *behavior; /* (the slot reused by another object: not the same rider) */
+    float corners[9]; /* the triangle it stood on: found again next frame by its corners (the host's triangles come
+                       * and go as the hand crosses the window's edge, so their order is no guide) */
+    float u, v;       /* where it stands on its triangle, in the triangle's own terms */
+};
+static struct UnityRider unity_riders[UNITY_MAX_RIDERS];
+static int unity_rider_count;
 
 static void unity_hand_vertex(const s16 *triangles, int triangle, int corner, float out[3]) {
     const s16 *v = triangles + triangle * 9 + corner * 3;
@@ -247,7 +261,106 @@ void unity_hands_touch(void) {
     }
 }
 
+/* ---- Carry on your palm ---- */
+
+static void unity_hands_find_riders(void);
+
+static int unity_carryable(struct Object *o) {
+    if (o->collisionData || o->oHeldState != HELD_FREE) return 0;
+    const BehaviorScript *b = o->behavior;
+#define UNITY_IS(bhv) (b == segmented_to_virtual(bhv))
+    /* bosses, racers, and things on rails or scripts that a move would break */
+    if (UNITY_IS(bhvBowser) || UNITY_IS(bhvKingBobomb) || UNITY_IS(bhvWhompKingBoss) || UNITY_IS(bhvEyerokBoss)
+        || UNITY_IS(bhvEyerokHand) || UNITY_IS(bhvWigglerHead) || UNITY_IS(bhvWigglerBody) || UNITY_IS(bhvBigBully)
+        || UNITY_IS(bhvBigBullyWithMinions) || UNITY_IS(bhvBigChillBully) || UNITY_IS(bhvRacingPenguin)
+        || UNITY_IS(bhvGhostHuntBigBoo) || UNITY_IS(bhvBalconyBigBoo) || UNITY_IS(bhvMerryGoRoundBigBoo)
+        || UNITY_IS(bhvDorrie) || UNITY_IS(bhvUnagi) || UNITY_IS(bhvSushiShark) || UNITY_IS(bhvMantaRay)
+        || UNITY_IS(bhvKlepto) || UNITY_IS(bhvBeginningLakitu) || UNITY_IS(bhvCameraLakitu) || UNITY_IS(bhvEndToad)
+        || UNITY_IS(bhvThwomp) || UNITY_IS(bhvThwomp2) || UNITY_IS(bhvPiranhaPlant) || UNITY_IS(bhvFirePiranhaPlant))
+        return 0;
+    if (UNITY_IS(bhvKoopa) && (o->oBehParams2ndByte == KOOPA_BP_KOOPA_THE_QUICK_BOB
+                               || o->oBehParams2ndByte == KOOPA_BP_KOOPA_THE_QUICK_THI))
+        return 0;
+#undef UNITY_IS
+    return 1;
+}
+
+/* How far apart two triangles' corners are, on average */
+static float unity_corner_distance(const float *t, const s16 *n) {
+    float d = 0;
+    for (int i = 0; i < 9; i++) d += (t[i] - n[i]) * (t[i] - n[i]);
+    return sqrtf(d / 3);
+}
+
+/* At the start of the frame, with the hands where they are now: everything that stood on them last frame goes where
+ * its place on its triangle has gone (the triangle now nearest the one it stood on), and turns as it turned */
+void unity_hands_carry_riders(void) {
+    int count = unity_rider_count;
+    unity_rider_count = 0;
+    if (!UNITY_HANDS_CARRY || count == 0 || unity_game_hand_count == 0) return;
+    for (int i = 0; i < count; i++) {
+        struct UnityRider *r = &unity_riders[i];
+        struct Object *o = r->obj;
+        if (o->behavior != r->behavior || !unity_object_usable(o) || o->oHeldState != HELD_FREE) continue;
+        int best = -1;
+        float bestDistance = 400.f; /* (further: a different triangle, or a jump, not a carry) */
+        for (int t = 0; t < unity_game_hand_count; t++) {
+            float d = unity_corner_distance(r->corners, unity_game_hand_triangles + t * 9);
+            if (d < bestDistance) { bestDistance = d; best = t; }
+        }
+        if (best < 0) continue;
+        float now[9];
+        for (int k = 0; k < 9; k++) now[k] = unity_game_hand_triangles[best * 9 + k];
+        float was[3], at[3];
+        unity_corners_point(r->corners, r->u, r->v, was);
+        unity_corners_point(now, r->u, r->v, at);
+        o->oPosX += at[0] - was[0]; o->oPosY += at[1] - was[1]; o->oPosZ += at[2] - was[2];
+        float x0 = r->corners[3] - r->corners[0], z0 = r->corners[5] - r->corners[2];
+        float x1 = now[3] - now[0], z1 = now[5] - now[2];
+        if (x0 * x0 + z0 * z0 > 1.f && x1 * x1 + z1 * z1 > 1.f) {
+            s16 turn = atan2s(z1, x1) - atan2s(z0, x0);
+            o->oFaceAngleYaw += turn; o->oMoveAngleYaw += turn;
+        }
+    }
+}
+
+/* At the end of the frame, after every object has moved: what is standing on a hand now. A palm come up into
+ * something from below (by up to 100 units this frame, more than the game's own floors catch) scoops it up */
+static void unity_hands_find_riders(void) {
+    unity_rider_count = 0;
+    if (!UNITY_HANDS_CARRY || (gTimeStopState & TIME_STOP_ACTIVE) || unity_room_depth || unity_game_hand_count <= 0
+        || !unity_hand_bounds()) return;
+    static const int lists[] = { OBJ_LIST_PUSHABLE, OBJ_LIST_GENACTOR, OBJ_LIST_DESTRUCTIVE, OBJ_LIST_LEVEL, OBJ_LIST_DEFAULT };
+    for (int l = 0; l < (int) (sizeof(lists) / sizeof(lists[0])); l++) {
+        struct ObjectNode *head = &gObjectLists[lists[l]];
+        for (struct ObjectNode *node = head->next; node != head; node = node->next) {
+            struct Object *o = (struct Object *) node;
+            if (unity_rider_count >= UNITY_MAX_RIDERS) return;
+            if (!unity_object_usable(o) || !unity_near_hands(o, 100.f) || !unity_carryable(o)) continue;
+            int best = -1;
+            float bestGap = 1e9f, bestU = 0, bestV = 0, bestHeight = 0;
+            for (int t = 0; t < unity_game_hand_count; t++) {
+                float u, v, height;
+                if (!unity_hand_floor_under(unity_game_hand_triangles, t, o->oPosX, o->oPosZ, &u, &v, &height)) continue;
+                float gap = o->oPosY - height; /* standing on it: at it, just over it, or the palm come up into it */
+                if (gap < -100.f || gap > 30.f || fabsf(gap) >= fabsf(bestGap)) continue;
+                if (gap < 0) { /* into it: only scooped by a palm coming up (one come down onto it squashes it) */
+                    float then[3];
+                    if (!unity_last_point(unity_game_hand_triangles + t * 9, u, v, then) || then[1] >= height) continue;
+                }
+                best = t; bestGap = gap; bestU = u; bestV = v; bestHeight = height;
+            }
+            if (best < 0) continue;
+            if (bestGap < 0) o->oPosY = bestHeight; /* (on top of it, not inside it) */
+            struct UnityRider *r = &unity_riders[unity_rider_count++];
+            r->obj = o; r->behavior = o->behavior; r->u = bestU; r->v = bestV;
+            for (int k = 0; k < 9; k++) r->corners[k] = unity_game_hand_triangles[best * 9 + k];
+        }
+    }
+}
+
 /* At the end of the objects' frame (before unload_deactivated_objects), once everything has moved */
 void unity_hands_after_objects(void) {
-    unity_hands_remember(); /* (for next frame: slaps) */
+    unity_hands_find_riders();
+    unity_hands_remember(); /* (for next frame: slaps, and scoops) */
 }
