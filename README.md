@@ -401,10 +401,11 @@ Hold the window by its handle (or its lower part) down near a table and let go o
 becomes a diorama on it. Look at it and pinch (anywhere, your hand can stay in your lap) to move it, up and down too,
 with both hands to turn and scale it; pinching its base works too. The gamepad's right stick (the arrow keys on a
 keyboard) turns it left / right and zooms it up / down, in place of the camera; click it in (R3, or C on a keyboard)
-to bring Mario back to the middle of the base (it then turns about him there). Press the Digital Crown to end it:
+to bring Mario back to the middle of the base (it then turns about him there). Click the left stick in (L3, or V on a
+keyboard) to step its zoom: smallest, middle, largest, and round again. Press the Digital Crown to end it:
 the window comes back in front of you (press it again for the flat window).
-With a DualSense: Cross = A, Square / Circle = B, L2 = Z, R2 (or R1) = R, L1 = L, right stick = C buttons, Options or
-L3 = Start.
+With a DualSense: Cross = A, Square / Circle = B, L2 = Z, R2 (or R1) = R, L1 = L, right stick = C buttons, Options =
+Start.
 
 PS VR2 Sense controllers work too (visionOS 26). The right one alone, your left hand free for Mario:
 
@@ -428,7 +429,8 @@ Both, and the left controller is your left hand (hold L1 to pick Mario up, carry
 | R1 or Circle | B |
 | L2 | Z |
 | Square or Triangle | R |
-| L3 / R3 (stick click) or Create | Start |
+| R3 (stick click) or Create | Start |
+| L3 (stick click), in a diorama | Zoom: smallest, middle, largest |
 
 L1 or R1 (the grip) takes the cartridge, the window's frame and the diorama's base as a pinch does. Holding them, R2 /
 L2 opens the cartridge or closes the window, and the stick up or down resizes the window (on the base: up / down

@@ -2,7 +2,7 @@ import GameController
 import simd
 
 /// A paired gamepad (DualSense, Xbox...) as the N64 controller: A = A, X / B = B, left trigger = Z, right trigger
-/// = R, left bumper = L, right stick = C buttons, menu or L3 = Start (R3 recentres a diorama), d-pad = d-pad (README's layout).
+/// = R, left bumper = L, right stick = C buttons, menu = Start (in a diorama R3 recentres it, L3 cycles its zoom), d-pad = d-pad (README's layout).
 /// On a DualSense: Cross = A, Square / Circle = B, L2 = Z, R2 or R1 = R, L1 = L, Options = Start.
 /// PS VR2 Sense controllers: PadReader.
 enum GamePad {
@@ -41,6 +41,16 @@ enum GamePad {
         return GCKeyboard.coalesced?.keyboardInput?.button(forKeyCode: .keyC)?.isPressed ?? false
     }
 
+    /// The move stick clicked in (L3 on a gamepad or the left Sense controller, or V on a keyboard): in a diorama it
+    /// steps its zoom smallest, middle, largest, and round again
+    static func moveStickPressed() -> Bool {
+        if GCController.controllers().contains(where: { $0.extendedGamepad?.leftThumbstickButton?.isPressed ?? false }) {
+            return true
+        }
+        if SpatialControllers.shared.inputs()[.left]?.stickClick == true { return true }
+        return GCKeyboard.coalesced?.keyboardInput?.button(forKeyCode: .keyV)?.isPressed ?? false
+    }
+
     /// Every extended gamepad (not a Sense controller: SpatialControllers reads those) and the keyboard (a Mac's,
     /// in the simulator) together
     static func read() -> State {
@@ -63,8 +73,8 @@ enum GamePad {
         on(pad.leftTrigger.isPressed, z)
         on(pad.rightTrigger.isPressed || pad.rightShoulder.isPressed, r)
         on(pad.leftShoulder.isPressed, l)
-        // (not R3: that recentres a diorama, and it shouldn't pause the game too)
-        on(pad.buttonMenu.isPressed || pad.leftThumbstickButton?.isPressed == true, start)
+        // (not R3 or L3: in a diorama they recentre it and step its zoom, and shouldn't pause the game too)
+        on(pad.buttonMenu.isPressed, start)
         on(pad.dpad.up.isPressed, up)
         on(pad.dpad.down.isPressed, down)
         on(pad.dpad.left.isPressed, left)
@@ -124,14 +134,14 @@ final class PadReader {
         let left = inputs[.left], right = inputs[.right]
         if let right, let left {
             // Two controllers: left stick, right stick C, R2 or Cross = A, R1 or Circle = B, L2 = Z, Square or
-            // Triangle = R (L1, the left grip, is your left hand), L3 / R3 or Create = Start
+            // Triangle = R (L1, the left grip, is your left hand), R3 or Create = Start (L3 steps a diorama's zoom)
             (sense.stickX, sense.stickY) = stick(left.stick)
             c(right.stick)
             on(right.trigger || right.a, GamePad.a)
             on(right.grip || right.b, GamePad.b)
             on(left.trigger, GamePad.z)
             on(left.a || left.b, GamePad.r)
-            on(left.stickClick || right.stickClick || left.menu, GamePad.start)
+            on(right.stickClick || left.menu, GamePad.start)
         } else if let right {
             // One controller: stick, R2 = A, Cross = B, R1 = Z, Circle held + stick = C, Circle tapped = R,
             // R3 or Options = Start
@@ -151,7 +161,7 @@ final class PadReader {
         } else if let left {  // (the left alone: its stick, L2 = A)
             (sense.stickX, sense.stickY) = stick(left.stick)
             on(left.trigger, GamePad.a)
-            on(left.stickClick || left.menu, GamePad.start)
+            on(left.menu, GamePad.start)
         }
         if rFrames > 0 { sense.buttons |= GamePad.r; rFrames -= 1 }
         state.buttons |= sense.buttons
