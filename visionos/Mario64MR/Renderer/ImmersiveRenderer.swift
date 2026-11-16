@@ -378,6 +378,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
                     let glow = Float(0.75 + 0.25 * sin(time * 6))
                     props.encodeCircle(at: circle, radius: Diorama.radius, glow: glow, into: encoder, eye: eye)
                 }
+                if graphics?.gloves == true { props.encodeGloves(hands, into: encoder, eye: eye) }
                 encoder.endEncoding()
             }
             drawable.encodePresent(commandBuffer: commands)
@@ -418,6 +419,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
             var h = HandState(tracked: true)
             h.pinch = p; h.reach = p; h.pinching = pinching
             h.palm = p + SIMD3(0, -0.05, 0.08)
+            h.joints = HandState.debugJoints(pinch: p, eye: eye)
             return h
         }
         if dioramaSince == nil {
@@ -477,6 +479,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
             var h = HandState(tracked: true)
             h.pinch = p; h.reach = p; h.pinching = pinching
             h.palm = p + SIMD3(0, -0.05, 0.08)
+            h.joints = HandState.debugJoints(pinch: p, eye: eye)
             return h
         }
         if t < 3.4 {

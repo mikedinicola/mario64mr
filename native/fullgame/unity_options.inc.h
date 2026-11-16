@@ -61,7 +61,7 @@ static void mr_defaults(UNUSED struct Option *self, s32 arg) {
     if (!arg) gUnityOptions[UNITY_OPT_DEFAULTS]++;
 }
 
-/* (Vision Pro, MR_VISIONOS: the refresh rate and sharpening are the headset's own, and Hands isn't there yet: left out) */
+/* (Vision Pro, MR_VISIONOS: the refresh rate and sharpening are the headset's own, left out) */
 static struct Option optsGraphics[] = {
 #ifndef MR_VISIONOS
     DEF_OPT_CHOICE( mrMenuStr[4], &gUnityOptions[UNITY_OPT_REFRESH], mrRateChoices ),
@@ -72,8 +72,8 @@ static struct Option optsGraphics[] = {
     DEF_OPT_CHOICE( mrMenuStr[8], &gUnityOptions[UNITY_OPT_TEXTURES], mrTextureChoices ),
 #ifndef MR_VISIONOS
     DEF_OPT_CHOICE( mrMenuStr[9], &gUnityOptions[UNITY_OPT_SHARPENING], mrSharpenChoices ),
-    DEF_OPT_CHOICE( mrMenuStr[11], &gUnityOptions[UNITY_OPT_HANDS], mrHandsChoices ),
 #endif
+    DEF_OPT_CHOICE( mrMenuStr[11], &gUnityOptions[UNITY_OPT_HANDS], mrHandsChoices ),
     DEF_OPT_BUTTON( mrMenuStr[10], mr_defaults ),
 };
 

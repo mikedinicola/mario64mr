@@ -4,7 +4,7 @@ import simd
 import UIKit
 
 /// Draws what's in the room besides the game: the cartridge, the window's frame, and the title screen (Goddard's
-/// face from TitleScreen, behind "PRESS START")
+/// face from TitleScreen, behind "PRESS START"), and Mario's gloves over your hands
 final class RoomProps {
     private struct PropDraw {
         var model: simd_float4x4
@@ -23,7 +23,7 @@ final class RoomProps {
     private let device: MTLDevice
     private let library: MTLLibrary
     private let colorFormat: MTLPixelFormat, depthFormat: MTLPixelFormat
-    /// The pipelines (opaque, blended, title opaque, title blended) by sample count
+    /// The pipelines (opaque, blended, title opaque, title blended, gloves) by sample count
     private var pipelineSets: [Int: [MTLRenderPipelineState]] = [:]
     /// The room's MSAA samples (the options' anti-aliasing): the pipelines drawn with
     var sampleCount = 1
@@ -32,6 +32,7 @@ final class RoomProps {
     private let depthOff: MTLDepthStencilState
     private let box: MTLBuffer
     private let quad: MTLBuffer
+    private let capsule: MTLBuffer
     private let white: MTLTexture
     private let label: MTLTexture
     private let pressStart: MTLTexture
@@ -56,9 +57,11 @@ final class RoomProps {
         guard let depthWrite = depth(test: true, write: true), let depthTestOnly = depth(test: true, write: false),
               let depthOff = depth(test: false, write: false),
               let box = device.makeBuffer(bytes: Self.boxVertices, length: Self.boxVertices.count * 4),
-              let quad = device.makeBuffer(bytes: Self.quadVertices, length: Self.quadVertices.count * 4)
+              let quad = device.makeBuffer(bytes: Self.quadVertices, length: Self.quadVertices.count * 4),
+              let capsule = device.makeBuffer(bytes: Self.capsuleVertices, length: Self.capsuleVertices.count * 4)
         else { print("Mario 64 MR: the room's props didn't build"); return nil }
         (self.depthWrite, self.depthTestOnly, self.depthOff, self.box, self.quad) = (depthWrite, depthTestOnly, depthOff, box, quad)
+        self.capsule = capsule
 
         let loader = MTKTextureLoader(device: device)
         let options: [MTKTextureLoader.Option: Any] = [.SRGB: true, .generateMipmaps: true]
@@ -138,6 +141,25 @@ final class RoomProps {
              flags: SIMD4(0, 0, 0, 0), blend: true, depth: depthOff, into: encoder, eye: eye)
         draw(quad, count: 6, model: model, color: SIMD4(0.55, 0.85, 1, glow * 0.6), texture: ring,
              flags: SIMD4(0, 0, 0, 1), blend: true, depth: depthWrite, into: encoder, eye: eye)
+    }
+
+    // ---------------------------------------------------------------- Mario's gloves
+
+    /// Mario's white gloves over your tracked hands (the options' Hands; visionOS then draws your hands under what
+    /// the app draws, not over it). Last, and only where something's drawn already: each pixel blended by how much
+    /// of the game is there, so out in your room, where the passthrough shows, your hands are your own.
+    func encodeGloves(_ hands: [HandState], into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
+        var bones = hands.filter { $0.tracked }.flatMap { $0.gloveBones }.map { [$0.0, $0.1] }.flatMap { $0 }
+        guard !bones.isEmpty, let pipelines = pipelines() else { return }
+        encoder.setRenderPipelineState(pipelines[4])
+        encoder.setDepthStencilState(depthWrite)
+        encoder.setCullMode(.none)
+        var e = eye
+        encoder.setVertexBuffer(capsule, offset: 0, index: 0)
+        encoder.setVertexBytes(&bones, length: bones.count * MemoryLayout<SIMD4<Float>>.stride, index: 1)
+        encoder.setVertexBytes(&e, length: MemoryLayout<GameRenderer.RoomEye>.stride, index: 2)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: Self.capsuleVertices.count / 4,
+                               instanceCount: bones.count / 2)
     }
 
     // ---------------------------------------------------------------- The title screen
@@ -240,7 +262,7 @@ final class RoomProps {
     /// This sample count's pipelines, made the first time it's drawn with
     private func pipelines() -> [MTLRenderPipelineState]? {
         if let set = pipelineSets[sampleCount] { return set }
-        func pipeline(_ vertex: String, _ fragment: String, blend: Bool) -> MTLRenderPipelineState? {
+        func pipeline(_ vertex: String, _ fragment: String, blend: Bool, overDrawn: Bool = false) -> MTLRenderPipelineState? {
             let d = MTLRenderPipelineDescriptor()
             d.vertexFunction = library.makeFunction(name: vertex)
             d.fragmentFunction = library.makeFunction(name: fragment)
@@ -254,6 +276,13 @@ final class RoomProps {
                 d.colorAttachments[0].sourceAlphaBlendFactor = .one
                 d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
             }
+            if overDrawn {  // (opaque, by what's there: nothing drawn yet, still nothing)
+                d.colorAttachments[0].isBlendingEnabled = true
+                d.colorAttachments[0].sourceRGBBlendFactor = .destinationAlpha
+                d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+                d.colorAttachments[0].sourceAlphaBlendFactor = .destinationAlpha
+                d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            }
             do { return try device.makeRenderPipelineState(descriptor: d) } catch {
                 print("Mario 64 MR: \(fragment) didn't build: \(error)")
                 return nil
@@ -262,8 +291,9 @@ final class RoomProps {
         let set = [pipeline("prop_vertex", "prop_fragment", blend: false),
                    pipeline("prop_vertex", "prop_fragment", blend: true),
                    pipeline("title_vertex", "title_fragment", blend: false),
-                   pipeline("title_vertex", "title_fragment", blend: true)].compactMap { $0 }
-        guard set.count == 4 else { return nil }
+                   pipeline("title_vertex", "title_fragment", blend: true),
+                   pipeline("glove_vertex", "glove_fragment", blend: false, overDrawn: true)].compactMap { $0 }
+        guard set.count == 5 else { return nil }
         pipelineSets[sampleCount] = set
         return set
     }
@@ -303,6 +333,31 @@ final class RoomProps {
             for (a, b) in corners {
                 let p = (n + u * a + v * b) * 0.5
                 out += [p.x, p.y, p.z, n.x, n.y, n.z, (a + 1) / 2, (1 - b) / 2]
+            }
+        }
+        return out
+    }()
+
+    /// A capsule's unit sphere (GloveVertex: direction, then 0 for the lower end, 1 the upper): rings from the bottom pole to the equator round the lower end, then again
+    /// from the equator to the top pole round the upper, the band between the two equators its side
+    private static let capsuleVertices: [Float] = {
+        let slices = 12, half = 4
+        var rings: [[SIMD4<Float>]] = []
+        for end in 0...1 {
+            for k in 0...half {
+                let lat = Float.pi / 2 * (Float(end == 0 ? k - half : k) / Float(half))
+                rings.append((0..<slices).map { i in
+                    let lon = 2 * Float.pi * Float(i) / Float(slices)
+                    return SIMD4(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon), Float(end))
+                })
+            }
+        }
+        var out: [Float] = []
+        for r in 0..<rings.count - 1 {
+            let lo = rings[r], hi = rings[r + 1]
+            for i in 0..<slices {
+                let j = (i + 1) % slices
+                for v in [lo[i], hi[j], lo[j], lo[i], hi[i], hi[j]] { out += [v.x, v.y, v.z, v.w] }
             }
         }
         return out

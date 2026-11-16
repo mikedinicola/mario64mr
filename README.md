@@ -477,6 +477,7 @@ build in Xcode.
 | Anti-aliasing | MSAA 2x or 4x in your room |
 | Foveation | On (any level) or off. It changes the next time you open a window into the game |
 | Textures | As on the other headsets: N64, mipmaps, or mipmaps with 2x to 16x anisotropic filtering |
+| Hands | Gloves: Mario's white gloves over your hands wherever the game is (the window, the level, Mario out in your room), your own hands everywhere else. Your own: visionOS draws your hands over everything, as other apps do. Gloves don't show on hands holding Sense controllers |
 | Refresh rate, Sharpening | Not in the menu: visionOS sets them itself |
 | Bring Mario back | Out in your room or held: back into the game where he went out (or was picked up) |
 
