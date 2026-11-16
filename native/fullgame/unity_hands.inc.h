@@ -6,6 +6,8 @@
  *   put on his list of things he collided with this frame, which the game's own interactions then handle).
  * - Carry on your palm: an enemy or NPC standing on your hand moves with it (and turns with it), as the game moves
  *   things on its platforms. Tip your hand and it falls off; its own physics do the rest.
+ * - Squash with your palm: a hand slapped down onto a Goomba (or anything Mario can stomp) from above squashes it, as
+ *   Mario's stomp does: it is attacked from above, and its own code does the rest (flattened, its coin dropped).
  * - Pinch to pick up: the host grabs the enemy or NPC nearest a pinch (sm64unity_object_grab), holds it at the pinch
  *   (sm64unity_object_hold) and lets go of it, thrown with the hand (sm64unity_object_release).
  *
@@ -44,6 +46,7 @@ struct UnityRider {
     float u, v;       /* where it stands on its triangle, in the triangle's own terms */
 };
 static struct UnityRider unity_riders[UNITY_MAX_RIDERS];
+static struct Object *unity_held_obj; /* (pinched: see the end) */
 static int unity_rider_count;
 
 static void unity_hand_vertex(const s16 *triangles, int triangle, int corner, float out[3]) {
@@ -187,9 +190,81 @@ static int unity_hand_touches(struct Object *o) {
     return 0;
 }
 
+/* ---- Squash with your palm ---- */
+
+/* The hands' triangles last frame, to tell how fast each part of them is coming down */
+static s16 unity_last_hand_triangles[UNITY_HAND_SURFACES*9];
+static int unity_last_hand_count;
+static void unity_hands_remember(void) {
+    unity_last_hand_count = unity_game_hand_count;
+    if (unity_game_hand_count > 0)
+        memcpy(unity_last_hand_triangles, unity_game_hand_triangles, unity_game_hand_count * 9 * sizeof(s16));
+}
+
+#define UNITY_SLAP_SPEED 12.f /* game units a frame, down: a slap, not a hand lowered gently onto it (which it climbs) */
+static int unity_stompable(struct Object *o) {
+    return (o->oInteractType & (INTERACT_BOUNCE_TOP | INTERACT_BOUNCE_TOP2 | INTERACT_KOOPA))
+        && o->oIntangibleTimer == 0 && !(o->oInteractStatus & INT_STATUS_INTERACTED) && o != unity_held_obj;
+}
+
+/* Where a point of a hand triangle (at u, v on it) was last frame: on the triangle then nearest it. 0 if none was */
+static int unity_last_point(const s16 *now, float u, float v, float out[3]) {
+    int was = -1;
+    float nearest = 400.f;
+    for (int k = 0; k < unity_last_hand_count; k++) {
+        const s16 *l = unity_last_hand_triangles + k * 9;
+        float d = 0;
+        for (int i = 0; i < 9; i++) d += (float) (now[i] - l[i]) * (now[i] - l[i]);
+        d = sqrtf(d / 3);
+        if (d < nearest) { nearest = d; was = k; }
+    }
+    if (was < 0) return 0;
+    float last[9];
+    for (int i = 0; i < 9; i++) last[i] = unity_last_hand_triangles[was * 9 + i];
+    unity_corners_point(last, u, v, out);
+    return 1;
+}
+
+/* Does a part of a hand over it come down through its top this frame, fast? */
+static int unity_hand_slaps(struct Object *o) {
+    float radius = o->hitboxRadius > 40.f ? o->hitboxRadius : 40.f;
+    float height = o->hitboxHeight > 40.f ? o->hitboxHeight : 40.f;
+    float bottom = o->oPosY - o->hitboxDownOffset, top = bottom + height;
+    /* its middle and round its edge, under the palm */
+    float spots[5][2] = { { 0, 0 }, { 0.6f, 0 }, { -0.6f, 0 }, { 0, 0.6f }, { 0, -0.6f } };
+    for (int t = 0; t < unity_game_hand_count; t++) {
+        for (int s = 0; s < 5; s++) {
+            float u, v, h, then[3];
+            float x = o->oPosX + spots[s][0] * radius, z = o->oPosZ + spots[s][1] * radius;
+            if (!unity_hand_floor_under(unity_game_hand_triangles, t, x, z, &u, &v, &h)) continue;
+            if (!unity_last_point(unity_game_hand_triangles + t * 9, u, v, then)) continue;
+            /* above its top last frame, at or into it now, and coming down fast */
+            if (then[1] >= top - 10.f && h <= top && h >= bottom - 40.f && then[1] - h >= UNITY_SLAP_SPEED) return 1;
+        }
+    }
+    return 0;
+}
+
+void unity_hands_squash(void) {
+    if ((gTimeStopState & TIME_STOP_ACTIVE) || unity_room_depth || unity_game_hand_count <= 0
+        || unity_last_hand_count <= 0 || !unity_hand_bounds()) return;
+    static const int lists[] = { OBJ_LIST_PUSHABLE, OBJ_LIST_GENACTOR, OBJ_LIST_DESTRUCTIVE, OBJ_LIST_DEFAULT };
+    for (int l = 0; l < (int) (sizeof(lists) / sizeof(lists[0])); l++) {
+        struct ObjectNode *head = &gObjectLists[lists[l]];
+        for (struct ObjectNode *node = head->next; node != head; node = node->next) {
+            struct Object *o = (struct Object *) node;
+            if (!unity_object_usable(o) || !unity_stompable(o) || !unity_near_hands(o, 100.f)) continue;
+            if (!unity_hand_slaps(o)) continue;
+            /* as Mario's stomp (interaction.c, attack_object with INT_HIT_FROM_ABOVE) */
+            o->oInteractStatus = ATTACK_FROM_ABOVE + (INT_STATUS_INTERACTED | INT_STATUS_WAS_ATTACKED);
+        }
+    }
+}
+
 /* After detect_object_collisions: what your hand touches, Mario touches, so his interactions (or a 1-up's own
  * check for him) collect it this frame */
 void unity_hands_touch(void) {
+    unity_hands_squash();
     if (!UNITY_HANDS_TOUCH || !gMarioObject || unity_mario_carried() || unity_room_depth) return;
     if ((gTimeStopState & TIME_STOP_ACTIVE) || !unity_hand_bounds()) return;
     static const int lists[] = { OBJ_LIST_LEVEL, OBJ_LIST_GENACTOR, OBJ_LIST_DEFAULT };
@@ -211,7 +286,6 @@ void unity_hands_touch(void) {
 
 /* ---- Carry on your palm ---- */
 
-static struct Object *unity_held_obj;
 static int unity_carryable(struct Object *o) {
     if (o == unity_held_obj || o->collisionData || o->oHeldState != HELD_FREE) return 0;
     const BehaviorScript *b = o->behavior;
@@ -275,8 +349,13 @@ void unity_hands_carry_riders(void) {
 
 /* At the end of the frame, after every object has moved: what is standing on a hand now. A palm come up into
  * something from below (by up to 100 units this frame, more than the game's own floors catch) scoops it up */
+static void unity_hands_find_riders_now(void);
 void unity_hands_find_riders(void) {
     unity_hands_place_held();
+    unity_hands_find_riders_now();
+    unity_hands_remember(); /* (for next frame: slaps, and scoops) */
+}
+static void unity_hands_find_riders_now(void) {
     unity_rider_count = 0;
     if (!UNITY_HANDS_CARRY || (gTimeStopState & TIME_STOP_ACTIVE) || unity_room_depth || unity_game_hand_count <= 0
         || !unity_hand_bounds()) return;
@@ -294,6 +373,10 @@ void unity_hands_find_riders(void) {
                 if (!unity_hand_floor_under(unity_game_hand_triangles, t, o->oPosX, o->oPosZ, &u, &v, &height)) continue;
                 float gap = o->oPosY - height; /* standing on it: at it, just over it, or the palm come up into it */
                 if (gap < -100.f || gap > 30.f || fabsf(gap) >= fabsf(bestGap)) continue;
+                if (gap < 0) { /* into it: only scooped by a palm coming up (one come down onto it squashes it) */
+                    float then[3];
+                    if (!unity_last_point(unity_game_hand_triangles + t * 9, u, v, then) || then[1] >= height) continue;
+                }
                 best = t; bestGap = gap; bestU = u; bestV = v; bestHeight = height;
             }
             if (best < 0) continue;
