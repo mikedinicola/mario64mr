@@ -285,6 +285,39 @@ fragment float4 prop_fragment(PropVaryings in [[stage_in]], constant PropDraw &d
     return draw.flags.z != 0 ? float4(color.rgb, 1) : color;
 }
 
+// ---------------------------------------------------------------- Mario's gloves over your hands
+// A capsule (instanced, one a bone): a unit sphere's lower half round one end, its upper half round the other, the
+// band between them its side
+struct GloveVertex { packed_float3 direction; float end; };
+struct GloveBone { float4 a; float4 b; };  // xyz: the ends (room metres), w: their radii
+struct GloveVaryings { float4 position [[position]]; float3 normal; };
+
+vertex GloveVaryings glove_vertex(uint vid [[vertex_id]], uint bone [[instance_id]],
+                                  const device GloveVertex *vertices [[buffer(0)]],
+                                  constant GloveBone *bones [[buffer(1)]], constant RoomEye &eye [[buffer(2)]]) {
+    GloveVertex v = vertices[vid];
+    GloveBone b = bones[bone];
+    float3 axis = b.b.xyz - b.a.xyz;
+    float3 y = length(axis) > 1e-5 ? normalize(axis) : float3(0, 1, 0);
+    float3 x = normalize(cross(y, abs(y.x) < 0.9 ? float3(1, 0, 0) : float3(0, 0, 1)));
+    float3 z = cross(x, y);
+    float3 d = float3(v.direction);
+    float3 n = x * d.x + y * d.y + z * d.z;
+    float4 end = v.end > 0.5 ? b.b : b.a;
+    GloveVaryings out;
+    out.position = eye.viewProjection * float4(end.xyz + n * end.w, 1);
+    out.normal = n;
+    return out;
+}
+
+// White cloth, softly lit. Blended by what's already there (RoomProps.encodeGloves): only over the game, the
+// passthrough left showing your own hand everywhere else
+fragment float4 glove_fragment(GloveVaryings in [[stage_in]]) {
+    float3 n = normalize(in.normal);
+    float light = 0.62 + 0.38 * saturate(dot(n, normalize(float3(0.3, 1, 0.5))));
+    return float4(float3(0.92) * light, 1);
+}
+
 // ---------------------------------------------------------------- The title screen's face (libgoddard)
 struct GdVertex { packed_float3 position; packed_float2 uv; uchar4 color; };
 struct TitleDraw {

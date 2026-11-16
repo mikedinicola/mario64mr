@@ -18,6 +18,9 @@ final class GameHost {
     private(set) var libraries = ""
 
     private(set) var hasGamePad = false
+    /// The options' Hands: Mario's gloves over your hands in the room (the room's scene then hides your own under
+    /// what it draws)
+    private(set) var gloves = GameOptions.savedGraphics.gloves
 
     @ObservationIgnored let device = MTLCreateSystemDefaultDevice()
     @ObservationIgnored let output = GameFrames()
@@ -84,6 +87,7 @@ final class GameHost {
         var graphics = options.graphics
         self.room.update { [graphics] in $0.graphics = graphics }
         maker.mipmaps = graphics.mipmaps
+        publish { [gloves = graphics.gloves] in $0.gloves = gloves }
         // The title screen's face in the room (libgoddard), and its sounds (libsm64)
         let title = TitleScreen(device: device, pack: gameData.appendingPathComponent("res/base.zip"), rom: rom)
         if title == nil { print("Mario 64 MR: the title screen's face didn't start") }
@@ -190,6 +194,7 @@ final class GameHost {
                 graphics = options.graphics
                 self.room.update { [graphics] in $0.graphics = graphics }
                 maker.mipmaps = graphics.mipmaps
+                publish { [gloves = graphics.gloves] in $0.gloves = gloves }
             }
             var count: Int32 = 0
             if let samples = sm64unity_audio(&count), count > 0 {

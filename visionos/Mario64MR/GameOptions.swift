@@ -7,13 +7,15 @@ import Foundation
 /// - Anti-aliasing: MSAA 2x or 4x in the room;
 /// - Foveation: on (any level) or off, from the next time the room opens;
 /// - Textures: the game's textures with mipmaps, and anisotropic filtering;
+/// - Hands: Mario's gloves drawn over your hands where the game is (visionOS drawing your own under it), or your
+///   own drawn over everything;
 /// - the refresh rate and sharpening are the headset's own (the menu leaves them out on Vision Pro);
 /// - the volumes and the HUD the game applies itself.
 /// The game thread owns them (`sync`, each tick); the room's renderer reads `Graphics` from RoomLink.
 final class GameOptions {
     enum Index: Int {
         case refresh, resolution, antialiasing, foveation, textures, sharpening, bringBack, defaults
-        case masterVolume, musicVolume, sfxVolume, envVolume, hud
+        case masterVolume, musicVolume, sfxVolume, envVolume, hud, hands
     }
 
     /// What the room's renderer applies
@@ -23,6 +25,7 @@ final class GameOptions {
         var foveation = true
         var mipmaps = true
         var anisotropy = 4            // 1 (none) to 16
+        var gloves = true             // Hands: Mario's gloves (0), or your own (1)
 
         init() {}
         init(_ o: [UInt32]) {
@@ -32,6 +35,7 @@ final class GameOptions {
             let t = Int(min(o[Index.textures.rawValue], 5))
             mipmaps = t >= 1
             anisotropy = t >= 2 ? 1 << (t - 1) : 1
+            if o.count > Index.hands.rawValue { gloves = o[Index.hands.rawValue] == 0 }
         }
     }
 
@@ -67,6 +71,7 @@ final class GameOptions {
         let bringBack = now[Index.bringBack.rawValue] != counted[Index.bringBack.rawValue]
         if now[Index.defaults.rawValue] != counted[Index.defaults.rawValue] {
             for (i, v) in Self.graphicsDefaults.enumerated() { values[i] = v }
+            values[Index.hands.rawValue] = 0  // (Hands is in the graphics menu too)
             now = all
         }
         counted = now

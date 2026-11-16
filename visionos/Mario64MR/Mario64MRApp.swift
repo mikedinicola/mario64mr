@@ -20,6 +20,8 @@ struct Mario64MRApp: App {
             }
         }
         .immersionStyle(selection: .constant(.mixed), in: .mixed)
+        // (Hands: with Mario's gloves, what the room draws hides your hands, and the gloves are drawn over them)
+        .upperLimbVisibility(game.gloves ? .hidden : .automatic)
     }
 }
 

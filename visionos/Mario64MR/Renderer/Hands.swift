@@ -27,6 +27,10 @@ struct HandState: Sendable {
     var controller = false
     var grabsMario = true
 
+    /// The skeleton's joints (room metres) in `HandState.jointNames`' order, for Mario's gloves; none for a
+    /// controller
+    var joints: [SIMD3<Float>] = []
+
     /// The palm turned up: a pinch made like that is the menu gesture (Start)
     var palmUp: Bool { palmNormal.y > 0.7 }
 }
@@ -64,6 +68,7 @@ final class HandTracker: @unchecked Sendable {
         hand.pinching = previous.pinching ? apart < 0.03 : apart < 0.015
         hand.pinch = (thumb + indexTip) / 2
         hand.reach = indexTip
+        hand.joints = HandState.jointNames.map(at)
 
         history[index].append((time, hand.pinch))
         history[index].removeAll { time - $0.time > 0.1 }
@@ -86,6 +91,67 @@ final class HandTracker: @unchecked Sendable {
         }
         return hand
     }
+}
+
+extension HandState {
+    /// The joints HandTracker keeps, in this order
+    static let jointNames: [HandSkeleton.JointName] = [
+        .wrist, .forearmArm,
+        .thumbKnuckle, .thumbIntermediateBase, .thumbIntermediateTip, .thumbTip,
+        .indexFingerMetacarpal, .indexFingerKnuckle, .indexFingerIntermediateBase, .indexFingerIntermediateTip,
+        .indexFingerTip,
+        .middleFingerMetacarpal, .middleFingerKnuckle, .middleFingerIntermediateBase, .middleFingerIntermediateTip,
+        .middleFingerTip,
+        .ringFingerMetacarpal, .ringFingerKnuckle, .ringFingerIntermediateBase, .ringFingerIntermediateTip,
+        .ringFingerTip,
+        .littleFingerMetacarpal, .littleFingerKnuckle, .littleFingerIntermediateBase, .littleFingerIntermediateTip,
+        .littleFingerTip,
+    ]
+
+    /// Mario's glove over the hand (the options' Hands): capsules, each two ends of a point and a radius (metres),
+    /// along the fingers and across the palm, puffier than a hand, and a cuff round the wrist
+    var gloveBones: [(SIMD4<Float>, SIMD4<Float>)] {
+        guard joints.count == Self.jointNames.count else { return [] }
+        func bone(_ i: Int, _ j: Int, _ r: Float, _ r2: Float? = nil) -> (SIMD4<Float>, SIMD4<Float>) {
+            (SIMD4(joints[i], r), SIMD4(joints[j], r2 ?? r))
+        }
+        // The thumb, from its base by the wrist
+        var bones = [bone(0, 2, 0.017, 0.015), bone(2, 3, 0.015, 0.014), bone(3, 4, 0.014, 0.013),
+                     bone(4, 5, 0.013, 0.012)]
+        // The palm, wrist to each knuckle, and each finger out from its knuckle (index, middle, ring, little)
+        for (first, r) in [(6, 0.0125), (11, 0.013), (16, 0.0125), (21, 0.011)] as [(Int, Float)] {
+            bones += [bone(0, first + 1, 0.017, 0.016), bone(first + 1, first + 2, r),
+                      bone(first + 2, first + 3, r, r * 0.95), bone(first + 3, first + 4, r * 0.95, r * 0.9)]
+        }
+        bones += [bone(7, 12, 0.016), bone(12, 17, 0.016), bone(17, 22, 0.015)]  // (across the knuckles)
+        // The cuff: a little up the arm from the wrist, wider
+        let wrist = joints[0], arm = joints[1] - wrist
+        let up = simd_length(arm) > 1e-4 ? simd_normalize(arm) : SIMD3<Float>(0, -1, 0)
+        bones.append((SIMD4(wrist + up * 0.025, 0.03), SIMD4(wrist + up * 0.04, 0.034)))
+        return bones
+    }
+
+    #if DEBUG
+    /// (the simulator's scripted hands) a skeleton for a hand pinching at `p`, reaching away from `eye`
+    static func debugJoints(pinch p: SIMD3<Float>, eye: SIMD3<Float>) -> [SIMD3<Float>] {
+        var forward = p - eye
+        forward.y = 0
+        forward = simd_length(forward) > 1e-3 ? simd_normalize(forward) : SIMD3(0, 0, -1)
+        let side = simd_normalize(simd_cross(forward, SIMD3(0, 1, 0)))
+        let wrist = p - forward * 0.1 - SIMD3(0, 0.06, 0)
+        let along = simd_normalize(p - wrist)
+        var joints = [wrist, wrist - along * 0.25]
+        let thumbBase = wrist + side * 0.02 + along * 0.02
+        joints += (1...4).map { i in thumbBase + (p - thumbBase) * Float(i) / 4 }
+        for (i, offset) in [Float(0.02), 0, -0.02, -0.038].enumerated() {
+            let knuckle = wrist + along * 0.09 + side * offset
+            let tip = i == 0 ? p : knuckle + along * (0.075 - Float(i) * 0.008) - SIMD3(0, 0.02, 0)
+            joints += [wrist + along * 0.03 + side * offset * 0.6, knuckle,
+                       knuckle + (tip - knuckle) * 0.45, knuckle + (tip - knuckle) * 0.75, tip]
+        }
+        return joints
+    }
+    #endif
 }
 
 /// A pinch the system saw you make while looking at something: visionOS gives apps no gaze, only the ray from your
