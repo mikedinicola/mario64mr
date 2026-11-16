@@ -98,7 +98,6 @@ struct RoomEye {
     float4 eye;               // xyz: the eye in the window's space
     float4 window;            // xy: the opening's half size (metres), z: the sky's distance (game units)
     float4 up;                // xyz: the game's up in the game camera's view space
-    float4 camera;            // xyz: the game camera in the window's space (in front of it), w: its near plane's z there
 };
 
 // The sky's tiles as skybox.c lays them out (SCREEN_WIDTH 320 wide, 1280 units round, 4 units a degree up and
@@ -206,10 +205,10 @@ fragment float4 game_fragment(Varyings in [[stage_in]],
 }
 
 // In the room the level is seen only through the window's opening: from outside, what's behind the window and seen
-// through the opening; from inside (the head past the window), everything but the room seen back through it.
-// The game camera stands in front of the window, so the level reaches out past it towards you: what lies between
-// the window and the camera's near plane, in the game's own picture (the camera's view through the opening), comes
-// out of the window, as the flat game shows it, rather than being cut off at the window like a near plane there.
+// through the opening; from inside (your head put through it), everything behind the window. Nothing of it comes out
+// into the room: the game camera stands in front of the window, so the level reaches past it towards you, but what
+// lies on your side of the window is cut off there, as if the window were the camera's near plane, and painted on
+// the glass instead (window_picture_fragment). (Mario carried out into the room is drawn as an actor, not here.)
 // The output is linear, as the layer's sRGB colour wants it.
 fragment float4 game_fragment_room(Varyings in [[stage_in]],
                                    texture2d<float> texture0 [[texture(0)]], texture2d<float> texture1 [[texture(1)]],
@@ -218,14 +217,12 @@ fragment float4 game_fragment_room(Varyings in [[stage_in]],
                                    constant RoomDraw &draw [[buffer(2)]]) {
     if (draw.kind.x <= 1) {  // (the level and its sky; not flat pictures on the window, nor Mario in the room)
         float3 p = (eye.windowFromRoom * float4(in.room, 1)).xyz, e = eye.eye.xyz;
-        bool crosses = (e.z > 0) != (p.z > 0);
-        float2 at = mix(e.xy, p.xy, e.z / (e.z - p.z));
-        bool throughOpening = crosses && all(abs(at) <= eye.window.xy);
+        if (p.z > 0) discard_fragment();  // (on your side of the window)
         bool inside = e.z <= 0;
-        float3 c = eye.camera.xyz;
-        bool outInFront = draw.kind.x == 0 && p.z > 0 && p.z <= eye.camera.w
-            && all(abs(mix(c.xy, p.xy, c.z / (c.z - p.z))) <= eye.window.xy);
-        if (inside ? (p.z > 0 && throughOpening) : !(throughOpening || outInFront)) discard_fragment();
+        if (!inside) {
+            float2 at = mix(e.xy, p.xy, e.z / (e.z - p.z));
+            if (any(abs(at) > eye.window.xy)) discard_fragment();
+        }
     }
     if (draw.kind.x == 4 && in.room.y < as_type<float>(draw.kind.y)) discard_fragment();
     float4 color = shade(in, texture0, texture1, sampler0, sampler1, frame);
@@ -283,6 +280,24 @@ fragment float4 prop_fragment(PropVaryings in [[stage_in]], constant PropDraw &d
         color.rgb *= light;
     }
     return draw.flags.z != 0 ? float4(color.rgb, 1) : color;
+}
+
+// What the level has between the game camera and the window, painted on the glass: the game's own flat picture
+// (`picture`, its depth `depth`, as game_vertex drew them), only where its nearest surface is nearer the camera
+// than the window, or only just past it (depth under `nearer`: it overlaps the level cut off at the window, so no
+// gap shows between them). The level itself is cut off at the window (game_fragment_room), so from
+// the camera's spot the window shows just what the flat game does. Not from inside: it's on your side of you then.
+fragment float4 window_picture_fragment(PropVaryings in [[stage_in]], constant RoomEye &eye [[buffer(2)]],
+                                        constant float &nearer [[buffer(3)]],
+                                        texture2d<float> picture [[texture(0)]], depth2d<float> depth [[texture(1)]],
+                                        sampler s [[sampler(0)]]) {
+    if (eye.eye.z <= 0) discard_fragment();
+    uint2 size = uint2(depth.get_width(), depth.get_height());
+    uint2 pixel = min(uint2(in.uv * float2(size)), size - 1);
+    if (depth.read(pixel) >= nearer) discard_fragment();
+    float3 c = saturate(picture.sample(s, in.uv).rgb);
+    float3 linear = select(pow((c + 0.055) / 1.055, 2.4), c / 12.92, c <= 0.04045);
+    return float4(linear, 1);
 }
 
 // ---------------------------------------------------------------- Mario's gloves over your hands
