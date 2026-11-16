@@ -76,8 +76,10 @@ EXPORT int sm64unity_game_hands(const s16 *triangles,int count) {
     unity_game_hand_count=count;
     return count;
 }
+void unity_hands_carry_riders(void);
 void unity_load_game_hands(void) {
     if ((gTimeStopState & TIME_STOP_ACTIVE) || unity_room_depth) return;
+    unity_hands_carry_riders(); /* (unity_hands.inc.h) what stood on a hand last frame goes with it */
     unity_game_hand_first=&sSurfacePool[gSurfacesAllocated];
     for (int i=0;i<unity_game_hand_count;i++) {
         s16 *v=unity_game_hand_triangles+i*9;
