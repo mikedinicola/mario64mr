@@ -279,7 +279,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
         if let diorama {
             let width = cartridge.window.halfSize.x * 2
             diorama.update(hands: hands, gazes: gazes, cameraStick: GamePad.cameraStick(),
-                           recenter: GamePad.cameraStickPressed(), mario: gameFrame?.mario, dt: dt, controls: controls)
+                           recenter: GamePad.cameraStickPressed(), cycleZoom: GamePad.moveStickPressed(), mario: gameFrame?.mario, dt: dt, controls: controls)
             if stage != 3 {  // (left the course: the window back, standing on the base)
                 let h = cartridge.window.halfSize.y
                 cartridge.leaveDiorama(RoomPlacement(center: diorama.center + SIMD3(0, h + 0.05, 0),

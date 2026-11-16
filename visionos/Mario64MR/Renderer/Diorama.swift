@@ -10,13 +10,15 @@ import simd
 /// - Pinch while looking at it (from anywhere), or pinch its base: with one hand it moves with the hand, up and down
 ///   too; with two it turns (about the level's middle) and scales. The camera stick turns it (left / right) and zooms
 ///   it (up / down); clicked in (R3), it brings Mario back to the base's centre, and from then on it turns about
-///   there. It ends with the room (the Digital Crown), or on leaving the course.
+///   there. The move stick clicked in (L3) steps its zoom: smallest, middle, largest, and round again. It ends with the room (the Digital Crown), or on leaving the course.
 final class Diorama {
     /// The base's radius, metres (the same whatever the diorama's scale)
     static let radius: Float = 0.25
     /// Metres a game unit, smallest and largest: a level ±8000 units across is about 50 cm to 8 m. It starts at
     /// the smallest.
     static let minScale: Float = 1 / 32000, maxScale: Float = 1 / 2000
+    /// L3's zoom steps: the smallest, the middle (about 2 m across) and the largest
+    static let zoomSteps: [Float] = [minScale, 1 / 8000, maxScale]
 
     /// Where the base is: its centre on the table, and the table's height
     private(set) var center: SIMD3<Float>
@@ -30,6 +32,8 @@ final class Diorama {
     private var appear: Float = 0     // 0 to 1: rising out of the circle
     private var recentering: Float = 0  // seconds left gliding Mario back to the base's centre
     private var wasRecentering = false
+    private var zoomTarget: Float?    // the scale it's gliding to, after L3
+    private var wasCyclingZoom = false
 
     /// A hand holding it: by a pinch on the base (followed by hand tracking) or one looking at it (the system's)
     private struct Grip { var from: SIMD3<Float>; let gaze: Int? }
@@ -98,7 +102,7 @@ final class Diorama {
     /// The hands holding the base
     var holding: Set<Int> { Set(grips.keys) }
 
-    func update(hands: [HandState], gazes: [GazePinch], cameraStick: SIMD2<Float>, recenter: Bool,
+    func update(hands: [HandState], gazes: [GazePinch], cameraStick: SIMD2<Float>, recenter: Bool, cycleZoom: Bool = false,
                 mario: SIMD3<Float>?, dt: Float, controls: [Int: ControllerControl] = [:]) {
         appear = min(1, appear + dt / 0.8)
         if let mario {  // (follow his height smoothly: jumps barely move it)
@@ -113,6 +117,17 @@ final class Diorama {
             let target = SIMD2(mario.x, mario.z)
             pivot = target
             anchor = recentering > 0 ? anchor + (target - anchor) * min(1, dt * 8) : target
+        }
+        // L3: the next zoom step up from where it is (from the largest, back to the smallest), glided to
+        if cycleZoom && !wasCyclingZoom {
+            let from = zoomTarget ?? scale
+            zoomTarget = Self.zoomSteps.first { $0 > from * 1.05 } ?? Self.zoomSteps[0]
+        }
+        wasCyclingZoom = cycleZoom
+        if let target = zoomTarget {
+            let k = min(1, dt * 6), next = exp(log(scale) + (log(target) - log(scale)) * k)
+            scale = abs(log(next / target)) < 0.01 ? target : next
+            if scale == target { zoomTarget = nil }
         }
         var hands = Array(hands.prefix(2))
         while hands.count < 2 { hands.append(HandState()) }
@@ -153,6 +168,7 @@ final class Diorama {
             // centre, as the two pinches turn and part
             guard let a = position(held[0]), let b = position(held[1]) else { return }
             let d = SIMD3(b.x - a.x, 0, b.z - a.z), distance = max(simd_length(d), 0.01), angle = Self.heading(d)
+            zoomTarget = nil  // (the hands scale it now)
             if twoFrom == nil { twoFrom = (angle, distance, yaw, scale) }
             turn(by: twoFrom!.yaw + angle - twoFrom!.angle - yaw)
             scale = min(max(twoFrom!.scale * distance / twoFrom!.distance, Self.minScale), Self.maxScale)
@@ -177,6 +193,7 @@ final class Diorama {
         func dead(_ v: Float) -> Float { abs(v) < 0.15 ? 0 : (v - 0.15 * (v > 0 ? 1 : -1)) / 0.85 }
         let x = dead(stick.x), y = dead(stick.y)
         guard x != 0 || y != 0 else { return }
+        if y != 0 { zoomTarget = nil }  // (the stick zooms it now, not L3's glide)
         let turn = -x * abs(x) * Self.stickTurn * dt  // (pushed right, the level turns clockwise seen from above)
         let zoom = exp2(y * abs(y) * Self.stickZoom * dt)
         let newScale = min(max(scale * zoom, Self.minScale), Self.maxScale)
