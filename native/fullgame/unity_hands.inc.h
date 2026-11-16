@@ -195,13 +195,25 @@ static int unity_hand_touches(struct Object *o) {
 /* The hands' triangles last frame, to tell how fast each part of them is coming down */
 static s16 unity_last_hand_triangles[UNITY_HAND_SURFACES*9];
 static int unity_last_hand_count;
+/* ...and their joints (sm64unity_game_hand_points), which come through the window without the whole palm */
+static float unity_last_hand_points[UNITY_HAND_POINTS * 3];
+static int unity_last_hand_point_count;
 static void unity_hands_remember(void) {
+    unity_last_hand_point_count = unity_game_hand_point_count;
+    memcpy(unity_last_hand_points, unity_game_hand_points, unity_game_hand_point_count * 3 * sizeof(float));
     unity_last_hand_count = unity_game_hand_count;
     if (unity_game_hand_count > 0)
         memcpy(unity_last_hand_triangles, unity_game_hand_triangles, unity_game_hand_count * 9 * sizeof(s16));
 }
 
 #define UNITY_SLAP_SPEED 12.f /* game units a frame, down: a slap, not a hand lowered gently onto it (which it climbs) */
+/* How far a part of a hand can have gone in a frame and still be found again: a slap covers a few hundred units, and
+ * can go right through something (and the ground under it) between two frames */
+#define UNITY_SLAP_TRAVEL 800.f
+/* Came down through its top between last frame and this one, fast enough? */
+static int unity_slap_through(float then, float now, float top) {
+    return then >= top - 10.f && now <= top && then - now >= UNITY_SLAP_SPEED && then - now <= UNITY_SLAP_TRAVEL;
+}
 static int unity_stompable(struct Object *o) {
     return (o->oInteractType & (INTERACT_BOUNCE_TOP | INTERACT_BOUNCE_TOP2 | INTERACT_KOOPA))
         && o->oIntangibleTimer == 0 && !(o->oInteractStatus & INT_STATUS_INTERACTED) && o != unity_held_obj;
@@ -210,7 +222,7 @@ static int unity_stompable(struct Object *o) {
 /* Where a point of a hand triangle (at u, v on it) was last frame: on the triangle then nearest it. 0 if none was */
 static int unity_last_point(const s16 *now, float u, float v, float out[3]) {
     int was = -1;
-    float nearest = 400.f;
+    float nearest = UNITY_SLAP_TRAVEL;
     for (int k = 0; k < unity_last_hand_count; k++) {
         const s16 *l = unity_last_hand_triangles + k * 9;
         float d = 0;
@@ -229,7 +241,7 @@ static int unity_last_point(const s16 *now, float u, float v, float out[3]) {
 static int unity_hand_slaps(struct Object *o) {
     float radius = o->hitboxRadius > 40.f ? o->hitboxRadius : 40.f;
     float height = o->hitboxHeight > 40.f ? o->hitboxHeight : 40.f;
-    float bottom = o->oPosY - o->hitboxDownOffset, top = bottom + height;
+    float top = o->oPosY - o->hitboxDownOffset + height;
     /* its middle and round its edge, under the palm */
     float spots[5][2] = { { 0, 0 }, { 0.6f, 0 }, { -0.6f, 0 }, { 0, 0.6f }, { 0, -0.6f } };
     for (int t = 0; t < unity_game_hand_count; t++) {
@@ -238,22 +250,37 @@ static int unity_hand_slaps(struct Object *o) {
             float x = o->oPosX + spots[s][0] * radius, z = o->oPosZ + spots[s][1] * radius;
             if (!unity_hand_floor_under(unity_game_hand_triangles, t, x, z, &u, &v, &h)) continue;
             if (!unity_last_point(unity_game_hand_triangles + t * 9, u, v, then)) continue;
-            /* above its top last frame, at or into it now, and coming down fast */
-            if (then[1] >= top - 10.f && h <= top && h >= bottom - 40.f && then[1] - h >= UNITY_SLAP_SPEED) return 1;
+            if (unity_slap_through(then[1], h, top)) return 1;
         }
+    }
+    /* a joint (a fingertip, a knuckle) over it, come down through its top: the nearest joint last frame is where
+     * this part of the hand was (the joints come and go as the hand crosses the window's edge, their order with them) */
+    for (int i = 0; i < unity_game_hand_point_count; i++) {
+        const float *p = &unity_game_hand_points[i * 3];
+        float dx = p[0] - o->oPosX, dz = p[2] - o->oPosZ;
+        if (dx * dx + dz * dz > (radius + 20.f) * (radius + 20.f)) continue;
+        const float *then = NULL;
+        float nearest = UNITY_SLAP_TRAVEL * UNITY_SLAP_TRAVEL;
+        for (int k = 0; k < unity_last_hand_point_count; k++) {
+            const float *l = &unity_last_hand_points[k * 3];
+            float d = (p[0] - l[0]) * (p[0] - l[0]) + (p[1] - l[1]) * (p[1] - l[1]) + (p[2] - l[2]) * (p[2] - l[2]);
+            if (d < nearest) { nearest = d; then = l; }
+        }
+        if (then && unity_slap_through(then[1], p[1], top)) return 1;
     }
     return 0;
 }
 
 void unity_hands_squash(void) {
-    if ((gTimeStopState & TIME_STOP_ACTIVE) || unity_room_depth || unity_game_hand_count <= 0
-        || unity_last_hand_count <= 0 || !unity_hand_bounds()) return;
+    if ((gTimeStopState & TIME_STOP_ACTIVE) || unity_room_depth || !unity_hand_bounds()) return;
+    if (unity_last_hand_count <= 0 && unity_last_hand_point_count <= 0) return;
     static const int lists[] = { OBJ_LIST_PUSHABLE, OBJ_LIST_GENACTOR, OBJ_LIST_DESTRUCTIVE, OBJ_LIST_DEFAULT };
     for (int l = 0; l < (int) (sizeof(lists) / sizeof(lists[0])); l++) {
         struct ObjectNode *head = &gObjectLists[lists[l]];
         for (struct ObjectNode *node = head->next; node != head; node = node->next) {
             struct Object *o = (struct Object *) node;
-            if (!unity_object_usable(o) || !unity_stompable(o) || !unity_near_hands(o, 100.f)) continue;
+            /* (a slap can have gone right past it, below it, by now) */
+            if (!unity_object_usable(o) || !unity_stompable(o) || !unity_near_hands(o, UNITY_SLAP_TRAVEL)) continue;
             if (!unity_hand_slaps(o)) continue;
             /* as Mario's stomp (interaction.c, attack_object with INT_HIT_FROM_ABOVE) */
             o->oInteractStatus = ATTACK_FROM_ABOVE + (INT_STATUS_INTERACTED | INT_STATUS_WAS_ATTACKED);
