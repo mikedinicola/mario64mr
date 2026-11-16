@@ -22,12 +22,16 @@
 
 extern int unity_mario_carried(void);
 
-/* The hands' joints through the window (game coordinates): what touches, besides the triangles */
+/* The hands' joints (game coordinates): what touches, besides the triangles. Through the window, or anywhere over a
+ * diorama, which has no triangles (and where a coin is a few millimetres across). Each touches within `radius` game
+ * units of it: as far as a centimetre or so is in the room, at the level's scale there */
 #define UNITY_HAND_POINTS 64
 static float unity_game_hand_points[UNITY_HAND_POINTS * 3];
 static int unity_game_hand_point_count;
-EXPORT int sm64unity_game_hand_points(const float *points, int count) {
+static float unity_game_hand_point_radius = 20.f;
+EXPORT int sm64unity_game_hand_points(const float *points, int count, float radius) {
     if (count < 0 || (count && !points)) return -1;
+    unity_game_hand_point_radius = isfinite(radius) && radius > 0 ? radius : 20.f;
     if (count > UNITY_HAND_POINTS) count = UNITY_HAND_POINTS;
     int kept = 0;
     for (int i = 0; i < count; i++) {
@@ -178,8 +182,8 @@ static int unity_hand_touches(struct Object *o) {
     float centre[3] = { o->oPosX, (bottom + top) * 0.5f, o->oPosZ };
     for (int i = 0; i < unity_game_hand_point_count; i++) {
         const float *p = &unity_game_hand_points[i * 3];
-        float dx = p[0] - centre[0], dz = p[2] - centre[2], reach = radius + 20.f;
-        if (dx * dx + dz * dz <= reach * reach && p[1] >= bottom - 20.f && p[1] <= top + 20.f) return 1;
+        float dx = p[0] - centre[0], dz = p[2] - centre[2], margin = unity_game_hand_point_radius, reach = radius + margin;
+        if (dx * dx + dz * dz <= reach * reach && p[1] >= bottom - margin && p[1] <= top + margin) return 1;
     }
     for (int i = 0; i < unity_game_hand_count; i++) {
         float a[3], b[3], c[3], p[3];
@@ -303,7 +307,7 @@ void unity_hands_touch(void) {
         for (struct ObjectNode *node = head->next; node != head; node = node->next) {
             struct Object *o = (struct Object *) node;
             if (gMarioObject->numCollidedObjs >= 4) return;
-            if (!unity_object_usable(o) || !unity_collectable(o) || !unity_near_hands(o, 80.f)) continue;
+            if (!unity_object_usable(o) || !unity_collectable(o) || !unity_near_hands(o, 80.f + unity_game_hand_point_radius)) continue;
             if (obj_check_if_collided_with_object(o, gMarioObject) || o->numCollidedObjs >= 4) continue;
             if (!unity_hand_touches(o)) continue;
             gMarioObject->collidedObjs[gMarioObject->numCollidedObjs++] = o;

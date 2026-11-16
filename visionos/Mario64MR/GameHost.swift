@@ -136,6 +136,8 @@ final class GameHost {
                 if demo, carryDemo { hands = demoHand(frame, carrier: carrier, geometry: geometry, to: room.debugRelease) }
                 #endif
                 carrier.update(hands: hands, geometry: geometry)
+            } else if room.on, let geometry = room.geometry, geometry.diorama {
+                carrier.touchDiorama(hands: room.hands, geometry: geometry)
             } else {
                 carrier.reset()
             }

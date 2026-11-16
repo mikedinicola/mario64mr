@@ -317,7 +317,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
         let headInView = viewFromRoom * head.columns.3
         let geometry = RoomGeometry(roomFromView: roomFromView, windowFromRoom: placement.roomFromWindow.inverse,
                                     halfSize: placement.halfSize, open: cartridge.isOpen, diorama: diorama != nil,
-                                    startLabel: placement.startLabel)
+                                    startLabel: placement.startLabel, worldFromRoom: roomFromWorld?.inverse)
         // The way back towards you from where you look, level (the stick, out in the room: sm64unity_room_facing).
         // Looking down, the head's up points ahead, and looking up, behind
         let back = head.columns.2, headUp = head.columns.1
