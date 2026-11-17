@@ -52,7 +52,10 @@ static int unity_world(struct Object *o) {
     if (unity_room_slot(o)) return o == unity_held_obj ? -1 : 1;
     return o == gMarioObject && unity_mario_outside();
 }
+int unity_marios_extra(struct Object *o);
 int unity_same_world(struct Object *a, struct Object *b) {
+    /* (Marios pass through each other: unity_marios.inc.h) */
+    if ((a == gMarioObject || unity_marios_extra(a)) && (b == gMarioObject || unity_marios_extra(b))) return 0;
     if (unity_room_object_count == 0 && !unity_mario_outside()) return 1;
     int w = unity_world(a);
     return w >= 0 && w == unity_world(b);

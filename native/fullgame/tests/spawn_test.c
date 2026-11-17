@@ -1,6 +1,6 @@
 /* Headless test of the treasure chest (unity_spawn.inc.h): enemies and power-up boxes taken out with a pinch in the
- * room or the level, or with a look near Mario; and boxes floating at a jump's height and broken by
- * one. In Castle Grounds. Run by run_room_objects_test.sh
+ * room or the level, or with a look near Mario; boxes floating at a jump's height and broken by one; and more Marios
+ * (unity_marios.inc.h) running with the same stick. In Castle Grounds. Run by run_room_objects_test.sh
  * (TEST=spawn_test), against the game library built with no host. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,16 +39,20 @@ unsigned int sm64unity_spawn_available(void);
 int sm64unity_spawn_held(int kind, int in_room, float x, float y, float z);
 int sm64unity_spawn_near_mario(int kind);
 int sm64unity_carry(int, float, float, float, float, float, float);
+int sm64unity_marios(float *out, int max);
+void unity_mario_warped(void);
+extern const BehaviorScript bhvUnityMario[];
 
-enum { GOOMBA, BOBOMB, KOOPA, CHUCKYA, BULLY, WING_BOX, METAL_BOX, VANISH_BOX, COIN_BOX, ONE_UP_BOX, KINDS };
+enum { GOOMBA, BOBOMB, KOOPA, CHUCKYA, BULLY, WING_BOX, METAL_BOX, VANISH_BOX, COIN_BOX, ONE_UP_BOX, MARIO, KINDS };
 static const char *names[] = { "Goomba", "Bob-omb", "Koopa", "Chuckya", "Bully", "wing cap box", "metal cap box",
-                               "vanish cap box", "coin box", "1-up box" };
+                               "vanish cap box", "coin box", "1-up box", "Mario" };
 
 static int failures;
 #define CHECK(c, ...) do { if (c) printf("  ok   " __VA_ARGS__); else { printf("  FAIL " __VA_ARGS__); failures++; } printf("\n"); } while (0)
 
 static void tick(uint16_t b) { sm64unity_tick(b, 0, 0); sm64unity_render_current(); }
 static void ticks(int n) { for (int i = 0; i < n; i++) tick(0); }
+static void tick_stick(uint16_t b, int8_t x, int8_t y) { sm64unity_tick(b, x, y); sm64unity_render_current(); }
 
 static int quad(s16 *t, float x0, float z0, float x1, float z1, float y) {
     s16 v[] = { x0, y, z0, x0, y, z1, x1, y, z1, x0, y, z0, x1, y, z1, x1, y, z0 };
@@ -249,6 +253,74 @@ int main(int argc, char **argv) {
     }
     CHECK(gMarioState->numCoins > coins, "he collects its coins out there (%d -> %d)", coins, gMarioState->numCoins);
     sm64unity_carry(0, start[0], start[1] + 50, start[2], 0, 0, 0); /* (back where he started in the level) */
+
+    printf("More Marios:\n");
+    ticks(60);
+    CHECK(sm64unity_spawn_available() & (1u << MARIO), "on offer");
+    int marios = 0;
+    for (int i = 0; i < 5; i++) { marios += sm64unity_spawn_near_mario(MARIO); ticks(5); }
+    CHECK(marios == 3, "three of them, not five (%d)", marios);
+    CHECK(!(sm64unity_spawn_available() & (1u << MARIO)), "no more on offer");
+    float at0[12], at1[12];
+    CHECK(sm64unity_marios(at0, 3) == 3, "all three there");
+    ticks(30);
+    CHECK(count(bhvUnityMario) == 3, "three objects with Mario's model (%d)", count(bhvUnityMario));
+    float first0[3] = { gMarioState->pos[0], gMarioState->pos[1], gMarioState->pos[2] };
+    sm64unity_marios(at0, 3);
+    for (int i = 0; i < 30; i++) { sm64unity_tick(0, 0, 80); sm64unity_render_current(); }
+    int moved = sm64unity_marios(at1, 3) == 3;
+    for (int k = 0; k < 3 && moved; k++) {
+        float dx = at1[k * 4] - at0[k * 4], dz = at1[k * 4 + 2] - at0[k * 4 + 2];
+        if (sqrtf(dx * dx + dz * dz) < 150) moved = 0;
+        printf("    Mario %d ran %.0f\n", k + 2, sqrtf(dx * dx + dz * dz));
+    }
+    float fdx = gMarioState->pos[0] - first0[0], fdz = gMarioState->pos[2] - first0[2];
+    printf("    the first ran %.0f\n", sqrtf(fdx * fdx + fdz * fdz));
+    CHECK(moved, "they all ran with the stick");
+    for (int i = 0; i < 20; i++) tick(0);
+    sm64unity_marios(at0, 3);
+    float top[3] = { -1e9, -1e9, -1e9 };
+    for (int i = 0; i < 25; i++) {
+        tick(i < 12 ? A_BUTTON : 0);
+        sm64unity_marios(at1, 3);
+        for (int k = 0; k < 3; k++) if (at1[k * 4 + 1] - at0[k * 4 + 1] > top[k]) top[k] = at1[k * 4 + 1] - at0[k * 4 + 1];
+    }
+    CHECK(top[0] > 100 && top[1] > 100 && top[2] > 100, "and all jumped with A (%.0f %.0f %.0f up)", top[0], top[1], top[2]);
+    {
+        int stand = 1;
+        for (struct Object *o = (struct Object *) gObjectLists[OBJ_LIST_PLAYER].next;
+             o != (struct Object *) &gObjectLists[OBJ_LIST_PLAYER]; o = (struct Object *) o->header.next)
+            if (o != gMarioObject && o->header.gfx.unk38.animYTrans != gMarioObject->header.gfx.unk38.animYTrans) stand = 0;
+        CHECK(stand, "and stand as high as he does (animations at %d)", gMarioObject->header.gfx.unk38.animYTrans);
+    }
+    ticks(40);  /* (landed and still: Z crouches) */
+    for (int i = 0; i < 10; i++) tick(Z_TRIG);
+    for (int i = 0; i < 20; i++) tick_stick(Z_TRIG, 0, 80);
+    {   /* Tilted to the floor, crawling: the first Mario's tilt is his (an extra one's step used to overwrite it, and
+         * they were all drawn where the last one was) */
+        extern Mat4 sFloorAlignMatrix[2];
+        float *t = sFloorAlignMatrix[0][3];
+        sm64unity_marios(at1, 3);
+        int extra = 0;
+        for (int k = 0; k < 3; k++)
+            if (fabsf(sFloorAlignMatrix[1][3][0] - at1[k * 4]) < 1 && fabsf(sFloorAlignMatrix[1][3][2] - at1[k * 4 + 2]) < 1) extra = 1;
+        CHECK(gMarioState->action == ACT_CRAWLING, "crawling with Z and the stick");
+        CHECK(fabsf(t[0] - gMarioState->pos[0]) < 1 && fabsf(t[2] - gMarioState->pos[2]) < 1,
+              "the first one tilted where he is (%.0f %.0f, at %.0f %.0f)", t[0], t[2], gMarioState->pos[0], gMarioState->pos[2]);
+        CHECK(extra, "the others' tilt their own (player 2's, copied out)");
+    }
+    for (int i = 0; i < 20; i++) tick(0);
+    CHECK(gCurrLevelNum == LEVEL_CASTLE_GROUNDS && gMarioState->action, "the first one's still playing");
+    ticks(30);
+    sm64unity_marios(at1, 3);
+    s16 before = gMarioState->numCoins;
+    struct Object *coin = spawn_object(gMarioObject, MODEL_YELLOW_COIN, bhvYellowCoin);
+    coin->oPosX = at1[0]; coin->oPosY = at1[1] + 40; coin->oPosZ = at1[2];
+    ticks(5);
+    CHECK(gMarioState->numCoins == before + 1, "a coin the second one runs into counts for the first (%d -> %d)", before, gMarioState->numCoins);
+    unity_mario_warped();
+    tick(0);
+    CHECK(sm64unity_marios(at1, 3) == 0 && count(bhvUnityMario) == 0, "a warp: gone");
 
     printf("Leaving the room:\n");
     sm64unity_room_objects_return();
