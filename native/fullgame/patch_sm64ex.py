@@ -164,6 +164,10 @@ def prepare(root, rom, sixty=True, external_data=True):
     level = 'extern void unity_mario_warped(void);\n' + level
     level = replace_once(level, 'void init_mario_after_warp(void) {\n',
                          'void init_mario_after_warp(void) {\n    unity_mario_warped();\n')
+    # More Marios out of the treasure chest (unity_marios.inc.h) warp nowhere: where one would, it's gone instead
+    level = 'extern int unity_marios_warp(struct MarioState *m);\n' + level
+    level = replace_once(level, 's16 level_trigger_warp(struct MarioState *m, s32 warpOp) {\n',
+                         's16 level_trigger_warp(struct MarioState *m, s32 warpOp) {\n    if (unity_marios_warp(m)) return 0;\n')
     area = original("src/game/area.c")
     if sixty:
         # (for MarioFace) The HUD (its icons, then its numbers, printed as text labels) is tagged 3, so the host can
@@ -207,6 +211,13 @@ def prepare(root, rom, sixty=True, external_data=True):
     graph = original("src/game/rendering_graph_node.c")
     graph = '#include "game/object_list_processor.h"\nextern int unity_is_mr(void);\nextern void unity_set_camera(const float *);\nextern void unity_set_camera_interpolated(const float *);\nstatic int unity_shadow_tag;\n' \
         'extern int unity_graph_tag(struct GraphNodeObject *node, int shadow);\nextern int unity_graph_in_room(struct GraphNodeObject *node);\n' + graph
+    # An extra Mario's model reads its own body state (unity_marios.inc.h, unity_marios_body)
+    graph = replace_once(graph, 'static void geo_process_object(struct Object *node) {\n',
+                         'extern void unity_marios_body(struct Object *o, int begin);\n'
+                         'static void geo_process_object_unity(struct Object *node);\n'
+                         'static void geo_process_object(struct Object *node) {\n'
+                         '    unity_marios_body(node, 1);\n    geo_process_object_unity(node);\n    unity_marios_body(node, 0);\n}\n'
+                         'static void geo_process_object_unity(struct Object *node) {\n')
     graph = replace_once(graph, '        listNode->displayList = displayList;',
                          '        listNode->displayList = displayList;\n        listNode->unityTag = unity_graph_tag(gCurGraphNodeObject, unity_shadow_tag);')
     tag_begin = '                gDisplayListHead->words.w0 = 0xD2000000;\n                (gDisplayListHead++)->words.w1 = currList->unityTag;\n'
@@ -314,6 +325,19 @@ def prepare(root, rom, sixty=True, external_data=True):
     collision = replace_once(collision, '#include "spawn_object.h"\n', '#include "spawn_object.h"\nextern int unity_same_world(struct Object *a, struct Object *b);\n')
     collision = replace_once(collision, '            if (b->oIntangibleTimer == 0) {', '            if (b->oIntangibleTimer == 0 && unity_same_world(a, b)) {')
     (root / "src/game/object_collision.c").write_text(collision)
+    # The extra Marios' behaviour (unity_marios.inc.h): Mario's hitbox, its own step
+    behaviors = original("data/behavior_data.c")
+    behaviors += ('\nextern void unity_marios_update(void);\n'
+                  'const BehaviorScript bhvUnityMario[] = {\n'
+                  '    BEGIN(OBJ_LIST_PLAYER),\n'
+                  '    SET_INT(oIntangibleTimer, 0),\n'
+                  '    OR_INT(oFlags, OBJ_FLAG_0100),\n'
+                  '    SET_HITBOX(/*Radius*/ 37, /*Height*/ 160),\n'
+                  '    BEGIN_LOOP(),\n'
+                  '        CALL_NATIVE(unity_marios_update),\n'
+                  '    END_LOOP(),\n'
+                  '};\n')
+    (root / "data/behavior_data.c").write_text(behaviors)
     # Out in the room, the stick steers by your head rather than by the game camera (unity_mr.c, unity_stick_yaw)
     mario = original("src/game/mario.c")
     stick = 'atan2s(-controller->stickY, controller->stickX) + m->area->camera->yaw;'
@@ -322,6 +346,11 @@ def prepare(root, rom, sixty=True, external_data=True):
     mario = replace_once(mario, '#include <PR/ultratypes.h>\n',
                          '#include <PR/ultratypes.h>\nextern s16 unity_stick_yaw(s16);\n').replace(
         stick, 'atan2s(-controller->stickY, controller->stickX) + unity_stick_yaw(m->area->camera->yaw);')
+    # (an extra Mario under water leaves the camera as it is: unity_marios.inc.h)
+    mario = replace_once(mario, 'void set_submerged_cam_preset_and_spawn_bubbles(struct MarioState *m) {\n',
+                         'extern int unity_marios_is_extra_state(struct MarioState *m);\n'
+                         'void set_submerged_cam_preset_and_spawn_bubbles(struct MarioState *m) {\n'
+                         '    if (unity_marios_is_extra_state(m)) return;\n')
     (root / "src/game/mario.c").write_text(mario)
     camera = original("src/game/camera.c")
     camera = 'extern int unity_camera_frozen(void);\n' + camera
@@ -491,7 +520,7 @@ Gfx *geo_offset_klepto_held_object(""")
                        "    unity_note_sky(background, colorIndex);\n    return init_skybox_display_list(player, background, colorIndex);\n}")
     sky = sky.replace('extern int unity_is_mr(void);\n', 'extern int unity_is_mr(void);\nextern void unity_note_sky(int background, int color);\n', 1)
     (root / "src/game/skybox.c").write_text(sky)
-    surface = original("src/engine/surface_load.c") + '\n#include "pc/unity_room.inc.h"\n#include "pc/unity_hands.inc.h"\n#include "pc/unity_room_objects.inc.h"\n#include "pc/unity_spawn.inc.h"\n'
+    surface = original("src/engine/surface_load.c") + '\n#include "pc/unity_room.inc.h"\n#include "pc/unity_hands.inc.h"\n#include "pc/unity_room_objects.inc.h"\n#include "pc/unity_spawn.inc.h"\n#include "pc/unity_marios.inc.h"\n'
     surface = 'extern int unity_draw_far(void);\n' + replace_once(surface, "#ifndef NODRAWINGDISTANCE\n    if (marioDist < gCurrentObject->oDrawingDistance) {",
                                                                "#ifndef NODRAWINGDISTANCE\n    if (unity_draw_far() || marioDist < gCurrentObject->oDrawingDistance) {")
     (root / "src/engine/surface_load.c").write_text(surface)
@@ -509,7 +538,7 @@ Gfx *geo_offset_klepto_held_object(""")
     strings = original("include/text_options_strings.h.in")
     strings = replace_once(strings, "#endif // TEXT_OPTIONS_STRINGS_H", MR_STRINGS + "\n#endif // TEXT_OPTIONS_STRINGS_H")
     (root / "include/text_options_strings.h.in").write_text(strings)
-    for name in ("unity_bridge.h", "unity_bridge.c", "unity_mr.c", "unity_room.inc.h", "unity_hands.inc.h", "unity_room_objects.inc.h", "unity_spawn.inc.h", "unity_options.h", "unity_options.inc.h"):
+    for name in ("unity_bridge.h", "unity_bridge.c", "unity_mr.c", "unity_room.inc.h", "unity_hands.inc.h", "unity_room_objects.inc.h", "unity_spawn.inc.h", "unity_marios.inc.h", "unity_options.h", "unity_options.inc.h"):
         shutil.copy2(HERE / name, root / "src/pc" / name)
     (root / "baserom.us.z64").write_bytes(rom)
     # Sequence zero is authored as data-only assembly upstream. Read its exact

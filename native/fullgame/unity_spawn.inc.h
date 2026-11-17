@@ -1,4 +1,4 @@
-/* The treasure chest by the window (the host's TreasureChest): enemies and power-up boxes taken out of
+/* The treasure chest by the window (the host's TreasureChest): enemies, power-up boxes and more Marios taken out of
  * it. Included after unity_room_objects.inc.h (in surface_load.c).
  *
  * - A cheat (the Cheats menu's Treasure chest, on by default): off, nothing comes out of it, and with nothing to offer
@@ -30,7 +30,7 @@
 enum {
     UNITY_SPAWN_GOOMBA, UNITY_SPAWN_BOBOMB, UNITY_SPAWN_KOOPA, UNITY_SPAWN_CHUCKYA, UNITY_SPAWN_BULLY,
     UNITY_SPAWN_WING_BOX, UNITY_SPAWN_METAL_BOX, UNITY_SPAWN_VANISH_BOX, UNITY_SPAWN_COIN_BOX, UNITY_SPAWN_1UP_BOX,
-    UNITY_SPAWN_KINDS
+    UNITY_SPAWN_MARIO, UNITY_SPAWN_KINDS
 };
 struct UnitySpawnKind {
     int model;
@@ -50,6 +50,7 @@ static const struct UnitySpawnKind unity_spawn_kinds[UNITY_SPAWN_KINDS] = {
     { MODEL_EXCLAMATION_BOX, bhvExclamationBox, UNITY_BOX(2), MODEL_MARIOS_CAP },
     { MODEL_EXCLAMATION_BOX, bhvExclamationBox, UNITY_BOX(5), MODEL_YELLOW_COIN }, /* (three: room for them out there) */
     { MODEL_EXCLAMATION_BOX, bhvExclamationBox, UNITY_BOX(7), MODEL_1UP },
+    { MODEL_MARIO, NULL, 0, 0 }, /* (unity_marios.inc.h) */
 };
 #define UNITY_SPAWN_EACH 6
 /* A box's origin over the floor, game units: its underside (60 over its origin, at its scale of 2) at 320, where
@@ -90,6 +91,8 @@ static int unity_spawn_count(int kind) {
 }
 
 extern int unity_mario_held(void);
+extern int unity_marios_can_spawn(void);
+extern int unity_marios_spawn(float x, float y, float z, s16 yaw);
 
 /* Can the level make one now? Its model (and a box's contents') loaded, Mario in the level, nothing holding it still */
 static int unity_spawn_kind_available(int kind) {
@@ -97,6 +100,7 @@ static int unity_spawn_kind_available(int kind) {
     if (!unity_hand_cheat(UNITY_HAND_CHEST)) return 0;  /* (the Cheats menu's Treasure chest: off, nothing to spawn) */
     if ((gTimeStopState & TIME_STOP_ACTIVE) || (gCamera && gCamera->cutscene)) return 0;
     const struct UnitySpawnKind *k = &unity_spawn_kinds[kind];
+    if (kind == UNITY_SPAWN_MARIO) return unity_marios_can_spawn();
     if (!gLoadedGraphNodes[k->model] || (k->contents && !gLoadedGraphNodes[k->contents])) return 0;
     return unity_spawn_count(kind) < UNITY_SPAWN_EACH;
 }
@@ -143,12 +147,16 @@ static s16 unity_spawn_facing(const float p[3]) {
 
 /* Taken out with a pinch at (x, y, z): in the room's coordinates (in_room) or the level's. Held by the pinch at once,
  * as sm64unity_object_grab would hold it (and out in the room, as sm64unity_object_hold_room). 1 if one was made and
- * is held */
+ * is held; 2 for another Mario (not held: put down there, unity_marios.inc.h) */
 EXPORT int sm64unity_spawn_held(int kind, int in_room, float x, float y, float z) {
     if (!isfinite(x) || !isfinite(y) || !isfinite(z) || unity_room_depth) return 0;
     if (!unity_spawn_kind_available(kind) || unity_still_held() || unity_mario_held()) return 0;
     if (in_room && unity_room_surface_count() == 0) return 0;
     float p[3] = { x, y, z };
+    if (kind == UNITY_SPAWN_MARIO) {
+        if (in_room) return 0; /* (the host puts him beside Mario instead) */
+        return unity_marios_spawn(x, y, z, unity_spawn_facing(p)) ? 2 : 0;
+    }
     struct Object *o = unity_spawn_make(kind, p, unity_spawn_facing(p));
     if (!o) return 0;
     if (in_room) {
@@ -180,6 +188,13 @@ EXPORT int sm64unity_spawn_near_mario(int kind) {
     }
     p[1] = floor + 20.f;
     s16 facing = (s16) (yaw + 0x8000);
+    if (kind == UNITY_SPAWN_MARIO) {
+        if (outside) return 0;
+        /* (beside him rather than in front: they run side by side) */
+        p[0] = gMarioState->pos[0] + coss(yaw) * 160.f; p[2] = gMarioState->pos[2] - sins(yaw) * 160.f;
+        p[1] = gMarioState->pos[1];
+        return unity_marios_spawn(p[0], p[1], p[2], yaw);
+    }
     struct Object *o = unity_spawn_make(kind, p, facing);
     if (!o) return 0;
     if (outside) {
