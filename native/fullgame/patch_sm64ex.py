@@ -307,11 +307,11 @@ def prepare(root, rom, sixty=True, external_data=True):
                              '    extern void unity_hands_find_riders(void);\n    unity_hands_find_riders();\n'
                              '    unload_deactivated_objects();\n\n    // Check if Mario is on a platform')
     (root / "src/game/object_list_processor.c").write_text(processor)
-    # ...and touch nothing in the level, nor anything in it them
+    # ...and touch nothing in the level, nor anything in it them: only what's out in the room too, Mario out there
+    # (unity_room_objects.inc.h, unity_same_world)
     collision = original("src/game/object_collision.c")
-    collision = replace_once(collision, '#include "spawn_object.h"\n', '#include "spawn_object.h"\nextern int unity_object_in_room(struct Object *o);\n')
-    collision = replace_once(collision, '    if (a->oIntangibleTimer == 0) {', '    if (a->oIntangibleTimer == 0 && !unity_object_in_room(a)) {')
-    collision = replace_once(collision, '            if (b->oIntangibleTimer == 0) {', '            if (b->oIntangibleTimer == 0 && !unity_object_in_room(b)) {')
+    collision = replace_once(collision, '#include "spawn_object.h"\n', '#include "spawn_object.h"\nextern int unity_same_world(struct Object *a, struct Object *b);\n')
+    collision = replace_once(collision, '            if (b->oIntangibleTimer == 0) {', '            if (b->oIntangibleTimer == 0 && unity_same_world(a, b)) {')
     (root / "src/game/object_collision.c").write_text(collision)
     # Out in the room, the stick steers by your head rather than by the game camera (unity_mr.c, unity_stick_yaw)
     mario = original("src/game/mario.c")
@@ -355,11 +355,8 @@ def prepare(root, rom, sixty=True, external_data=True):
                            '                        scale = 1.0f; // (not the sleeping animation: nothing to time it by)\n'
                            '                    } else if (frame < doneShrinkingFrame) {')
     (root / "src/game/behaviors/piranha_bubbles.inc.c").write_text(bubbles)
-    interaction = original("src/game/interaction.c")
-    interaction = 'extern int unity_mario_outside(void);\n' + interaction
-    interaction = replace_once(interaction, 'void mario_process_interactions(struct MarioState *m) {',
-                               'void mario_process_interactions(struct MarioState *m) {\n    if (unity_mario_outside()) { m->marioObj->oInteractStatus=0; return; }')
-    (root / "src/game/interaction.c").write_text(interaction)
+    # (Mario out in the room touches only what's out there too, unity_same_world: what he touches there he
+    # interacts with as in the game, coins collected, boxes broken, enemies stomped or hurting him)
     # Seen as a diorama the whole level is in view: objects past their drawing distance from Mario are still drawn
     # (unity_draw_far), though the game goes on treating them as far away (their updates, unchanged)
     behavior = original("src/engine/behavior_script.c")
@@ -493,7 +490,7 @@ Gfx *geo_offset_klepto_held_object(""")
                        "    unity_note_sky(background, colorIndex);\n    return init_skybox_display_list(player, background, colorIndex);\n}")
     sky = sky.replace('extern int unity_is_mr(void);\n', 'extern int unity_is_mr(void);\nextern void unity_note_sky(int background, int color);\n', 1)
     (root / "src/game/skybox.c").write_text(sky)
-    surface = original("src/engine/surface_load.c") + '\n#include "pc/unity_room.inc.h"\n#include "pc/unity_hands.inc.h"\n#include "pc/unity_room_objects.inc.h"\n'
+    surface = original("src/engine/surface_load.c") + '\n#include "pc/unity_room.inc.h"\n#include "pc/unity_hands.inc.h"\n#include "pc/unity_room_objects.inc.h"\n#include "pc/unity_spawn.inc.h"\n'
     surface = 'extern int unity_draw_far(void);\n' + replace_once(surface, "#ifndef NODRAWINGDISTANCE\n    if (marioDist < gCurrentObject->oDrawingDistance) {",
                                                                "#ifndef NODRAWINGDISTANCE\n    if (unity_draw_far() || marioDist < gCurrentObject->oDrawingDistance) {")
     (root / "src/engine/surface_load.c").write_text(surface)
@@ -511,7 +508,7 @@ Gfx *geo_offset_klepto_held_object(""")
     strings = original("include/text_options_strings.h.in")
     strings = replace_once(strings, "#endif // TEXT_OPTIONS_STRINGS_H", MR_STRINGS + "\n#endif // TEXT_OPTIONS_STRINGS_H")
     (root / "include/text_options_strings.h.in").write_text(strings)
-    for name in ("unity_bridge.h", "unity_bridge.c", "unity_mr.c", "unity_room.inc.h", "unity_hands.inc.h", "unity_room_objects.inc.h", "unity_options.h", "unity_options.inc.h"):
+    for name in ("unity_bridge.h", "unity_bridge.c", "unity_mr.c", "unity_room.inc.h", "unity_hands.inc.h", "unity_room_objects.inc.h", "unity_spawn.inc.h", "unity_options.h", "unity_options.inc.h"):
         shutil.copy2(HERE / name, root / "src/pc" / name)
     (root / "baserom.us.z64").write_bytes(rom)
     # Sequence zero is authored as data-only assembly upstream. Read its exact

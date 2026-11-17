@@ -1,8 +1,10 @@
 #!/bin/bash
 # Builds the game library on this Mac (no host: CC=cc, a plain shared library) from a scratch copy of the sm64ex
-# checkout, patched as install_mario64mr.py patches it, and runs room_objects_test.c against it.
-#   run_room_objects_test.sh <scratch dir> [Mario64MRData-work] [base.zip]
+# checkout, patched as install_mario64mr.py patches it, and runs room_objects_test.c against it (or another test in
+# this folder: TEST=spawn_test).
+#   [TEST=spawn_test] run_room_objects_test.sh <scratch dir> [Mario64MRData-work] [base.zip]
 set -e -o pipefail
+TEST=${TEST:-room_objects_test}
 HERE=$(cd "$(dirname "$0")" && pwd)
 SCRATCH=${1:?scratch directory}
 WORK=${2:-$HOME/Repos/mario64mr/Mario64MRData-work}
@@ -22,9 +24,9 @@ make -j"$(sysctl -n hw.ncpu)" HOST_OS=Linux OSX_BUILD=0 BUILD_DIR=build/headless
 cp build/headless/sm64.us.f3dex2e "$SCRATCH/libsm64game.dylib"
 install_name_tool -id @rpath/libsm64game.dylib "$SCRATCH/libsm64game.dylib"
 cc -O1 -g -w -I include -I build/headless -I build/headless/include -I src -I . -DVERSION_US -D_LANGUAGE_C -DNON_MATCHING \
-    -DAVOID_UB -DF3DEX_GBI_2E -DEXT_OPTIONS_MENU -DEXTERNAL_DATA -fno-strict-aliasing -fwrapv "$HERE/room_objects_test.c" \
-    -L"$SCRATCH" -lsm64game -Wl,-rpath,"$SCRATCH" -o "$SCRATCH/room_objects_test"
+    -DAVOID_UB -DF3DEX_GBI_2E -DEXT_OPTIONS_MENU -DEXTERNAL_DATA -fno-strict-aliasing -fwrapv "$HERE/$TEST.c" \
+    -L"$SCRATCH" -lsm64game -Wl,-rpath,"$SCRATCH" -o "$SCRATCH/$TEST"
 mkdir -p "$SCRATCH/save/res"
 ln -sf "$BASE" "$SCRATCH/save/res/base.zip"
 cd "$SCRATCH/save"
-"$SCRATCH/room_objects_test" "$SCRATCH/save" 2>&1 | grep -v "texture format"
+"$SCRATCH/$TEST" "$SCRATCH/save" 2>&1 | grep -v "texture format"
