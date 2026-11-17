@@ -91,12 +91,13 @@ static struct Option optsAudio[] = {
 /* The PC port's cheats (src/pc/cheats.h), always in the menu: no pressing L three times to find them, and
  * "Enable cheats" on from the start, so each one below works as soon as it is switched on. Kept between launches
  * with the other options (UNITY_OPT_CHEATS, unity_apply_options). Mario 64 MR's own cheats after them: what your
- * hands do in the game, on by default (UNITY_OPT_HAND_CHEATS) */
+ * hands do in the game, on by default but for Hands collect stars (UNITY_OPT_HAND_CHEATS) */
 static const u8 mrHandCheatStr[][32] = {
     { TEXT_MR_HAND_COLLECT },
     { TEXT_MR_HAND_SQUASH },
     { TEXT_MR_HAND_PICK_UP },
     { TEXT_MR_CHEST },
+    { TEXT_MR_HAND_STARS },
 };
 
 static struct Option optsCheats[] = {
@@ -113,6 +114,7 @@ static struct Option optsCheats[] = {
     DEF_OPT_TOGGLE( mrHandCheatStr[1], &gUnityHandCheats[UNITY_HAND_SQUASH] ),
     DEF_OPT_TOGGLE( mrHandCheatStr[2], &gUnityHandCheats[UNITY_HAND_PICK_UP] ),
     DEF_OPT_TOGGLE( mrHandCheatStr[3], &gUnityHandCheats[UNITY_HAND_CHEST] ),
+    DEF_OPT_TOGGLE( mrHandCheatStr[4], &gUnityHandCheats[UNITY_HAND_STARS] ),
 };
 
 static struct SubMenu menuGraphics = DEF_SUBMENU( mrMenuStr[0], optsGraphics );

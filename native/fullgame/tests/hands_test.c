@@ -19,6 +19,7 @@
 #include "game/mario.h"
 #include "game/interaction.h"
 #include "pc/cliopts.h"
+#include "pc/unity_options.h"
 
 int sm64unity_init(const char *);
 int sm64unity_tick(uint16_t, int8_t, int8_t);
@@ -106,6 +107,14 @@ int main(int argc, char **argv) {
     ticks(5);
     CHECK((star->oInteractType & INTERACT_STAR_OR_KEY) && (star->activeFlags & ACTIVE_FLAG_ACTIVE)
           && gMarioState->action == action, "a star your hand touches stays where it is");
+
+    printf("Stars with the Cheats menu's Hands collect stars on:\n");
+    gUnityHandCheats[UNITY_HAND_STARS] = 1;
+    for (int i = 0; i < 10; i++) { palm(star->oPosX, star->oPosY + 10, star->oPosZ); tick(0); }
+    sm64unity_game_hands(NULL, 0);
+    ticks(5);
+    CHECK(!(star->activeFlags & ACTIVE_FLAG_ACTIVE) || gMarioState->action != action,
+          "a star your hand touches is Mario's (action %08x, was %08x)", gMarioState->action, action);
 
     printf("%s (%d failures)\n", failures ? "FAILED" : "PASSED", failures);
     return failures != 0;
