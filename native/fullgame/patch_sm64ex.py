@@ -538,6 +538,44 @@ Gfx *geo_offset_klepto_held_object(""")
     strings = original("include/text_options_strings.h.in")
     strings = replace_once(strings, "#endif // TEXT_OPTIONS_STRINGS_H", MR_STRINGS + "\n#endif // TEXT_OPTIONS_STRINGS_H")
     (root / "include/text_options_strings.h.in").write_text(strings)
+    # The disc stage: Castle Grounds' area 2 (stage_disc.inc.c, stage_disc_geo.inc.c), through a pipe by where Mario
+    # starts outside the castle. The pipe is warp node 0x32 there; it comes out of the stage's own pipe, node 0x0A,
+    # and back the same way.
+    grounds = "levels/castle_grounds/"
+    (root / grounds / "leveldata.c").write_text(original(grounds + "leveldata.c")
+                                                + '#include "levels/castle_grounds/areas/2/stage_disc.inc.c"\n')
+    (root / grounds / "geo.c").write_text(original(grounds + "geo.c")
+                                          + '#include "levels/castle_grounds/areas/2/stage_disc_geo.inc.c"\n')
+    header = original(grounds + "header.h")
+    header = replace_once(header, "// script\n",
+                          "// the disc stage (area 2)\nextern const GeoLayout stage_disc_geo[];\n"
+                          "extern const Gfx stage_disc_dl_ground[];\nextern const Collision stage_disc_collision[];\n\n"
+                          "// script\n")
+    (root / grounds / "header.h").write_text(header)
+    script = original(grounds + "script.c")
+    script = replace_once(script, """        WARP_NODE(/*id*/ 0xF1, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x03, /*flags*/ WARP_NO_CHECKPOINT),
+        JUMP_LINK(script_func_local_1),""", """        WARP_NODE(/*id*/ 0xF1, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x03, /*flags*/ WARP_NO_CHECKPOINT),
+        OBJECT(/*model*/ MODEL_CASTLE_GROUNDS_WARP_PIPE, /*pos*/ -2400, 260, 4400, /*angle*/ 0, 0, 0, /*behParam*/ 0x00320000, /*beh*/ bhvWarpPipe),
+        WARP_NODE(/*id*/ 0x32, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x02, /*destNode*/ 0x0A, /*flags*/ WARP_NO_CHECKPOINT),
+        JUMP_LINK(script_func_local_1),""")
+    script = replace_once(script, """    END_AREA(),
+
+    FREE_LEVEL_POOL(),""", """    END_AREA(),
+
+    AREA(/*index*/ 2, stage_disc_geo),
+        OBJECT(/*model*/ MODEL_CASTLE_GROUNDS_WARP_PIPE, /*pos*/ 0, 0, 2400, /*angle*/ 0, 0, 0, /*behParam*/ 0x000A0000, /*beh*/ bhvWarpPipe),
+        WARP_NODE(/*id*/ 0x0A, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x32, /*flags*/ WARP_NO_CHECKPOINT),
+        WARP_NODE(/*id*/ 0xF1, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x32, /*flags*/ WARP_NO_CHECKPOINT),
+        TERRAIN(/*terrainData*/ stage_disc_collision),
+        SET_BACKGROUND_MUSIC(/*settingsPreset*/ 0x0000, /*seq*/ SEQ_LEVEL_GRASS),
+        TERRAIN_TYPE(/*terrainType*/ TERRAIN_GRASS),
+    END_AREA(),
+
+    FREE_LEVEL_POOL(),""")
+    (root / grounds / "script.c").write_text(script)
+    (root / grounds / "areas/2").mkdir(exist_ok=True)
+    for name in ("stage_disc.inc.c", "stage_disc_geo.inc.c"):
+        shutil.copy2(HERE / name, root / grounds / "areas/2" / name)
     for name in ("unity_bridge.h", "unity_bridge.c", "unity_mr.c", "unity_room.inc.h", "unity_hands.inc.h", "unity_room_objects.inc.h", "unity_spawn.inc.h", "unity_marios.inc.h", "unity_options.h", "unity_options.inc.h"):
         shutil.copy2(HERE / name, root / "src/pc" / name)
     (root / "baserom.us.z64").write_bytes(rom)
