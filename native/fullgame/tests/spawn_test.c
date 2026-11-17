@@ -52,6 +52,7 @@ static int failures;
 
 static void tick(uint16_t b) { sm64unity_tick(b, 0, 0); sm64unity_render_current(); }
 static void ticks(int n) { for (int i = 0; i < n; i++) tick(0); }
+static void tick_stick(uint16_t b, int8_t x, int8_t y) { sm64unity_tick(b, x, y); sm64unity_render_current(); }
 
 static int quad(s16 *t, float x0, float z0, float x1, float z1, float y) {
     s16 v[] = { x0, y, z0, x0, y, z1, x1, y, z1, x0, y, z0, x1, y, z1, x1, y, z0 };
@@ -292,6 +293,23 @@ int main(int argc, char **argv) {
             if (o != gMarioObject && o->header.gfx.unk38.animYTrans != gMarioObject->header.gfx.unk38.animYTrans) stand = 0;
         CHECK(stand, "and stand as high as he does (animations at %d)", gMarioObject->header.gfx.unk38.animYTrans);
     }
+    ticks(40);  /* (landed and still: Z crouches) */
+    for (int i = 0; i < 10; i++) tick(Z_TRIG);
+    for (int i = 0; i < 20; i++) tick_stick(Z_TRIG, 0, 80);
+    {   /* Tilted to the floor, crawling: the first Mario's tilt is his (an extra one's step used to overwrite it, and
+         * they were all drawn where the last one was) */
+        extern Mat4 sFloorAlignMatrix[2];
+        float *t = sFloorAlignMatrix[0][3];
+        sm64unity_marios(at1, 3);
+        int extra = 0;
+        for (int k = 0; k < 3; k++)
+            if (fabsf(sFloorAlignMatrix[1][3][0] - at1[k * 4]) < 1 && fabsf(sFloorAlignMatrix[1][3][2] - at1[k * 4 + 2]) < 1) extra = 1;
+        CHECK(gMarioState->action == ACT_CRAWLING, "crawling with Z and the stick");
+        CHECK(fabsf(t[0] - gMarioState->pos[0]) < 1 && fabsf(t[2] - gMarioState->pos[2]) < 1,
+              "the first one tilted where he is (%.0f %.0f, at %.0f %.0f)", t[0], t[2], gMarioState->pos[0], gMarioState->pos[2]);
+        CHECK(extra, "the others' tilt their own (player 2's, copied out)");
+    }
+    for (int i = 0; i < 20; i++) tick(0);
     CHECK(gCurrLevelNum == LEVEL_CASTLE_GROUNDS && gMarioState->action, "the first one's still playing");
     ticks(30);
     sm64unity_marios(at1, 3);
