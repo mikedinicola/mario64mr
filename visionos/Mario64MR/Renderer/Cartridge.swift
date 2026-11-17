@@ -7,7 +7,7 @@ import simd
 ///   let go, it flies with your hand's speed, falls, and comes to rest lying on the first plane it meets (a table,
 ///   the floor);
 /// - pinched with both hands and pulled apart, it opens into the window, as wide as your hands are apart;
-/// - open, pinching the frame or the handle under it with one hand moves the window, with two resizes it (up to
+/// - open, pinching the window's edge (where it fades out: no frame is drawn) or the handle under it with one hand moves the window, with two resizes it (up to
 ///   four times the size it first opens to), and squeezing it narrower than its first size closes it back into the
 ///   cartridge. Pinching while looking at the frame or the handle (from anywhere) takes it as well, moving it as far
 ///   as your hand moves, times how much farther the window is than your hand.

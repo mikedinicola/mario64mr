@@ -3,7 +3,7 @@ import MetalKit
 import simd
 import UIKit
 
-/// Draws what's in the room besides the game: the cartridge, the window's frame, and the title screen (Goddard's
+/// Draws what's in the room besides the game: the cartridge, the window's handle, and the title screen (Goddard's
 /// face from TitleScreen, behind "PRESS START"), and Mario's gloves over your hands
 final class RoomProps {
     private struct PropDraw {
@@ -94,7 +94,7 @@ final class RoomProps {
         guard pipelines() != nil else { print("Mario 64 MR: the room's props didn't build"); return nil }
     }
 
-    // ---------------------------------------------------------------- The cartridge and the frame
+    // ---------------------------------------------------------------- The cartridge and the window
 
     func encodeCartridge(_ pose: simd_float4x4, into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
         let size = Cartridge.size
@@ -105,18 +105,6 @@ final class RoomProps {
         let face = pose * Self.translate(0, size.y * 0.05, size.z / 2 + 0.0006)
             * Self.scale(SIMD3(size.x * 0.8, size.y * 0.66, 1))
         drawQuad(face, color: SIMD4(1, 1, 1, 1), texture: label, flags: SIMD4(1, 0, 0, 0), into: encoder, eye: eye)
-    }
-
-    func encodeFrame(_ window: RoomPlacement, into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
-        let h = window.halfSize, t = window.frameThickness, d: Float = 0.03
-        let bars: [(SIMD3<Float>, SIMD3<Float>)] = [
-            (SIMD3(0, h.y + t / 2, 0), SIMD3(2 * h.x + 2 * t, t, d)), (SIMD3(0, -h.y - t / 2, 0), SIMD3(2 * h.x + 2 * t, t, d)),
-            (SIMD3(-h.x - t / 2, 0, 0), SIMD3(t, 2 * h.y, d)), (SIMD3(h.x + t / 2, 0, 0), SIMD3(t, 2 * h.y, d)),
-        ]
-        for (at, size) in bars {
-            drawBox(window.roomFromWindow * Self.translate(at.x, at.y, at.z) * Self.scale(size), color: plastic,
-                    into: encoder, eye: eye)
-        }
     }
 
     /// What the level has between the game camera and the window, painted on the glass (window_picture_fragment):
