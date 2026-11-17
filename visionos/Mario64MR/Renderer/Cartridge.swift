@@ -7,13 +7,15 @@ import simd
 ///   let go, it flies with your hand's speed, falls, and comes to rest lying on the first plane it meets (a table,
 ///   the floor);
 /// - pinched with both hands and pulled apart, it opens into the window, as wide as your hands are apart;
-/// - open, pinching the window's edge (where it fades out: no frame is drawn) or the handle under it with one hand moves the window, with two resizes it (up to
-///   four times the size it first opens to), and squeezing it narrower than its first size closes it back into the
-///   cartridge. Pinching while looking at the frame or the handle (from anywhere) takes it as well, moving it as far
-///   as your hand moves, times how much farther the window is than your hand.
-/// Only with the -cartridge launch argument (or -cart, its scripted demo): otherwise the window is open from the
-/// start, and squeezing it doesn't close it.
+/// - open, pinching the window's edge (where it fades out: no frame is drawn) or the handle under it with one hand
+///   moves the window, with two resizes it (up to four times the size it first opens to), and squeezing it narrower
+///   than its first size closes it back into the cartridge. Pinching while looking at the edge or the handle (from
+///   anywhere) takes it as well, moving it as far as your hand moves, times how much farther the window is than your
+///   hand.
+/// The window is open from the start; with the -cartridge launch argument (or -cart, its scripted demo) the
+/// cartridge comes first instead.
 final class Cartridge {
+    /// Starting as the cartridge, not the window (closing into it works either way)
     static let enabled = ["-cartridge", "-cart"].contains(where: ProcessInfo.processInfo.arguments.contains)
 
     /// The cartridge's size, metres: width, height, thickness
@@ -253,7 +255,7 @@ final class Cartridge {
             let width = from.width * apart / max(from.distance, 0.01)
             // Held by its frame, the window between the hands; by a look, it moves as their middle does
             let center = gazeGrips.isEmpty ? mid : from.center + (mid - from.mid) * reach(eye, hand: mid)
-            if Self.enabled, width < Self.closeWidth {  // squeezed shut: the cartridge, held between them
+            if width < Self.closeWidth {  // squeezed shut: the cartridge, held between them
                 isOpen = false
                 pose = Self.upright(at: center, facing: eye)
                 for i in held { grips[i] = center - hands[i].pinch }
@@ -262,8 +264,7 @@ final class Cartridge {
                 resting = false
                 return
             }
-            // (with no cartridge to close into, it stops at the size it'd close at)
-            window = RoomPlacement(center: center, facing: eye, width: min(max(width, Self.closeWidth), Self.maxWidth))
+            window = RoomPlacement(center: center, facing: eye, width: min(width, Self.maxWidth))
         } else if let i = held.first, let gaze = gazeGrips[i] {
             // Held by a look: moved as the hand moves, farther the farther away it is, turning to face you
             let p = position(i, hands, gazes)

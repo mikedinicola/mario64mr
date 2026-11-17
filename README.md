@@ -392,14 +392,14 @@ A native visionOS app is being written in [`visionos/`](visionos). **Early**: th
 with a paired gamepad (DualSense, Xbox) or a keyboard, and "Open a window into the game" puts it in your room, in 3D
 behind a window floating in front of you, its edges fading out into your room (press the Digital Crown to go back).
 Pinch its edge or the handle under it to move it, with both hands to resize it, or just look at the edge or the
-handle and pinch from where you are. (Launched with `-cartridge`, the game starts instead as a cartridge in front of you: pinch it to
-pick it up and throw it (it lands on your tables), or pinch it with both hands and pull it open into the window, and
-squeeze the window shut.) On
+handle and pinch from where you are. Squeeze the window shut with both hands and it closes into a cartridge: pinch it
+to pick it up and throw it (it lands on your tables), or pinch it with both hands and pull it open into the window
+again. (Launched with `-cartridge`, the game starts as the cartridge instead.) On
 the title screen, pinch Mario's face with both hands and pull, and pinch "PRESS START" (or press Start, or pinch with
 your palm up). Pinch Mario to pick him up, carry him out of the window and let go: he lands in your room and runs on
 it. A Goomba, a Koopa or another enemy or NPC pinched through the window can come out too: put it down on a table
 and it walks about there (on what the headset has scanned of your room), until you carry it back in or it walks back
-through the window. (Not bosses, racers, Thwomps, Piranha Plants or others on a scripted path.) To put your own label on the cartridge (with `-cartridge`), copy a `label.png` or `label.jpg` into the app's folder
+through the window. (Not bosses, racers, Thwomps, Piranha Plants or others on a scripted path.) To put your own label on the cartridge, copy a `label.png` or `label.jpg` into the app's folder
 in the Files app (it wins over one from `--label`).
 Hold the window by its handle (or its lower part) down near a table and let go over the glowing circle: the level
 becomes a diorama on it. Look at it and pinch (anywhere, your hand can stay in your lap) to move it, up and down too,
