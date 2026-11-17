@@ -135,7 +135,9 @@ final class GameHost {
                 #if DEBUG
                 if demo, carryDemo { hands = demoHand(frame, carrier: carrier, geometry: geometry, to: room.debugRelease) }
                 #endif
-                carrier.update(hands: hands, geometry: geometry)
+                let picks = room.picks
+                if !picks.isEmpty { self.room.update { $0.picks.removeFirst(min(picks.count, $0.picks.count)) } }
+                carrier.update(hands: hands, geometry: geometry, picks: picks)
             } else if room.on, let geometry = room.geometry, geometry.diorama {
                 carrier.touchDiorama(hands: room.hands, geometry: geometry)
             } else {
@@ -148,7 +150,8 @@ final class GameHost {
             #if DEBUG
             if cartDemo, stage == 2 || stage == 4, frame % 90 < 3 { pad.buttons |= GamePad.start }
             #endif
-            self.room.update { $0.stage = stage }
+            let spawnable = stage == 3 ? sm64unity_spawn_available() : 0
+            self.room.update { $0.stage = stage; $0.spawnable = spawnable }
             // A diorama: the stick moves Mario the way you look (not the way the game camera does)
             if room.on, let forward = room.dioramaForward {
                 Self.turnStick(&pad, toward: forward)
