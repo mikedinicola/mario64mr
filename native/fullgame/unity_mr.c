@@ -13,11 +13,12 @@
 #include "engine/surface_collision.h"
 #include "pc/configfile.h"
 #include "pc/unity_options.h"
+#include "pc/cheats.h"
 
 #define EXPORT __attribute__((visibility("default")))
 
 /* The options menu's values (unity_options.h); Unity sets them from what it kept as the game starts */
-unsigned int gUnityOptions[UNITY_OPT_COUNT] = { 2, 3, 2, 2, 4, 0, 0, 0, 127, 127, 127, 127, 1, 0 };
+unsigned int gUnityOptions[UNITY_OPT_COUNT] = { 2, 3, 2, 2, 4, 0, 0, 0, 127, 127, 127, 127, 1, 0, 1 };
 EXPORT unsigned int *sm64unity_options(void) { return gUnityOptions; }
 EXPORT int sm64unity_option_count(void) { return UNITY_OPT_COUNT; }
 
@@ -83,6 +84,18 @@ void unity_apply_options(void) {
     configSfxVolume = gUnityOptions[UNITY_OPT_SFX_VOLUME];
     configEnvVolume = gUnityOptions[UNITY_OPT_ENV_VOLUME];
     configHUD = gUnityOptions[UNITY_OPT_HUD] != 0;
+    /* The cheats: on the first frame from what Unity kept, then the menu's switches (which toggle Cheats' own
+     * bools) back into the option, for Unity to keep */
+    static int cheats_loaded;
+    bool *cheat = (bool *) &Cheats;
+    int cheat_count = sizeof(Cheats) / sizeof(bool);
+    if (!cheats_loaded) {
+        for (int i = 0; i < cheat_count; i++) cheat[i] = (gUnityOptions[UNITY_OPT_CHEATS] >> i) & 1;
+        cheats_loaded = 1;
+    }
+    unsigned int bits = 0;
+    for (int i = 0; i < cheat_count; i++) bits |= (unsigned int) cheat[i] << i;
+    gUnityOptions[UNITY_OPT_CHEATS] = bits;
 }
 /* 0: original game, 1: held in game, 2: held in room, 3: released in room. */
 static int carry_mode;

@@ -16,6 +16,7 @@ final class GameOptions {
     enum Index: Int {
         case refresh, resolution, antialiasing, foveation, textures, sharpening, bringBack, defaults
         case masterVolume, musicVolume, sfxVolume, envVolume, hud, hands
+        case cheats  // the Cheats menu's switches, a bit each (unity_options.h)
     }
 
     /// What the room's renderer applies

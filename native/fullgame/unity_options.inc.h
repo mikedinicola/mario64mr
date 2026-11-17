@@ -85,7 +85,8 @@ static struct Option optsAudio[] = {
 };
 
 /* The PC port's cheats (src/pc/cheats.h), always in the menu: no pressing L three times to find them, and
- * "Enable cheats" on from the start (cheats.c), so each one below works as soon as it is switched on */
+ * "Enable cheats" on from the start, so each one below works as soon as it is switched on. Kept between launches
+ * with the other options (UNITY_OPT_CHEATS, unity_apply_options) */
 static struct Option optsCheats[] = {
     DEF_OPT_TOGGLE( optsCheatsStr[0], &Cheats.EnableCheats ),
     DEF_OPT_TOGGLE( optsCheatsStr[1], &Cheats.MoonJump ),
