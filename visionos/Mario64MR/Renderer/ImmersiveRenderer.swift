@@ -281,7 +281,10 @@ final class ImmersiveRenderer: @unchecked Sendable {
         // Held by its lower part over a table (or the floor): the circle shows where it would go down
         let low = cartridge.heldLow
         let circle = low.flatMap { Self.circle(under: $0.bottom, planes: planes) }
-        cartridge.update(hands: hands, gazes: gazes, eye: eyePosition, planes: planes, floor: min(0, head.columns.3.y - 1.5),
+        // (a pinch that began on one of the chest's tiles isn't the window's)
+        var windowHands = hands
+        for i in windowHands.indices where i < 2 && chest.claimed[i] { windowHands[i].pinching = false }
+        cartridge.update(hands: windowHands, gazes: gazes, eye: eyePosition, planes: planes, floor: min(0, head.columns.3.y - 1.5),
                          dt: dt, controls: controls)
         if let low, let circle, stage == 3, let gameFrame, !cartridge.holding.contains(low.hand),
            cartridge.isOpen, cartridge.heldLow == nil {
