@@ -18,6 +18,7 @@
 #include "game/object_helpers.h"
 #include "engine/surface_collision.h"
 #include "pc/cliopts.h"
+#include "pc/unity_options.h"
 
 int sm64unity_init(const char *);
 int sm64unity_tick(uint16_t, int8_t, int8_t);
@@ -113,6 +114,18 @@ int main(int argc, char **argv) {
     printf("\n");
     CHECK(mask & (1u << GOOMBA), "a Goomba");
     CHECK(mask & (1u << COIN_BOX), "a coin box");
+
+    printf("The Cheats menu's Treasure chest, off:\n");
+    gUnityHandCheats[UNITY_HAND_CHEST] = 0;
+    ticks(2);
+    CHECK(sm64unity_spawn_available() == 0, "nothing on offer (so no chest)");
+    CHECK(sm64unity_spawn_near_mario(GOOMBA) == 0, "nothing made");
+    CHECK(gUnityOptions[UNITY_OPT_HAND_CHEATS] == (7u | UNITY_HAND_CHEATS_INVERTED), "kept off (%u)",
+          gUnityOptions[UNITY_OPT_HAND_CHEATS]);
+    gUnityHandCheats[UNITY_HAND_CHEST] = 1;
+    ticks(2);
+    CHECK(sm64unity_spawn_available() == mask, "on again, all back");
+    CHECK(gUnityOptions[UNITY_OPT_HAND_CHEATS] == 7, "kept as before it was a switch (%u)", gUnityOptions[UNITY_OPT_HAND_CHEATS]);
 
     printf("A Goomba pinched out of the chest in the room:\n");
     CHECK(sm64unity_spawn_held(GOOMBA, 1, 1450, 700, 0) == 1, "made, held");
