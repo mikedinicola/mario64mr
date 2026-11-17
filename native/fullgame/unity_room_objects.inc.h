@@ -8,14 +8,15 @@
  * - The game goes on with it as near and in view (never "far away", which leaves its movement out), and Mario as far
  *   from it, unless he's out in the room too. Its home is where it was put down, and it's nobody's child (a spawner
  *   would unload it for being far from Mario).
- * - It touches nothing and nothing touches it (object_collision.c, check_collision_in_list).
+ * - It touches only what's out in the room too, Mario if he's out there, and nothing touches it while it's held
+ *   (object_collision.c, check_collision_in_list; unity_same_world).
  * - It goes back into the game when it walks through the window (the host's sm64unity_room_object_return), is carried
  *   back in, walks off what the room has scanned, or the level or area changes: back to its own home and spawner.
  *
  * The host (MarioCarrier) carries it in and out: sm64unity_object_hold_room / _release_room in the room's units,
  * sm64unity_object_grab_room to pick one up out there, sm64unity_room_objects for where they are. */
 
-#define UNITY_ROOM_OBJECTS 4
+#define UNITY_ROOM_OBJECTS 16 /* (MarioCarrier.roomObjects) */
 struct UnityRoomObject {
     struct Object *obj;
     const BehaviorScript *behavior;
@@ -30,6 +31,12 @@ static int unity_room_object_count;
 
 extern int unity_mario_outside(void);
 extern void unity_skip_object_interpolation(struct Object *o);
+/* (unity_spawn.inc.h: what came out of the treasure chest) */
+int unity_spawned(struct Object *o);
+static void unity_spawned_remove(struct Object *o);
+static void unity_spawned_frame(void);
+static void unity_spawned_adopt(void);
+static int unity_spawned_rebehaved(struct Object *o);
 
 static struct UnityRoomObject *unity_room_slot(struct Object *o) {
     if (!o || unity_room_object_count == 0) return NULL;
@@ -38,6 +45,21 @@ static struct UnityRoomObject *unity_room_slot(struct Object *o) {
     return NULL;
 }
 int unity_object_in_room(struct Object *o) { return unity_room_slot(o) != NULL; }
+
+/* Which world it's in, for what touches what (object_collision.c): 1 the room (out there, or Mario out there), 0 the
+ * level; -1 held out in the room, touching nothing */
+static int unity_world(struct Object *o) {
+    if (unity_room_slot(o)) return o == unity_held_obj ? -1 : 1;
+    return o == gMarioObject && unity_mario_outside();
+}
+int unity_marios_extra(struct Object *o);
+int unity_same_world(struct Object *a, struct Object *b) {
+    /* (Marios pass through each other: unity_marios.inc.h) */
+    if ((a == gMarioObject || unity_marios_extra(a)) && (b == gMarioObject || unity_marios_extra(b))) return 0;
+    if (unity_room_object_count == 0 && !unity_mario_outside()) return 1;
+    int w = unity_world(a);
+    return w >= 0 && w == unity_world(b);
+}
 
 /* The room's floor under a point (its height), or none */
 static int unity_room_floor(float x, float y, float z, float *height) {
@@ -78,10 +100,16 @@ static void unity_room_object_forget(struct UnityRoomObject *r) {
     unity_room_object_count--;
 }
 
-/* Back into the level at p (its own home and spawner again), not moving */
+/* Back into the level at p (its own home and spawner again), not moving. Something out of the treasure chest, sent
+ * back where it came from (r->from, or where the hand took it from), has no place there: it's gone instead */
 static void unity_room_object_put_back(struct UnityRoomObject *r, const float p[3]) {
     struct Object *o = r->obj;
     if (!o) return;
+    if (unity_spawned(o) && (p == r->from || p == unity_held_from)) {
+        unity_room_object_forget(r);
+        unity_spawned_remove(o);
+        return;
+    }
     o->oHomeX = r->home[0]; o->oHomeY = r->home[1]; o->oHomeZ = r->home[2];
     if (r->parent && r->parent != o && (r->parent->activeFlags & ACTIVE_FLAG_ACTIVE) && r->parent->behavior == r->parentBehavior)
         o->parentObj = r->parent;
@@ -105,9 +133,11 @@ void unity_room_objects_frame(void) {
     for (int i = 0; i < UNITY_ROOM_OBJECTS; i++) {
         struct UnityRoomObject *r = &unity_room_objects[i];
         if (!r->obj) continue;
+        if (r->obj->behavior != r->behavior && unity_spawned_rebehaved(r->obj)) r->behavior = r->obj->behavior;
         if (!(r->obj->activeFlags & ACTIVE_FLAG_ACTIVE) || r->obj->behavior != r->behavior) unity_room_object_forget(r);
         else if (gCurrLevelNum != r->level || gCurrAreaIndex != r->area) unity_room_object_put_back(r, r->from);
     }
+    unity_spawned_frame();
 }
 /* A warp (init_mario_after_warp): the level's objects are new, or back where they were */
 void unity_room_objects_warped(void) {
@@ -129,7 +159,7 @@ void unity_object_update(void) {
     if (o != unity_held_obj && !unity_room_floor(o->oPosX, o->oPosY, o->oPosZ, NULL)) {
         /* (off the edge of what the room has scanned: back into the game, as Mario goes) */
         unity_room_object_put_back(r, r->from);
-        cur_obj_update();
+        if (o->activeFlags & ACTIVE_FLAG_ACTIVE) cur_obj_update();
         return;
     }
     o->activeFlags &= ~(ACTIVE_FLAG_FAR_AWAY | ACTIVE_FLAG_IN_DIFFERENT_ROOM);
@@ -149,6 +179,9 @@ void unity_object_update(void) {
         gMarioObject->oPosX = marioObj[0]; gMarioObject->oPosY = marioObj[1]; gMarioObject->oPosZ = marioObj[2];
         vec3f_copy(gMarioState->pos, mario);
     }
+    /* (what it let out, out here with it before its first step: a box's coins, made in the level, would find no
+     * floor there and be gone) */
+    if (unity_spawned(o)) unity_spawned_adopt();
     if (!(o->activeFlags & ACTIVE_FLAG_ACTIVE)) {
         unity_room_object_forget(r);
         return;

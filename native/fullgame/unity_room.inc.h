@@ -15,6 +15,11 @@ static s16 *unity_saved_environment;
 #define UNITY_HAND_SURFACES 512
 #define UNITY_HAND_NODES 2048
 static SpatialPartitionCell unity_hand_partition[16][16];
+/* The room's moving surfaces this frame: the hands', and what objects out in the room load as they update (a power-up
+ * box's: load_object_collision_model, into the game's surface pool). Each frame it starts again as the hands' alone
+ * (unity_load_game_hands, after clear_dynamic_surfaces empties the pool), and what's loaded in the room is kept in it
+ * (unity_room_end) */
+static SpatialPartitionCell unity_room_dynamic_partition[16][16];
 static struct Surface unity_hand_surfaces[UNITY_HAND_SURFACES];
 static struct SurfaceNode unity_hand_nodes[UNITY_HAND_NODES];
 
@@ -24,11 +29,12 @@ void unity_room_begin(void) {
     memcpy(unity_saved_static,gStaticSurfacePartition,sizeof(gStaticSurfacePartition));
     memcpy(unity_saved_dynamic,gDynamicSurfacePartition,sizeof(gDynamicSurfacePartition));
     memcpy(gStaticSurfacePartition,unity_room_partition,sizeof(gStaticSurfacePartition));
-    memcpy(gDynamicSurfacePartition,unity_hand_partition,sizeof(gDynamicSurfacePartition));
+    memcpy(gDynamicSurfacePartition,unity_room_dynamic_partition,sizeof(gDynamicSurfacePartition));
     unity_saved_environment=gEnvironmentRegions; gEnvironmentRegions=NULL;
 }
 void unity_room_end(void) {
     if (unity_room_depth<=0 || --unity_room_depth != 0) return;
+    memcpy(unity_room_dynamic_partition,gDynamicSurfacePartition,sizeof(gDynamicSurfacePartition));
     memcpy(gStaticSurfacePartition,unity_saved_static,sizeof(gStaticSurfacePartition));
     memcpy(gDynamicSurfacePartition,unity_saved_dynamic,sizeof(gDynamicSurfacePartition));
     gEnvironmentRegions=unity_saved_environment;
@@ -58,6 +64,7 @@ EXPORT int sm64unity_room_hands(const s16 *triangles,int count) {
         if (surface) { add_surface(surface,TRUE); added++; }
     }
     memcpy(unity_hand_partition,gDynamicSurfacePartition,sizeof(gDynamicSurfacePartition));
+    memcpy(unity_room_dynamic_partition,unity_hand_partition,sizeof(unity_hand_partition));
     memcpy(gDynamicSurfacePartition,unity_saved_dynamic,sizeof(gDynamicSurfacePartition));
     sSurfacePool=saved_surfaces; sSurfaceNodePool=saved_nodes; sSurfacePoolSize=saved_size;
     gSurfacesAllocated=saved_surface_count; gSurfaceNodesAllocated=saved_node_count;
@@ -79,6 +86,8 @@ EXPORT int sm64unity_game_hands(const s16 *triangles,int count) {
 void unity_hands_carry_riders(void);
 void unity_load_game_hands(void) {
     if ((gTimeStopState & TIME_STOP_ACTIVE) || unity_room_depth) return;
+    /* (the pool was just emptied: what objects out in the room loaded into it last frame is gone too) */
+    memcpy(unity_room_dynamic_partition,unity_hand_partition,sizeof(unity_hand_partition));
     unity_hands_carry_riders(); /* (unity_hands.inc.h) what stood on a hand last frame goes with it */
     unity_game_hand_first=&sSurfacePool[gSurfacesAllocated];
     for (int i=0;i<unity_game_hand_count;i++) {
