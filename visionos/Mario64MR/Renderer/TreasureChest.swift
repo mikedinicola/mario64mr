@@ -6,6 +6,7 @@ enum SpawnKind: Int32, CaseIterable, Sendable {
     case goomba, bobomb, koopa, chuckya, bully
     case wingCapBox, metalCapBox, vanishCapBox, coinBox, oneUpBox
     case mario
+    case shell
 
     /// The game's pictures for its tile (two: its left and right halves, side by side)
     var pictures: [String] {
@@ -22,6 +23,7 @@ enum SpawnKind: Int32, CaseIterable, Sendable {
         case .coinBox: return [a + "exclamation_box/exclamation_box_front.rgba16.png"]
         case .oneUpBox: return [a + "mushroom_1up/1-up_mushroom.rgba16.png"]
         case .mario: return ["gfx/textures/segment2/segment2.05A00.rgba16.png"]  // (the HUD's head)
+        case .shell: return [a + "koopa_shell/koopa_shell_back.rgba16.png"]
         }
     }
 }
@@ -49,7 +51,7 @@ final class TreasureChest {
     /// chest's left end (the window's side) and runs away from the window, so none is near its edge
     static let rows: [[SpawnKind]] = [
         [.goomba, .bobomb, .koopa, .chuckya, .bully, .mario],
-        [.wingCapBox, .metalCapBox, .vanishCapBox, .coinBox, .oneUpBox],
+        [.wingCapBox, .metalCapBox, .vanishCapBox, .coinBox, .oneUpBox, .shell],
     ]
     static let tileSize: Float = 0.042, tileGap: Float = 0.024
 

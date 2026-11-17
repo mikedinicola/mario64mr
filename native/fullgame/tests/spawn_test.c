@@ -16,6 +16,8 @@
 #include "game/level_update.h"
 #include "game/area.h"
 #include "game/object_helpers.h"
+#include "game/camera.h"
+#include "engine/math_util.h"
 #include "engine/surface_collision.h"
 #include "pc/cliopts.h"
 #include "pc/unity_options.h"
@@ -27,6 +29,7 @@ void sm64unity_cursor(int, float, float);
 void sm64unity_mr_geometry(int);
 int sm64unity_room_mesh(const s16 *, int);
 float sm64unity_room_floor(float, float, float);
+int sm64unity_object_grab(float, float, float, float);
 int sm64unity_object_hold(float, float, float);
 void sm64unity_object_release(float, float, float);
 int sm64unity_object_hold_room(float, float, float);
@@ -43,9 +46,10 @@ int sm64unity_marios(float *out, int max);
 void unity_mario_warped(void);
 extern const BehaviorScript bhvUnityMario[];
 
-enum { GOOMBA, BOBOMB, KOOPA, CHUCKYA, BULLY, WING_BOX, METAL_BOX, VANISH_BOX, COIN_BOX, ONE_UP_BOX, MARIO, KINDS };
+enum { GOOMBA, BOBOMB, KOOPA, CHUCKYA, BULLY, WING_BOX, METAL_BOX, VANISH_BOX, COIN_BOX, ONE_UP_BOX, MARIO, SHELL, KINDS };
 static const char *names[] = { "Goomba", "Bob-omb", "Koopa", "Chuckya", "Bully", "wing cap box", "metal cap box",
-                               "vanish cap box", "coin box", "1-up box", "Mario" };
+                               "vanish cap box", "coin box", "1-up box", "Mario",
+                               "Koopa shell" };
 
 static int failures;
 #define CHECK(c, ...) do { if (c) printf("  ok   " __VA_ARGS__); else { printf("  FAIL " __VA_ARGS__); failures++; } printf("\n"); } while (0)
@@ -118,6 +122,7 @@ int main(int argc, char **argv) {
     printf("\n");
     CHECK(mask & (1u << GOOMBA), "a Goomba");
     CHECK(mask & (1u << COIN_BOX), "a coin box");
+    CHECK(mask & (1u << SHELL), "a Koopa shell");
 
     printf("The Cheats menu's Treasure chest, off:\n");
     gUnityHandCheats[UNITY_HAND_CHEST] = 0;
@@ -253,6 +258,49 @@ int main(int argc, char **argv) {
     }
     CHECK(gMarioState->numCoins > coins, "he collects its coins out there (%d -> %d)", coins, gMarioState->numCoins);
     sm64unity_carry(0, start[0], start[1] + 50, start[2], 0, 0, 0); /* (back where he started in the level) */
+
+    printf("A Koopa shell, ridden:\n");
+    /* (the enemies made so far out of the way, Mario back where he started and standing) */
+    {
+        const BehaviorScript *enemies[] = { bhvGoomba, bhvBobomb, bhvChuckya };
+        for (int e = 0; e < 3; e++)
+            for (struct Object *o; (o = newest(enemies[e])) != NULL;) obj_mark_for_deletion(o), o->activeFlags &= ~ACTIVE_FLAG_ACTIVE;
+        ticks(2);
+        sm64unity_carry(0, start[0], start[1] + 50, start[2], 0, 0, 0);
+        ticks(60);
+    }
+    CHECK(sm64unity_spawn_held(SHELL, 0, gMarioObject->oPosX + 400, gMarioObject->oPosY + 300, gMarioObject->oPosZ) == 1,
+          "made, held in the level");
+    struct Object *shell = newest(bhvKoopaShell);
+    sm64unity_object_release(0, 0, 0);
+    ticks(40);
+    CHECK(shell && (shell->activeFlags & ACTIVE_FLAG_ACTIVE)
+          && fabsf(shell->oPosY - level_floor(shell->oPosX, shell->oPosY + 50, shell->oPosZ)) < 10,
+          "on the ground (%.0f over it)", shell ? shell->oPosY - level_floor(shell->oPosX, shell->oPosY + 50, shell->oPosZ) : 0);
+    CHECK(sm64unity_object_grab(shell->oPosX, shell->oPosY + 20, shell->oPosZ, 100) == 1, "picked up again by a pinch");
+    sm64unity_object_release(0, 0, 0);
+    ticks(40);
+    CHECK(sm64unity_spawn_near_mario(SHELL) == 1, "another put down in front of Mario");
+    struct Object *ride = newest(bhvKoopaShell);
+    int riding = 0;
+    for (int i = 0; i < 60 && !riding; i++) {
+        /* (walk at it) */
+        float dx = ride->oPosX - gMarioState->pos[0], dz = ride->oPosZ - gMarioState->pos[2];
+        s16 to = atan2s(dz, dx) - gCamera->yaw;
+        tick_stick(0, (int8_t) (sins(to) * 64), (int8_t) (-coss(to) * 64));
+        riding = (gMarioState->action & ACT_FLAG_RIDING_SHELL) && gMarioState->riddenObj == ride;
+    }
+    CHECK(riding, "Mario walks into it and rides it (action %08x)", gMarioState->action);
+    for (int i = 0; i < 30; i++) tick_stick(0, 0, 80);
+    float sdx = ride->oPosX - gMarioState->pos[0], sdz = ride->oPosZ - gMarioState->pos[2];
+    CHECK(sqrtf(sdx * sdx + sdz * sdz) < 1, "it goes where he goes");
+    CHECK(sm64unity_object_grab(ride->oPosX, ride->oPosY + 20, ride->oPosZ, 200) == 0, "not the hands' to take while he rides it");
+    for (int i = 0; i < 10; i++) tick(Z_TRIG);
+    ticks(30);
+    CHECK(!(gMarioState->action & ACT_FLAG_RIDING_SHELL), "off it with Z (action %08x)", gMarioState->action);
+    CHECK(!(ride->activeFlags & ACTIVE_FLAG_ACTIVE) || ride->behavior != segmented_to_virtual(bhvKoopaShell), "and it's gone");
+    sm64unity_carry(0, start[0], start[1] + 50, start[2], 0, 0, 0);
+    ticks(60);
 
     printf("More Marios:\n");
     ticks(60);
