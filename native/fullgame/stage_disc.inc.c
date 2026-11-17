@@ -2,8 +2,16 @@
  * Mario 64 MR's own geometry, nothing of the ROM's. Included in levels/castle_grounds/leveldata.c by
  * patch_sm64ex.py, after the disc's mesh and collision (stage_disc_mesh.inc.c, made by stage_gen.py).
  *
- * The disc is shaded by its vertices' colours until it has its own picture. Nothing is under it, so Mario can't walk
- * off its edge (out of bounds). */
+ * The disc is shaded by its vertices' colours until it has its own picture. It's an object (bhvStageDisc: it tilts),
+ * its collision loaded as it turns; the area's own ground is none. Nothing is under it, so Mario can't walk off its
+ * edge (out of bounds). */
+
+const Collision stage_disc_no_collision[] = {
+    COL_INIT(),
+    COL_VERTEX_INIT(0),
+    COL_TRI_STOP(),
+    COL_END(),
+};
 
 const Gfx stage_disc_dl_ground[] = {
     gsDPPipeSync(),

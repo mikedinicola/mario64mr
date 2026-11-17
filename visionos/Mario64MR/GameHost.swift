@@ -103,6 +103,7 @@ final class GameHost {
         #endif
         let carrier = MarioCarrier()
         let padReader = PadReader()
+        let controllerTilt = ControllerTilt()
         let period = 1.0 / 30
         var deadline = Date.now.timeIntervalSinceReferenceDate
         var frame = 0
@@ -205,6 +206,11 @@ final class GameHost {
                 sm64unity_room_facing(0, 0, 0)
             }
             sm64unity_audio_buffered(Int32(audio.buffered))
+            // The disc stage tilts as you lean the controller, while it's on (D-pad up): as the stick, the way you
+            // look in a diorama
+            var tilt = controllerTilt.read(on: sm64unity_stage_tilting() == 1)
+            if room.on, let forward = room.dioramaForward { tilt = Self.turned(tilt, toward: forward) ?? tilt }
+            sm64unity_stage_tilt(tilt.y, tilt.x)
             guard sm64unity_tick(pad.buttons, pad.stickX, pad.stickY) == 1 else {
                 return fail("The game stopped (bridge error \(sm64unity_error()))")
             }
@@ -261,17 +267,24 @@ final class GameHost {
     /// The stick turned from your forward (in the game's world) to the game camera's: pushed up, Mario runs the way
     /// you look
     private static func turnStick(_ pad: inout GamePad.State, toward forward: SIMD3<Float>) {
-        guard pad.stickX != 0 || pad.stickY != 0, let m = sm64unity_camera() else { return }
+        guard pad.stickX != 0 || pad.stickY != 0,
+              let v = turned(SIMD2(Float(pad.stickX), Float(pad.stickY)), toward: forward) else { return }
+        pad.stickX = Int8(max(-128, min(127, v.x.rounded())))
+        pad.stickY = Int8(max(-128, min(127, v.y.rounded())))
+    }
+
+    /// A stick's way (x right, y forward) as you look along `forward`, turned to the game camera's (what the game
+    /// reads a stick as). Nil without a camera
+    private static func turned(_ v: SIMD2<Float>, toward forward: SIMD3<Float>) -> SIMD2<Float>? {
+        guard let m = sm64unity_camera() else { return nil }
         var cameraForward = -SIMD3(m[2], m[6], m[10])  // (the view matrix's third row, as simd reads it)
         cameraForward.y = 0
-        guard simd_length(cameraForward) > 1e-4 else { return }
+        guard simd_length(cameraForward) > 1e-4 else { return nil }
         cameraForward = simd_normalize(cameraForward)
         let up = SIMD3<Float>(0, 1, 0)
         let cameraRight = simd_cross(cameraForward, up), lookRight = simd_cross(forward, up)
-        let wanted = lookRight * Float(pad.stickX) + forward * Float(pad.stickY)
-        let x = simd_dot(wanted, cameraRight), y = simd_dot(wanted, cameraForward)
-        pad.stickX = Int8(max(-128, min(127, x.rounded())))
-        pad.stickY = Int8(max(-128, min(127, y.rounded())))
+        let wanted = lookRight * v.x + forward * v.y
+        return SIMD2(simd_dot(wanted, cameraRight), simd_dot(wanted, cameraForward))
     }
 
     /// A hand at the window, for the menus' cursor: where it points in the game's 320×240 screen (its 4:3 middle

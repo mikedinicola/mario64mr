@@ -107,6 +107,42 @@ enum GamePad {
     }
 }
 
+/// How far the controller in your hand leans (radians: x its right side down, y its top tipped forward, away from
+/// you), from its motion sensors' gravity: a DualSense's, or any paired controller with them. Read while the disc
+/// stage's tilting is on (`on`); the way you hold it when it turns on is level. Game thread.
+/// (The gamepad's axes are taken as x right, y towards its top, z out of its face: forwardSign and rightSign flip
+/// a way if a controller reads the other way round. Not yet tried on a headset.)
+final class ControllerTilt {
+    private static let forwardSign: Float = 1, rightSign: Float = 1
+    private var level: SIMD3<Float>?
+    private var wasOn = false
+
+    func read(on: Bool) -> SIMD2<Float> {
+        defer { wasOn = on }
+        guard on, let gravity = Self.gravity() else { level = nil; return .zero }
+        if !wasOn || level == nil { level = gravity }
+        guard let level else { return .zero }
+        // Each lean: in its own plane (right: x and z; forward: y and z), from level to now
+        let right = atan2(gravity.x, -gravity.z) - atan2(level.x, -level.z)
+        let forward = atan2(gravity.y, -gravity.z) - atan2(level.y, -level.z)
+        return SIMD2(Self.rightSign * Self.wrapped(right), Self.forwardSign * Self.wrapped(forward))
+    }
+
+    private static func wrapped(_ a: Float) -> Float { atan2(sin(a), cos(a)) }
+
+    /// Gravity as the first controller with motion feels it (its sensors turned on, if they must be)
+    private static func gravity() -> SIMD3<Float>? {
+        for controller in GCController.controllers() {
+            guard let motion = controller.motion else { continue }
+            if motion.sensorsRequireManualActivation && !motion.sensorsActive { motion.sensorsActive = true }
+            guard motion.hasGravityAndUserAcceleration else { continue }
+            let g = SIMD3(Float(motion.gravity.x), Float(motion.gravity.y), Float(motion.gravity.z))
+            if simd_length(g) > 0.1 { return simd_normalize(g) }
+        }
+        return nil
+    }
+}
+
 /// The N64 controller from everything paired: a gamepad, the keyboard, and PS VR2 Sense controllers in the
 /// README's Quest layouts (game thread: it keeps the one-controller layout's B tap). A Sense controller whose grip
 /// holds the cartridge, the window or the diorama's base (`busy`, by side) is left out: its stick and trigger work

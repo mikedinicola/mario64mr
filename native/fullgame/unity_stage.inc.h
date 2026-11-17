@@ -17,7 +17,12 @@
  *   over it, hands out and down, and rolls it along ahead of him as he would a barrel (ACT_STAGE_ROLL, steered by
  *   the stick, as long as B is held). The one rolled lies down and tumbles over and over (stage_tumble_step); let go
  *   (B let up, or a jump), it tumbles on, slowing, knocks over any Mario it rolls into to tumble on too, rolls back
- *   off the rim rather than over it, and gets up again once it stops. Only the other Marios are rolled, not yours. */
+ *   off the rim rather than over it, and gets up again once it stops. Only the other Marios are rolled, not yours.
+ * - The disc tilts (bhvStageDisc: an object, its collision loaded as it turns). D-pad up turns tilting on and off
+ *   (the game has no other use for it); on, the disc leans as you tilt your controller (sm64unity_stage_tilt, from the
+ *   host: forward and right, as the stick is, the way the camera looks), up to STAGE_TILT_MOST; off, it eases level.
+ *   Everything on it rides it as it turns (Mario by the game's own platform code, the other Marios, the boxes and the
+ *   stage's pipe here), and boxes and tumbling Marios slide and roll downhill. */
 
 #include "levels/castle_grounds/header.h"
 #include "game/memory.h"
@@ -27,6 +32,8 @@
 #include "game/print.h"
 #include "game/level_update.h"
 #include "game/mario_step.h"
+#include "behavior_data.h"
+extern s16 unity_stick_yaw(s16 camera_yaw); /* (unity_mr.c: the stick's way, the camera's or, out in the room, yours) */
 #include "pc/stage_mosaic.inc.h"
 
 /* (obj_behaviors.c's own, as its objects step: on the floor, into a wall) */
@@ -71,6 +78,10 @@ extern s16 object_step(void);
 /* What the NPCs are for rolling each other: how near they look for one, how long they roll it */
 #define STAGE_NPC_ROLL_LOOK 1200.f
 #define STAGE_NPC_ROLL_ONE_IN 4
+/* Tilting: how far it leans at most, how quickly it turns, how hard things slide down it */
+#define STAGE_TILT_MOST 0x1000
+#define STAGE_TILT_RATE 0x80
+#define STAGE_SLOPE_PULL 8.f
 
 static struct ObjectHitbox stage_box_hitbox = {
     /* interactType:      */ INTERACT_GRABBABLE,
@@ -110,7 +121,10 @@ int stage_box_mario(struct Object *o) {
     if (!unity_marios_ready()) return 0;
     float x = o->oHomeX, z = o->oHomeZ;
     s16 yaw = atan2s(gMarioState->pos[2] - z, gMarioState->pos[0] - x); /* (facing Mario) */
-    struct UnityMario *u = unity_marios_make(x, 0.f, z, yaw, 1);
+    struct Surface *floor;
+    float y = find_floor(x, 4000.f, z, &floor); /* (the disc there, however it leans) */
+    if (!floor) return 0;
+    struct UnityMario *u = unity_marios_make(x, y, z, yaw, 1);
     if (!u) return 0;
     u->m.action = ACT_JUMP; /* (it hops out) */
     u->m.vel[1] = 42.f;
@@ -301,6 +315,9 @@ static void stage_tumble_step(struct UnityMario *u) {
                 m->floor = floor; m->floorHeight = y;
                 u->tumble.spin += (s16) (speed / STAGE_TUMBLE_RADIUS * 0x10000 / (2 * M_PI)) * stage_tumble_way();
                 u->tumble.speed = speed * STAGE_TUMBLE_SLOWING - STAGE_TUMBLE_DRAG;
+                if (floor) /* (downhill, it rolls on faster; uphill, it slows) */
+                    u->tumble.speed += STAGE_SLOPE_PULL / 4.f
+                        * (floor->normal.x * sins(u->tumble.dir) + floor->normal.z * coss(u->tumble.dir));
                 /* Into another Mario: that one's knocked over to tumble on too, and this one slows */
                 for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) {
                     struct UnityMario *t = &unity_marios[i];
@@ -336,11 +353,124 @@ static void stage_tumble_step(struct UnityMario *u) {
     vec3s_copy(o->header.gfx.angle, angle);
 }
 
+/* ---- Tilting ---- */
+
+static int stage_tilting;          /* (D-pad up turns it on and off) */
+static float stage_tilt_in[2];     /* the controller's lean, from the host: forward and right (radians) */
+static struct Object *stage_pipe;  /* the stage's own pipe, on the disc */
+#define STAGE_PIPE_Z 2400.f
+
+/* The host's: how the controller leans now (radians: its top forward, away from you; its right side down), as the
+ * stick is, the way you look (in a diorama, the host turns it as it turns the stick). 0 0 with none */
+EXPORT void sm64unity_stage_tilt(float forward, float right) { stage_tilt_in[0] = forward; stage_tilt_in[1] = right; }
+/* Is tilting on? (the host can show it; tests) */
+EXPORT int sm64unity_stage_tilting(void) { return stage_tilting && stage_here(); }
+
+/* Which way pitch and roll lean the disc's top (+1 or -1): its up turned a little by each */
+static void stage_tilt_ways(int *pitch, int *roll) {
+    static int p, r;
+    if (!p) {
+        Vec3f up;
+        Vec3s angle = { 0x400, 0, 0 };
+        stage_turned(angle, 0.f, 1.f, 0.f, up);
+        p = up[2] > 0.f ? 1 : -1; /* (pitch leans its up towards +z, or -z) */
+        Vec3s angle2 = { 0, 0, 0x400 };
+        stage_turned(angle2, 0.f, 1.f, 0.f, up);
+        r = up[0] > 0.f ? 1 : -1;
+    }
+    *pitch = p; *roll = r;
+}
+/* Where a point on the disc goes, turned with it this step (as the game's platform code moves Mario) */
+static void stage_disc_carry(struct Object *disc, Vec3f p) {
+    Mat4 m;
+    Vec3f offset = { p[0] - disc->oPosX, p[1] - disc->oPosY, p[2] - disc->oPosZ }, local, moved;
+    Vec3s was = { disc->oFaceAnglePitch - disc->oAngleVelPitch, 0, disc->oFaceAngleRoll - disc->oAngleVelRoll };
+    Vec3s now = { disc->oFaceAnglePitch, 0, disc->oFaceAngleRoll };
+    mtxf_rotate_zxy_and_translate(m, offset, was);
+    linear_mtxf_transpose_mul_vec3f(m, local, offset);
+    mtxf_rotate_zxy_and_translate(m, offset, now);
+    linear_mtxf_mul_vec3f(m, moved, local);
+    p[0] = disc->oPosX + moved[0]; p[1] = disc->oPosY + moved[1]; p[2] = disc->oPosZ + moved[2];
+}
+/* Standing on the disc (on its floor, within a few units of it)? */
+static int stage_on_disc(struct Object *disc, Vec3f p) {
+    struct Surface *floor;
+    float y = find_floor(p[0], p[1] + 50.f, p[2], &floor);
+    return floor && floor->object == disc && fabsf(p[1] - y) < 8.f;
+}
+
+/* The disc's step (bhvStageDisc, in the surface list: before Mario's platform displacement and everyone's own step):
+ * it leans towards the controller's lean, or back level; what's on it rides along; its collision where it is now */
+void stage_disc_loop(void) {
+    struct Object *o = gCurrentObject;
+    s16 pitch = 0, roll = 0;
+    if (stage_tilting && gMarioState && gMarioState->area && gMarioState->area->camera) {
+        /* The lean wanted: down the way the controller tips, as the stick would steer (camera-relative) */
+        s16 ahead = (s16) (0x8000 + unity_stick_yaw(gMarioState->area->camera->yaw)), right = (s16) (ahead - 0x4000);
+        float f = sinf(stage_tilt_in[0]), r = sinf(stage_tilt_in[1]);
+        float nx = f * sins(ahead) + r * sins(right), nz = f * coss(ahead) + r * coss(right);
+        float most = sins(STAGE_TILT_MOST), lean = sqrtf(nx * nx + nz * nz);
+        if (lean > most) { nx *= most / lean; nz *= most / lean; }
+        int pw, rw;
+        stage_tilt_ways(&pw, &rw);
+        roll = (s16) (rw * atan2s(sqrtf(1.f - nx * nx), nx));   /* (its up leant nx along x...) */
+        pitch = (s16) (pw * atan2s(sqrtf(1.f - nx * nx - nz * nz), nz)); /* (...and nz along z) */
+    }
+    s16 oldPitch = (s16) o->oFaceAnglePitch, oldRoll = (s16) o->oFaceAngleRoll;
+    o->oFaceAnglePitch = stage_turn_toward(oldPitch, pitch, STAGE_TILT_RATE);
+    o->oFaceAngleRoll = stage_turn_toward(oldRoll, roll, STAGE_TILT_RATE);
+    o->oFaceAngleYaw = 0;
+    o->oAngleVelPitch = (s16) (o->oFaceAnglePitch - oldPitch);
+    o->oAngleVelRoll = (s16) (o->oFaceAngleRoll - oldRoll);
+    o->oAngleVelYaw = 0;
+    /* What's on it rides along: the other Marios, the boxes (Mario: apply_mario_platform_displacement) */
+    if (o->oAngleVelPitch || o->oAngleVelRoll) {
+        for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) {
+            struct UnityMario *u = &unity_marios[i];
+            if (!u->obj || !(u->obj->activeFlags & ACTIVE_FLAG_ACTIVE) || !stage_on_disc(o, u->m.pos)) continue;
+            stage_disc_carry(o, u->m.pos);
+        }
+        const BehaviorScript *box = segmented_to_virtual(bhvStageBox);
+        for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_DESTRUCTIVE].next;
+             b != (struct Object *) &gObjectLists[OBJ_LIST_DESTRUCTIVE]; b = (struct Object *) b->header.next) {
+            if (b->behavior != box || b->oHeldState != HELD_FREE) continue;
+            Vec3f p = { b->oPosX, b->oPosY, b->oPosZ };
+            if (!stage_on_disc(o, p)) continue;
+            stage_disc_carry(o, p);
+            b->oPosX = p[0]; b->oPosY = p[1]; b->oPosZ = p[2];
+        }
+    }
+    /* The stage's pipe, stood on the disc where it was put */
+    if (!stage_pipe || !(stage_pipe->activeFlags & ACTIVE_FLAG_ACTIVE) || stage_pipe->behavior != segmented_to_virtual(bhvWarpPipe)) {
+        stage_pipe = NULL;
+        const BehaviorScript *pipe = segmented_to_virtual(bhvWarpPipe);
+        for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_SURFACE].next;
+             b != (struct Object *) &gObjectLists[OBJ_LIST_SURFACE]; b = (struct Object *) b->header.next)
+            if (b->behavior == pipe && stage_distance(b->oPosX, b->oPosZ, 0.f, STAGE_PIPE_Z) < 100.f) stage_pipe = b;
+    }
+    if (stage_pipe) {
+        Vec3s angle = { (s16) o->oFaceAnglePitch, 0, (s16) o->oFaceAngleRoll };
+        Vec3f at;
+        stage_turned(angle, 0.f, 0.f, STAGE_PIPE_Z, at);
+        stage_pipe->oPosX = o->oPosX + at[0]; stage_pipe->oPosY = o->oPosY + at[1]; stage_pipe->oPosZ = o->oPosZ + at[2];
+        stage_pipe->oFaceAnglePitch = o->oFaceAnglePitch; stage_pipe->oFaceAngleRoll = o->oFaceAngleRoll;
+        stage_pipe->oFaceAngleYaw = 0;
+        obj_build_transform_from_pos_and_angle(stage_pipe, O_POS_INDEX, O_FACE_ANGLE_INDEX);
+    }
+    obj_build_transform_from_pos_and_angle(o, O_POS_INDEX, O_FACE_ANGLE_INDEX);
+    load_object_collision_model();
+}
+
 /* Each step, before the Marios' own (bhvStageMosaic, in the spawner list): your B with one in front rolls it,
- * rather than punching */
+ * rather than punching; D-pad up turns tilting on or off */
 void stage_watch(void) {
-    if (gMarioState && gMarioState->controller && (gMarioState->controller->buttonPressed & B_BUTTON) && stage_here())
-        stage_roll_start(gMarioState);
+    if (!stage_here() || !gMarioState || !gMarioState->controller) return;
+    u16 pressed = gMarioState->controller->buttonPressed;
+    if (pressed & B_BUTTON) stage_roll_start(gMarioState);
+    if (pressed & U_JPAD) {
+        stage_tilting = !stage_tilting;
+        play_sound(stage_tilting ? SOUND_MENU_CAMERA_ZOOM_IN : SOUND_MENU_CAMERA_ZOOM_OUT, gDefaultSoundArgs);
+    }
 }
 
 /* An NPC Mario's mind: what its controller does this step */
@@ -464,7 +594,13 @@ static void stage_box_move(struct Object *o) {
     if (collisions & STAGE_COL_HIT_WALL) /* (past the rim, nothing to land on: object_step turned it back) */
         o->oForwardVel *= 0.5f;
     if (collisions & STAGE_COL_GROUNDED) {
-        o->oForwardVel *= STAGE_BOX_GROUND_FRICTION;
+        /* On a lean, it slides down it */
+        struct Surface *floor;
+        find_floor(o->oPosX, o->oPosY + 50.f, o->oPosZ, &floor);
+        float vx = o->oForwardVel * sins(o->oMoveAngleYaw), vz = o->oForwardVel * coss(o->oMoveAngleYaw);
+        if (floor) { vx += STAGE_SLOPE_PULL * floor->normal.x; vz += STAGE_SLOPE_PULL * floor->normal.z; }
+        o->oForwardVel = sqrtf(vx * vx + vz * vz) * STAGE_BOX_GROUND_FRICTION;
+        if (o->oForwardVel > 0.f) o->oMoveAngleYaw = atan2s(vz, vx);
         if (o->oForwardVel < 1.f) o->oForwardVel = 0.f;
     }
 }
@@ -561,6 +697,7 @@ void stage_hud(void) {
     print_text(x, STAGE_HUD_Y, ",");      /* 'Mario Head' glyph */
     print_text(x + 16, STAGE_HUD_Y, "*"); /* 'X' glyph */
     print_text_fmt_int(x + 32, STAGE_HUD_Y, "%d", count);
+    if (stage_tilting) print_text(SCREEN_WIDTH / 2 - 32, STAGE_HUD_Y + 18, "TILT"); /* (on: over the count) */
     stage_hud_shown = count;
 }
 

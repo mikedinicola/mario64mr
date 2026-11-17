@@ -59,6 +59,9 @@ void sm64unity_room_objects_return(void);
 unsigned int sm64unity_spawn_available(void);
 int sm64unity_spawn_held(int kind, int in_room, float x, float y, float z);
 int sm64unity_spawn_near_mario(int kind);
+// (unity_stage.inc.h: the disc stage's tilt, from the controller's lean, as the stick is; is it on (D-pad up))
+void sm64unity_stage_tilt(float forward, float right);
+int sm64unity_stage_tilting(void);
 float sm64unity_room_floor(float x, float y, float z);
 int sm64unity_carry(int mode, float x, float y, float z, float vx, float vy, float vz);
 int sm64unity_carry_mode(void);

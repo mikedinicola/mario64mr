@@ -19,6 +19,7 @@
 #include "behavior_data.h"
 #include "pc/cliopts.h"
 #include "engine/math_util.h"
+#include "engine/surface_collision.h"
 #include "snapshot.h"
 #include <stdlib.h>
 
@@ -38,6 +39,9 @@ int stage_tumbling(int n);
 struct MarioState *stage_npc_state(int n);
 void stage_npcs_pause(int paused);
 void stage_tumble_test(int n, float speed, s16 dir);
+void sm64unity_stage_tilt(float forward, float right);
+int sm64unity_stage_tilting(void);
+extern const BehaviorScript bhvStageDisc[];
 #define ACT_STAGE_ROLL 0x0000047E
 #define ACT_STAGE_TUMBLE 0x0002047F
 int stage_box_mario(struct Object *o);
@@ -69,6 +73,29 @@ static void shot_near(const char *name, struct MarioState *m, struct MarioState 
     float eye[3] = { mid[0] + 420 * sins(look), mid[1] + 110, mid[2] + 420 * coss(look) };
     snapshot_from(path, 960, 540, eye, mid);
     printf("  (picture: %s)\n", path);
+}
+/* The disc object, and how high its top is at (x, z) (from above, down onto it: not a box nor the pipe) */
+static struct Object *the_disc(void) {
+    const BehaviorScript *behavior = segmented_to_virtual(bhvStageDisc);
+    for (struct Object *o = (struct Object *) gObjectLists[OBJ_LIST_SURFACE].next;
+         o != (struct Object *) &gObjectLists[OBJ_LIST_SURFACE]; o = (struct Object *) o->header.next)
+        if (o->behavior == behavior) return o;
+    return NULL;
+}
+static float disc_height(float x, float z) {
+    struct Surface *floor;
+    float y = find_floor(x, 3000, z, &floor);
+    return floor ? y : -99999;
+}
+/* Is the stage's pipe where the disc's lean puts it, leant as it is? */
+static int stage_pipe_follows(struct Object *disc) {
+    const BehaviorScript *pipe = segmented_to_virtual(bhvWarpPipe);
+    for (struct Object *o = (struct Object *) gObjectLists[OBJ_LIST_SURFACE].next;
+         o != (struct Object *) &gObjectLists[OBJ_LIST_SURFACE]; o = (struct Object *) o->header.next)
+        if (o->behavior == pipe)
+            return o->oFaceAnglePitch == disc->oFaceAnglePitch && o->oFaceAngleRoll == disc->oFaceAngleRoll
+                && fabsf(o->oPosY) > 50.f;
+    return 0;
 }
 /* An extra Mario put at (x, z), on its feet, facing yaw */
 static void stand(struct MarioState *m, float x, float z, s16 yaw) {
@@ -311,6 +338,58 @@ int main(int argc, char **argv) {
     CHECK(stage_rolls() - rolls >= 2 && most_tumbling > 0, "on their own, they roll each other (%d rolls)", stage_rolls() - rolls);
     ticks(600);
     CHECK(stage_npcs() == 3, "and none of them falls off (%d)", stage_npcs());
+    /* Tilting: D-pad up, then the controller's lean */
+    printf("Tilting:\n");
+    stage_npcs_pause(1);
+    struct Object *disc = the_disc();
+    CHECK(disc && fabsf(disc_height(0, 0)) < 1.f && disc_height(1500, -1500) > -1.f && disc_height(1500, -1500) < 1.f,
+          "the disc is an object, level, its top the ground");
+    for (int i = 0; i < 3; i++) stand(stage_npc_state(i), -900 + 600 * i, -1200, 0);
+    stand(gMarioState, 600, 600, 0);
+    ticks(10);
+    CHECK(!sm64unity_stage_tilting(), "tilting off at first");
+    sm64unity_stage_tilt(0.5f, 0.f); /* (the controller tipped forward) */
+    ticks(30);
+    CHECK(disc->oFaceAnglePitch == 0 && disc->oFaceAngleRoll == 0, "off, the controller's lean does nothing");
+    tick(U_JPAD);
+    CHECK(sm64unity_stage_tilting(), "D-pad up: on");
+    struct Object *slider = rightmost_box(0);
+    float slid_from[2] = { slider->oPosX, slider->oPosZ };
+    float npc_r = hypotf(stage_npc_state(0)->pos[0], stage_npc_state(0)->pos[2]);
+    int riding = 1;
+    for (int i = 0; i < 90; i++) {
+        tick(0);
+        struct MarioState *n = stage_npc_state(0);
+        if (fabsf(gMarioState->pos[1] - gMarioState->floorHeight) > 5.f || (gMarioState->action & ACT_FLAG_AIR)
+            || fabsf(n->pos[1] - disc_height(n->pos[0], n->pos[2])) > 5.f) riding = 0;
+    }
+    s16 downhill = (s16) (0x8000 + gMarioState->area->camera->yaw);
+    float near_y = disc_height(-1500 * sins(downhill), -1500 * coss(downhill)), far_y = disc_height(1500 * sins(downhill), 1500 * coss(downhill));
+    printf("  leant %d %d: %.0f behind, %.0f downhill (camera yaw %d)\n", (s16) disc->oFaceAnglePitch, (s16) disc->oFaceAngleRoll,
+           near_y, far_y, gMarioState->area->camera->yaw);
+    shot("5-tilted");
+    { float eye[3] = { 3800 * sins(downhill + 0x4000), 700, 3800 * coss(downhill + 0x4000) }, at[3] = { 0, 0, 0 };
+      const char *dir = getenv("STAGE_SNAPSHOTS");
+      if (dir) { char path[1024]; snprintf(path, sizeof(path), "%s/5-tilted-side.png", dir); snapshot_from(path, 960, 540, eye, at); } }
+    CHECK(far_y < -300 && near_y > 300, "the disc leans down the way the controller tips, as the camera looks");
+    CHECK(riding, "Mario and the others ride it, on their feet");
+    CHECK(fabsf(hypotf(stage_npc_state(0)->pos[0], stage_npc_state(0)->pos[2]) - npc_r) < 120,
+          "turning with it about its middle");
+    float slid = (slider->oPosX - slid_from[0]) * sins(downhill) + (slider->oPosZ - slid_from[1]) * coss(downhill);
+    CHECK(slid > 100, "a box slides down it (%.0f units)", slid);
+    CHECK(stage_pipe_follows(disc), "the stage's pipe leans with it");
+    sm64unity_stage_tilt(0.f, 0.5f); /* (tipped to the right instead) */
+    ticks(90);
+    s16 right = (s16) (downhill - 0x4000);
+    CHECK(disc_height(1500 * sins(right), 1500 * coss(right)) < -300, "tipped right, it leans right");
+    tick(U_JPAD);
+    ticks(90);
+    CHECK(!sm64unity_stage_tilting() && disc->oFaceAnglePitch == 0 && disc->oFaceAngleRoll == 0
+          && fabsf(disc_height(1500, 1500)) < 1.f, "D-pad up again: off, and it eases back level");
+    CHECK(fabsf(gMarioState->pos[1] - gMarioState->floorHeight) < 5.f && stage_npcs() == 3, "everyone still on it");
+    sm64unity_stage_tilt(0.f, 0.f);
+    stage_npcs_pause(0);
+
     /* Every box: as many Marios as there can be */
     const BehaviorScript *boxes = segmented_to_virtual(bhvStageBox);
     for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_DESTRUCTIVE].next;
