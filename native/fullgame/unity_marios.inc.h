@@ -93,6 +93,7 @@ int unity_marios_spawn(float x, float y, float z, s16 yaw) {
     m->marioObj = o;
     m->flags = MARIO_CAP_ON_HEAD | MARIO_NORMAL_CAP;
     m->health = 0x880;
+    m->unkB0 = gMarioState->unkB0; /* (how high his animations stand him: init_mario's 0xBD, or he's drawn sunk) */
     m->framesSinceA = m->framesSinceB = 0xFF;
     m->faceAngle[1] = yaw;
     m->pos[0] = x; m->pos[1] = y < floorHeight ? floorHeight : y; m->pos[2] = z;
