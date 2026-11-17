@@ -4,7 +4,7 @@
  *
  * - Touch to collect: a coin, cap or 1-up your hand touches is collected as if Mario had touched it (it is put on
  *   his list of things he collided with this frame, which the game's own interactions then handle). Not stars or
- *   keys: those are Mario's to reach.
+ *   keys, which are Mario's to reach, unless the Cheats menu's Hands collect stars is on (off by default).
  * - Carry on your palm: an enemy or NPC standing on your hand moves with it (and turns with it), as the game moves
  *   things on its platforms. Tip your hand and it falls off; its own physics do the rest.
  * - Squash with your palm: a hand slapped down onto a Goomba (or anything Mario can stomp) from above squashes it, as
@@ -21,6 +21,7 @@
 
 /* (each a cheat, switched off in the options' Cheats menu) */
 #define UNITY_HANDS_TOUCH unity_hand_cheat(UNITY_HAND_COLLECT)
+#define UNITY_HANDS_STARS unity_hand_cheat(UNITY_HAND_STARS)
 #define UNITY_HANDS_SQUASH unity_hand_cheat(UNITY_HAND_SQUASH)
 #define UNITY_HANDS_CARRY unity_hand_cheat(UNITY_HAND_PICK_UP)
 
@@ -180,6 +181,8 @@ static int unity_is_1up(struct Object *o) {
 }
 static int unity_collectable(struct Object *o) {
     if (o->oIntangibleTimer != 0 || (o->oInteractStatus & INT_STATUS_INTERACTED)) return 0;
+    if (o->oInteractType & INTERACT_STAR_OR_KEY) return UNITY_HANDS_STARS;
+    if (!UNITY_HANDS_TOUCH) return 0;
     if (o->oInteractType & (INTERACT_COIN | INTERACT_CAP)) return 1;
     return unity_is_1up(o);
 }
@@ -308,7 +311,7 @@ void unity_hands_squash(void) {
  * check for him) collect it this frame */
 void unity_hands_touch(void) {
     unity_hands_squash();
-    if (!UNITY_HANDS_TOUCH || !gMarioObject || unity_mario_carried() || unity_room_depth) return;
+    if ((!UNITY_HANDS_TOUCH && !UNITY_HANDS_STARS) || !gMarioObject || unity_mario_carried() || unity_room_depth) return;
     if ((gTimeStopState & TIME_STOP_ACTIVE) || !unity_hand_bounds()) return;
     static const int lists[] = { OBJ_LIST_LEVEL, OBJ_LIST_GENACTOR, OBJ_LIST_DEFAULT };
     for (int l = 0; l < (int) (sizeof(lists) / sizeof(lists[0])); l++) {
