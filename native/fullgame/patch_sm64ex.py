@@ -296,6 +296,15 @@ def prepare(root, rom, sixty=True, external_data=True):
                              '    extern void unity_hands_after_objects(void);\n    unity_hands_after_objects();\n'
                              '    unload_deactivated_objects();\n\n    // Check if Mario is on a platform')
     (root / "src/game/object_list_processor.c").write_text(processor)
+    # Out in the room, the stick steers by your head rather than by the game camera (unity_mr.c, unity_stick_yaw)
+    mario = original("src/game/mario.c")
+    stick = 'atan2s(-controller->stickY, controller->stickX) + m->area->camera->yaw;'
+    if mario.count(stick) != 2:
+        raise ValueError("Upstream source changed: " + stick)
+    mario = replace_once(mario, '#include <PR/ultratypes.h>\n',
+                         '#include <PR/ultratypes.h>\nextern s16 unity_stick_yaw(s16);\n').replace(
+        stick, 'atan2s(-controller->stickY, controller->stickX) + unity_stick_yaw(m->area->camera->yaw);')
+    (root / "src/game/mario.c").write_text(mario)
     camera = original("src/game/camera.c")
     camera = 'extern int unity_camera_frozen(void);\n' + camera
     camera = replace_once(camera, 'void update_camera(struct Camera *c) {',
