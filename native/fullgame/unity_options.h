@@ -23,7 +23,8 @@ enum UnityOption {
     UNITY_OPT_CHEATS,        /* the Cheats menu's switches, one bit each in struct CheatList's order (bit 0 Enable
                                 cheats, on by default) */
     UNITY_OPT_HAND_CHEATS,   /* the Cheats menu's switches for what your hands do in the game, a bit each in
-                                enum UnityHandCheat's order, all on by default */
+                                enum UnityHandCheat's order (UNITY_HAND_CHEATS_INVERTED's the other way round),
+                                all on by default */
     UNITY_OPT_COUNT
 };
 extern unsigned int gUnityOptions[UNITY_OPT_COUNT];
@@ -32,8 +33,12 @@ enum UnityHandCheat {
     UNITY_HAND_COLLECT,  /* touch a coin, star, key, cap or 1-up to collect it */
     UNITY_HAND_SQUASH,   /* slap a Goomba from above to squash it */
     UNITY_HAND_PICK_UP,  /* pinch, carry, throw and carry out into the room enemies and NPCs */
+    UNITY_HAND_CHEST,    /* the treasure chest by the window: enemies, power-up boxes and more Marios out of it */
     UNITY_HAND_CHEAT_COUNT
 };
+/* The switches kept the other way round in UNITY_OPT_HAND_CHEATS (a bit set: off), so one added after the options
+ * were first kept starts on, as they all do */
+#define UNITY_HAND_CHEATS_INVERTED (1u << UNITY_HAND_CHEST)
 extern bool gUnityHandCheats[UNITY_HAND_CHEAT_COUNT]; /* (the menu's toggles) */
 /* Is it on: its switch, and Enable cheats */
 int unity_hand_cheat(int which);

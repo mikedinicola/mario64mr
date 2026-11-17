@@ -62,6 +62,7 @@ MR_STRINGS = """
 #define TEXT_MR_HAND_COLLECT _("Hands collect")
 #define TEXT_MR_HAND_SQUASH  _("Hands squash")
 #define TEXT_MR_HAND_PICK_UP _("Hands pick up enemies")
+#define TEXT_MR_CHEST        _("Treasure chest")
 """
 
 
