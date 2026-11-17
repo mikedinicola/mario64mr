@@ -16,6 +16,8 @@ final class GameOptions {
     enum Index: Int {
         case refresh, resolution, antialiasing, foveation, textures, sharpening, bringBack, defaults
         case masterVolume, musicVolume, sfxVolume, envVolume, hud, hands
+        case diorama  // 0 what's near Mario, 1 the whole level (unity_options.h)
+        case cheats  // the Cheats menu's switches, a bit each (unity_options.h)
     }
 
     /// What the room's renderer applies
@@ -72,6 +74,7 @@ final class GameOptions {
         if now[Index.defaults.rawValue] != counted[Index.defaults.rawValue] {
             for (i, v) in Self.graphicsDefaults.enumerated() { values[i] = v }
             values[Index.hands.rawValue] = 0  // (Hands is in the graphics menu too)
+            if count > Index.diorama.rawValue { values[Index.diorama.rawValue] = 1 }  // (and Diorama)
             now = all
         }
         counted = now
