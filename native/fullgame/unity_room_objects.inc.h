@@ -260,7 +260,7 @@ EXPORT int sm64unity_object_grab_room(float x, float y, float z, float reach) {
     float bestDistance = reach;
     for (int i = 0; i < UNITY_ROOM_OBJECTS; i++) {
         struct Object *o = unity_room_objects[i].obj;
-        if (!o || !(o->activeFlags & ACTIVE_FLAG_ACTIVE) || o->oHeldState != HELD_FREE) continue;
+        if (!o || !(o->activeFlags & ACTIVE_FLAG_ACTIVE) || o->oHeldState != HELD_FREE || unity_ridden(o)) continue;
         float distance = unity_pinch_distance(o, x, y, z);
         if (distance <= bestDistance) { bestDistance = distance; best = o; }
     }

@@ -330,7 +330,12 @@ void unity_hands_touch(void) {
 /* ---- Carry on your palm ---- */
 
 int unity_spawned(struct Object *o);
+static int unity_ridden(struct Object *o) {
+    return gMarioState && o == gMarioState->riddenObj && (gMarioState->action & ACT_FLAG_RIDING_SHELL);
+}
 static int unity_carryable(struct Object *o) {
+    /* (a shell Mario's riding goes where he goes) */
+    if (unity_ridden(o)) return 0;
     /* (what came out of the treasure chest, a power-up box too) */
     if (unity_spawned(o)) return o != unity_held_obj && o->oHeldState == HELD_FREE;
     if (o == unity_held_obj || o->collisionData || o->oHeldState != HELD_FREE) return 0;
@@ -475,8 +480,10 @@ static void unity_hold(struct Object *o, float x, float y, float z) {
 EXPORT int sm64unity_object_grab(float x, float y, float z, float reach) {
     if (!isfinite(x) || !isfinite(y) || !isfinite(z) || !isfinite(reach) || unity_room_depth) return 0;
     if (!UNITY_HANDS_CARRY || !gMarioObject || unity_mario_carried() || unity_still_held()) return 0;
-    /* (surfaces: only what came out of the treasure chest, a power-up box: unity_carryable) */
-    static const int lists[] = { OBJ_LIST_PUSHABLE, OBJ_LIST_GENACTOR, OBJ_LIST_DESTRUCTIVE, OBJ_LIST_DEFAULT, OBJ_LIST_SURFACE };
+    /* (surfaces: only what came out of the treasure chest, a power-up box: unity_carryable. The level's own list
+     * (coins, stars, the like): only what came out of the chest too, a Koopa shell) */
+    static const int lists[] = { OBJ_LIST_PUSHABLE, OBJ_LIST_GENACTOR, OBJ_LIST_DESTRUCTIVE, OBJ_LIST_DEFAULT, OBJ_LIST_SURFACE,
+                                 OBJ_LIST_LEVEL };
     struct Object *best = NULL;
     float bestDistance = reach;
     for (int l = 0; l < (int) (sizeof(lists) / sizeof(lists[0])); l++) {
@@ -484,6 +491,7 @@ EXPORT int sm64unity_object_grab(float x, float y, float z, float reach) {
         for (struct ObjectNode *node = head->next; node != head; node = node->next) {
             struct Object *o = (struct Object *) node;
             if (!unity_object_usable(o) || !unity_carryable(o)) continue;
+            if (lists[l] == OBJ_LIST_LEVEL && !unity_spawned(o)) continue;
             float distance = unity_pinch_distance(o, x, y, z);
             if (distance <= bestDistance) { bestDistance = distance; best = o; }
         }

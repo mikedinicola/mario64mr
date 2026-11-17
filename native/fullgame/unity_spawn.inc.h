@@ -12,6 +12,8 @@
  * - A power-up box is always solid (its parameters' top byte: as after its cap switch), and floats rather than falls:
  *   let go of, it rises or sinks to BOX_REACH over the floor under it, where Mario's head reaches it with a jump. Once
  *   broken it's gone (not back after a while, as the level's own cap boxes are).
+ * - A Koopa shell is the one a box lets out: Mario rides it by walking into it or landing on it, and it's gone in a
+ *   puff once he's off it (bhv_koopa_shell_loop). Ridden, it isn't the hands' to take.
  * - At most UNITY_SPAWN_EACH of a kind at once. */
 
 #include "behavior_data.h"
@@ -30,7 +32,7 @@
 enum {
     UNITY_SPAWN_GOOMBA, UNITY_SPAWN_BOBOMB, UNITY_SPAWN_KOOPA, UNITY_SPAWN_CHUCKYA, UNITY_SPAWN_BULLY,
     UNITY_SPAWN_WING_BOX, UNITY_SPAWN_METAL_BOX, UNITY_SPAWN_VANISH_BOX, UNITY_SPAWN_COIN_BOX, UNITY_SPAWN_1UP_BOX,
-    UNITY_SPAWN_MARIO, UNITY_SPAWN_KINDS
+    UNITY_SPAWN_MARIO, UNITY_SPAWN_SHELL, UNITY_SPAWN_KINDS
 };
 struct UnitySpawnKind {
     int model;
@@ -51,6 +53,7 @@ static const struct UnitySpawnKind unity_spawn_kinds[UNITY_SPAWN_KINDS] = {
     { MODEL_EXCLAMATION_BOX, bhvExclamationBox, UNITY_BOX(5), MODEL_YELLOW_COIN }, /* (three: room for them out there) */
     { MODEL_EXCLAMATION_BOX, bhvExclamationBox, UNITY_BOX(7), MODEL_1UP },
     { MODEL_MARIO, NULL, 0, 0 }, /* (unity_marios.inc.h) */
+    { MODEL_KOOPA_SHELL, bhvKoopaShell, 0, 0 }, /* (to ride: in every course, as a box's shell is) */
 };
 #define UNITY_SPAWN_EACH 6
 /* A box's origin over the floor, game units: its underside (60 over its origin, at its scale of 2) at 320, where
