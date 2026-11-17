@@ -11,7 +11,9 @@
  * - it's gone in a puff of smoke where the first Mario would warp or die (a death floor, health run out, out of
  *   bounds), and with any warp of his;
  * - in the level only, for now: not carried out into the room.
- * Its model reads its body state: it's swapped into gBodyStates[0] while its object is drawn (geo_process_object). */
+ * Its model reads its body state: it's swapped into gBodyStates[0] while its object is drawn (geo_process_object).
+ * Tilted to the floor (crawling, sliding: align_with_floor), it's drawn by a matrix of its own: the game keeps one a
+ * player (sFloorAlignMatrix[m->unk00]), so each extra one's step uses player 2's, then copies it out. */
 
 #include "game/mario.h"
 #include "game/mario_misc.h"
@@ -19,6 +21,7 @@
 #include "game/interaction.h"
 #include "game/obj_behaviors.h"
 #include "sm64.h"
+#include "engine/math_util.h"
 
 #define UNITY_EXTRA_MARIOS 3
 /* What an extra Mario touches (the rest it passes through) */
@@ -34,7 +37,9 @@ struct UnityMario {
     struct MarioAnimation animation;
     u8 animationBuffer[0x4000] __attribute__((aligned(16))); /* (as the first Mario's, setup_game_memory) */
     int lost;           /* where the first Mario would warp or die: gone */
+    Mat4 floorAlign;    /* tilted to the floor: how it's drawn (its object's throwMatrix) */
 };
+extern Mat4 sFloorAlignMatrix[2]; /* (mario_actions_moving.c: a player each, by MarioState's unk00) */
 static struct UnityMario unity_marios[UNITY_EXTRA_MARIOS];
 extern const BehaviorScript bhvUnityMario[];
 
@@ -93,6 +98,7 @@ int unity_marios_spawn(float x, float y, float z, s16 yaw) {
     m->marioObj = o;
     m->flags = MARIO_CAP_ON_HEAD | MARIO_NORMAL_CAP;
     m->health = 0x880;
+    m->unk00 = 1; /* (player 2's floor tilt, not the first Mario's: copied out after each step) */
     m->unkB0 = gMarioState->unkB0; /* (how high his animations stand him: init_mario's 0xBD, or he's drawn sunk) */
     m->framesSinceA = m->framesSinceB = 0xFF;
     m->faceAngle[1] = yaw;
@@ -147,6 +153,11 @@ void unity_marios_update(void) {
     gMarioState = m; gMarioObject = o;
     execute_mario_action(o);
     gMarioState = first; gMarioObject = firstObj;
+    /* Tilted to the floor: its own copy of the tilt, or the next one's step would move it there */
+    if (o->header.gfx.throwMatrix == &sFloorAlignMatrix[m->unk00]) {
+        mtxf_copy(u->floorAlign, sFloorAlignMatrix[m->unk00]);
+        o->header.gfx.throwMatrix = &u->floorAlign;
+    }
     /* (bhv_mario_update's copy_mario_state_to_object, from its own state) */
     o->oVelX = m->vel[0]; o->oVelY = m->vel[1]; o->oVelZ = m->vel[2];
     o->oPosX = m->pos[0]; o->oPosY = m->pos[1]; o->oPosZ = m->pos[2];
