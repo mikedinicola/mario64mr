@@ -354,10 +354,11 @@ final class ImmersiveRenderer: @unchecked Sendable {
                     roomFromWindow: placement.roomFromWindow,
                     windowFromRoom: placement.roomFromWindow.inverse,
                     eye: placement.roomFromWindow.inverse * roomFromEye.columns.3,
-                    window: SIMD4(placement.halfSize.x, placement.halfSize.y, placement.skyDistance, 0),
+                    window: SIMD4(placement.halfSize.x, placement.halfSize.y, placement.skyDistance, placement.edgeFade),
                     up: SIMD4(up, 0))
                 guard let encoder = makeEncoder(commands, drawable: drawable, slot: slot, view: view) else { continue }
-                // Open: the game through the window (or the title screen's face), in its frame. Closed: the cartridge.
+                // Open: the game through the window (or the title screen's face), fading out at its edges to the
+                // room. Closed: the cartridge.
                 // Then the room's surfaces into depth and Mario, if he's out in the room, hidden by them
                 if let diorama, let roomFromWorld {
                     if let gameFrame {
@@ -365,7 +366,6 @@ final class ImmersiveRenderer: @unchecked Sendable {
                                            table: diorama.table, xScale: xScale)
                     }
                 } else if cartridge.isOpen {
-                    props.encodeFrame(placement, into: encoder, eye: eye)
                     if let gameFrame, let title = gameFrame.title {
                         props.encodeTitle(title, window: placement, time: time - (startTime ?? 0), into: encoder, eye: eye)
                     } else if let gameFrame {
@@ -386,7 +386,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
                                     roomFromClip: roomFromClip, actorFromClip: actorFromClip)
                 }
                 // The handle, and where the window will go down, last: they're blended (into depth only where they
-                // show), so whatever came after them (the frame, Mario out in the room) would paint over
+                // show), so whatever came after them (Mario out in the room) would paint over
                 // their soft edges
                 if diorama == nil, cartridge.isOpen {
                     props.encodeHandle(placement, held: !cartridge.holding.isEmpty, into: encoder, eye: eye)

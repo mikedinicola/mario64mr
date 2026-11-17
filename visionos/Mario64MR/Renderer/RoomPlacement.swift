@@ -43,7 +43,11 @@ struct RoomPlacement {
 
     var center: SIMD3<Float> { SIMD3(roomFromWindow.columns.3.x, roomFromWindow.columns.3.y, roomFromWindow.columns.3.z) }
 
-    /// The frame's bars' thickness around the opening, metres
+    /// How far in from the opening's edge the game fades out to the room, metres (openingFade): no frame around
+    /// it, the game just thins out into your room at its edges
+    var edgeFade: Float { 0.07 * halfSize.x / 0.6 }
+
+    /// The margin between the opening and the handle under it, metres
     var frameThickness: Float { 0.018 + 0.012 * halfSize.x / 0.6 }
 
     /// The handle under the window, as visionOS's windows have: a pill in the window's plane (centre, half size)

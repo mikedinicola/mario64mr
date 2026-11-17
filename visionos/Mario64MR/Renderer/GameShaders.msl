@@ -96,7 +96,8 @@ struct RoomEye {
     float4x4 roomFromWindow;  // the window's own space (metres; x right, y up, z towards the room) into the room
     float4x4 windowFromRoom;
     float4 eye;               // xyz: the eye in the window's space
-    float4 window;            // xy: the opening's half size (metres), z: the sky's distance (game units)
+    float4 window;            // xy: the opening's half size (metres), z: the sky's distance (game units),
+                              // w: how far in from the opening's edge it fades out to the room (metres)
     float4 up;                // xyz: the game's up in the game camera's view space
 };
 
@@ -204,6 +205,19 @@ fragment float4 game_fragment(Varyings in [[stage_in]],
     return shade(in, texture0, texture1, sampler0, sampler1, frame);
 }
 
+// How much of what's seen through the window's opening at the room point `room` shows over the room: it fades out
+// to nothing towards the opening's edge (RoomEye.window.w), so the game has no hard border, the passthrough showing
+// through around it. The same along each eye's line through a pixel, wherever on it: what's drawn over what keeps
+// the same fade. From inside (your head through the window), no fade.
+static float openingFade(float3 room, constant RoomEye &eye) {
+    float width = eye.window.w;
+    float3 p = (eye.windowFromRoom * float4(room, 1)).xyz, e = eye.eye.xyz;
+    if (width <= 0 || e.z <= 0 || p.z >= e.z) return 1;
+    float2 at = mix(e.xy, p.xy, e.z / (e.z - p.z));  // (where the line from the eye crosses the window's plane)
+    float2 f = smoothstep(0.0, width, eye.window.xy - abs(at));
+    return f.x * f.y;
+}
+
 // In the room the level is seen only through the window's opening: from outside, what's behind the window and seen
 // through the opening; from inside (your head put through it), everything behind the window. Nothing of it comes out
 // into the room: the game camera stands in front of the window, so the level reaches past it towards you, but what
@@ -215,7 +229,10 @@ fragment float4 game_fragment_room(Varyings in [[stage_in]],
                                    sampler sampler0 [[sampler(0)]], sampler sampler1 [[sampler(1)]],
                                    constant uint &frame [[buffer(0)]], constant RoomEye &eye [[buffer(1)]],
                                    constant RoomDraw &draw [[buffer(2)]]) {
+    float fade = 1;
     if (draw.kind.x <= 1) {  // (the level and its sky; not flat pictures on the window, nor Mario in the room)
+        fade = openingFade(in.room, eye);
+        if (fade <= 0) discard_fragment();
         float3 p = (eye.windowFromRoom * float4(in.room, 1)).xyz, e = eye.eye.xyz;
         if (p.z > 0) discard_fragment();  // (on your side of the window)
         bool inside = e.z <= 0;
@@ -229,7 +246,8 @@ fragment float4 game_fragment_room(Varyings in [[stage_in]],
     if (depthOnly && color.a < 0.03) discard_fragment();  // (only where it shows)
     float3 c = saturate(color.rgb);
     float3 linear = select(pow((c + 0.055) / 1.055, 2.4), c / 12.92, c <= 0.04045);
-    return float4(linear, opaque ? 1.0 : color.a);
+    // (premultiplied, as the layer is: opaque, fading out to the room; blended, over what's there, faded already)
+    return opaque ? float4(linear * fade, fade) : float4(linear, color.a * fade);
 }
 
 // The room's own surfaces (scene reconstruction), into depth only: the real furniture hides Mario behind it
@@ -273,6 +291,7 @@ fragment float4 prop_fragment(PropVaryings in [[stage_in]], constant PropDraw &d
                               constant RoomEye &eye [[buffer(2)]],
                               texture2d<float> texture [[texture(0)]], sampler s [[sampler(0)]]) {
     if (draw.flags.y != 0 && !seenThroughOpening(in.room, eye)) discard_fragment();
+    float fade = draw.flags.y != 0 ? openingFade(in.room, eye) : 1;
     float4 color = draw.color * texture.sample(s, in.uv);
     if (draw.flags.z != 0 && color.a < 0.5) discard_fragment();
     if (draw.flags.w != 0 && color.a < 0.03) discard_fragment();
@@ -280,7 +299,9 @@ fragment float4 prop_fragment(PropVaryings in [[stage_in]], constant PropDraw &d
         float light = 0.6 + 0.4 * saturate(dot(normalize(in.normal), normalize(float3(0.3, 1, 0.5))));
         color.rgb *= light;
     }
-    return draw.flags.z != 0 ? float4(color.rgb, 1) : color;
+    if (draw.flags.z != 0) color.a = 1;
+    // (premultiplied where it fades: the props seen through the opening are opaque, the title's backdrop)
+    return fade < 1 ? float4(color.rgb * fade, color.a * fade) : color;
 }
 
 // What the level has between the game camera and the window, painted on the glass: the game's own flat picture
@@ -298,7 +319,8 @@ fragment float4 window_picture_fragment(PropVaryings in [[stage_in]], constant R
     if (depth.read(pixel) >= nearer) discard_fragment();
     float3 c = saturate(picture.sample(s, in.uv).rgb);
     float3 linear = select(pow((c + 0.055) / 1.055, 2.4), c / 12.92, c <= 0.04045);
-    return float4(linear, 1);
+    float fade = openingFade(in.room, eye);  // (as the level behind it fades: premultiplied)
+    return float4(linear * fade, fade);
 }
 
 // ---------------------------------------------------------------- Mario's gloves over your hands
@@ -376,8 +398,9 @@ static float4 gdInput(uint which, float4 texel, float4 shade, constant TitleDraw
 fragment float4 title_fragment(TitleVaryings in [[stage_in]], constant TitleDraw &d [[buffer(1)]],
                                constant RoomEye &eye [[buffer(2)]],
                                texture2d<float> texture [[texture(0)]], sampler s [[sampler(0)]]) {
-    if ((d.flags.x & 1) == 0 && (eye.windowFromRoom * float4(in.room, 1)).z < 0 && !seenThroughOpening(in.room, eye))
-        discard_fragment();
+    bool through = (d.flags.x & 1) == 0 && (eye.windowFromRoom * float4(in.room, 1)).z < 0;
+    if (through && !seenThroughOpening(in.room, eye)) discard_fragment();
+    float fade = through ? openingFade(in.room, eye) : 1;
     float4 texel = d.flags.y != 0 ? texture.sample(s, in.uv) : float4(1);
     uchar4 c = d.colorCombine, a = d.alphaCombine;
     float3 rgb = (gdInput(c.x, texel, in.shade, d).rgb - gdInput(c.y, texel, in.shade, d).rgb)
@@ -389,5 +412,7 @@ fragment float4 title_fragment(TitleVaryings in [[stage_in]], constant TitleDraw
     if ((flags & 2) == 0) alpha = 1;                               // (not blended: covers the passthrough)
     rgb = saturate(rgb);
     rgb = select(pow((rgb + 0.055) / 1.055, 2.4), rgb / 12.92, rgb <= 0.04045);  // (the layer is sRGB)
-    return float4(rgb, saturate(alpha));
+    alpha = saturate(alpha);
+    // (premultiplied where it fades out: not blended; blended, its alpha only)
+    return (flags & 2) == 0 ? float4(rgb * fade, fade) : float4(rgb, alpha * fade);
 }

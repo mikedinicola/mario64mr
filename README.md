@@ -191,8 +191,9 @@ tracked, for the two-handed moves. Pick up the left controller too and the game 
   go to drop it onto your table, or throw it.
 - Pinch both ends with both hands and pull apart: it stretches into a window. Or, holding it with the controller,
   pull the trigger.
-- Squeeze the window's frame with both hands to close it back into the cartridge (or, holding the frame with the
-  controller, pull the trigger). Pinch the frame with one hand, or grip it, to move the window.
+- Squeeze the window's edges (where the game fades out into your room) with both hands to close it back into the
+  cartridge (or, holding an edge with the controller, pull the trigger). Pinch an edge with one hand, or grip it, to
+  move the window.
 - Your left hand and the controller's grip stretch and squeeze it too, as two hands do.
 - Holding the window with the controller, push the thumbstick up or down to make it bigger or smaller (up to four times its first size).
 
@@ -389,8 +390,9 @@ To install it, follow [Install](#install) with `Mario64MR-Pico.apk` in place of 
 
 A native visionOS app is being written in [`visionos/`](visionos). **Early**: the whole game plays in a flat window,
 with a paired gamepad (DualSense, Xbox) or a keyboard, and "Open a window into the game" puts it in your room, in 3D
-behind a window floating in front of you (press the Digital Crown to go back). Pinch the frame or the handle under
-it to move it, with both hands to resize it, or just look at the frame or the handle and pinch from where you are. (Launched with `-cartridge`, the game starts instead as a cartridge in front of you: pinch it to
+behind a window floating in front of you, its edges fading out into your room (press the Digital Crown to go back).
+Pinch its edge or the handle under it to move it, with both hands to resize it, or just look at the edge or the
+handle and pinch from where you are. (Launched with `-cartridge`, the game starts instead as a cartridge in front of you: pinch it to
 pick it up and throw it (it lands on your tables), or pinch it with both hands and pull it open into the window, and
 squeeze the window shut.) On
 the title screen, pinch Mario's face with both hands and pull, and pinch "PRESS START" (or press Start, or pinch with
