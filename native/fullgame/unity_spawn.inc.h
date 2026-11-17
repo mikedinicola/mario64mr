@@ -1,6 +1,8 @@
 /* The treasure chest by the window (the host's TreasureChest): enemies and power-up boxes taken out of
  * it. Included after unity_room_objects.inc.h (in surface_load.c).
  *
+ * - A cheat (the Cheats menu's Treasure chest, on by default): off, nothing comes out of it, and with nothing to offer
+ *   the host doesn't show it.
  * - Taken out with a pinch, one is made where the pinch is and held by it at once (unity_hold): out in the room (a room
  *   slot of its own) or in the level, from then on carried, put down and gone back in like anything a pinch picked up
  *   (unity_hands.inc.h, unity_room_objects.inc.h). Taken out with a look, it's put in the level in front of Mario
@@ -22,6 +24,7 @@
 #include "game/level_update.h"
 #include "engine/math_util.h"
 #include "engine/surface_collision.h"
+#include "pc/unity_options.h"
 
 /* The kinds, in the host's order (SpawnKind) */
 enum {
@@ -91,6 +94,7 @@ extern int unity_mario_held(void);
 /* Can the level make one now? Its model (and a box's contents') loaded, Mario in the level, nothing holding it still */
 static int unity_spawn_kind_available(int kind) {
     if (kind < 0 || kind >= UNITY_SPAWN_KINDS || !gMarioObject || !gMarioState || !gCurrentArea) return 0;
+    if (!unity_hand_cheat(UNITY_HAND_CHEST)) return 0;  /* (the Cheats menu's Treasure chest: off, nothing to spawn) */
     if ((gTimeStopState & TIME_STOP_ACTIVE) || (gCamera && gCamera->cutscene)) return 0;
     const struct UnitySpawnKind *k = &unity_spawn_kinds[kind];
     if (!gLoadedGraphNodes[k->model] || (k->contents && !gLoadedGraphNodes[k->contents])) return 0;

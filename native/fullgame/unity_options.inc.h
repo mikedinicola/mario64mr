@@ -96,6 +96,7 @@ static const u8 mrHandCheatStr[][32] = {
     { TEXT_MR_HAND_COLLECT },
     { TEXT_MR_HAND_SQUASH },
     { TEXT_MR_HAND_PICK_UP },
+    { TEXT_MR_CHEST },
 };
 
 static struct Option optsCheats[] = {
@@ -111,6 +112,7 @@ static struct Option optsCheats[] = {
     DEF_OPT_TOGGLE( mrHandCheatStr[0], &gUnityHandCheats[UNITY_HAND_COLLECT] ),
     DEF_OPT_TOGGLE( mrHandCheatStr[1], &gUnityHandCheats[UNITY_HAND_SQUASH] ),
     DEF_OPT_TOGGLE( mrHandCheatStr[2], &gUnityHandCheats[UNITY_HAND_PICK_UP] ),
+    DEF_OPT_TOGGLE( mrHandCheatStr[3], &gUnityHandCheats[UNITY_HAND_CHEST] ),
 };
 
 static struct SubMenu menuGraphics = DEF_SUBMENU( mrMenuStr[0], optsGraphics );
