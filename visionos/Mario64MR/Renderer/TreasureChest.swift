@@ -45,12 +45,13 @@ final class TreasureChest {
     /// How far the lid opens, radians
     static let lidOpen: Float = 1.95
 
-    /// The tiles: rows above the chest, enemies and Mario nearer it, the boxes above them
+    /// The tiles: rows above the chest, enemies and Mario nearer it, the boxes above them. Each row starts at the
+    /// chest's left end (the window's side) and runs away from the window, so none is near its edge
     static let rows: [[SpawnKind]] = [
         [.goomba, .bobomb, .koopa, .chuckya, .bully, .mario],
         [.wingCapBox, .metalCapBox, .vanishCapBox, .coinBox, .oneUpBox],
     ]
-    static let tileSize: Float = 0.042, tileGap: Float = 0.012
+    static let tileSize: Float = 0.042, tileGap: Float = 0.024
 
     private(set) var isOpen = false
     /// How far open it is now, 0 to 1 (eased)
@@ -65,6 +66,8 @@ final class TreasureChest {
 
     private var touching = [false, false]
     private var wasPinching = [false, false]
+    /// Hands whose pinch began on a tile: theirs until let go (the window's frame doesn't take them)
+    private(set) var claimed = [false, false]
     private var lastToggle: TimeInterval = -10
     private var bob: Float = 0
 
@@ -81,6 +84,7 @@ final class TreasureChest {
         hovered = nil
         guard show else {
             touching = [false, false]
+            claimed = [false, false]
             wasPinching = hands.indices.map { hands[$0].tracked && hands[$0].pinching }
             if wasPinching.count < 2 { wasPinching += [false, false] }
             return ([], [])
@@ -92,8 +96,10 @@ final class TreasureChest {
         for (i, hand) in hands.enumerated() where i < 2 {
             let began = hand.tracked && hand.pinching && !wasPinching[i]
             wasPinching[i] = hand.tracked && hand.pinching
+            if !wasPinching[i] { claimed[i] = false }
             guard isOpen, openness > 0.6, hand.tracked else { continue }
             if let (kind, distance) = nearestTile(to: hand.pinch), distance < 0.04 {
+                if began { claimed[i] = true }
                 if available(kind) { hovered = kind }
                 if began, available(kind) { picks.append(ChestPick(kind: kind, hand: i, at: hand.pinch)) }
             }
@@ -136,7 +142,7 @@ final class TreasureChest {
     /// Past the window's lower right corner, a little in front of it, turned towards you
     static func pose(window: RoomPlacement, eye: SIMD3<Float>, bob: Float) -> simd_float4x4 {
         let h = window.halfSize
-        let corner = window.roomFromWindow.transform(SIMD3(h.x + size.x * 0.5 + 0.06, -h.y - 0.02 + bob, 0.05))
+        let corner = window.roomFromWindow.transform(SIMD3(h.x + size.x * 0.5 + 0.10, -h.y - 0.02 + bob, 0.05))
         // (level, its front towards you)
         var toEye = eye - corner
         toEye.y = 0
@@ -156,7 +162,7 @@ final class TreasureChest {
         for (r, row) in Self.rows.enumerated() {
             guard let c = row.firstIndex(of: kind) else { continue }
             let step = Self.tileSize + Self.tileGap
-            let x = (Float(c) - Float(row.count - 1) / 2) * step
+            let x = -Self.size.x / 2 + Self.tileSize / 2 + Float(c) * step
             // (rising out of the chest as it opens)
             let y = Self.size.y + Self.lidRadius + 0.04 + Float(r) * step
             let rise = Self.ease(openness)
