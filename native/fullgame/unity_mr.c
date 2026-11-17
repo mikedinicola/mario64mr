@@ -18,7 +18,10 @@
 #define EXPORT __attribute__((visibility("default")))
 
 /* The options menu's values (unity_options.h); Unity sets them from what it kept as the game starts */
-unsigned int gUnityOptions[UNITY_OPT_COUNT] = { 2, 3, 2, 2, 4, 0, 0, 0, 127, 127, 127, 127, 1, 0, 1 };
+unsigned int gUnityOptions[UNITY_OPT_COUNT] = { 2, 3, 2, 2, 4, 0, 0, 0, 127, 127, 127, 127, 1, 0, 1,
+                                                (1u << UNITY_HAND_CHEAT_COUNT) - 1 };
+bool gUnityHandCheats[UNITY_HAND_CHEAT_COUNT];
+int unity_hand_cheat(int which) { return Cheats.EnableCheats && gUnityHandCheats[which]; }
 EXPORT unsigned int *sm64unity_options(void) { return gUnityOptions; }
 EXPORT int sm64unity_option_count(void) { return UNITY_OPT_COUNT; }
 
@@ -91,11 +94,14 @@ void unity_apply_options(void) {
     int cheat_count = sizeof(Cheats) / sizeof(bool);
     if (!cheats_loaded) {
         for (int i = 0; i < cheat_count; i++) cheat[i] = (gUnityOptions[UNITY_OPT_CHEATS] >> i) & 1;
+        for (int i = 0; i < UNITY_HAND_CHEAT_COUNT; i++) gUnityHandCheats[i] = (gUnityOptions[UNITY_OPT_HAND_CHEATS] >> i) & 1;
         cheats_loaded = 1;
     }
-    unsigned int bits = 0;
+    unsigned int bits = 0, hand_bits = 0;
     for (int i = 0; i < cheat_count; i++) bits |= (unsigned int) cheat[i] << i;
+    for (int i = 0; i < UNITY_HAND_CHEAT_COUNT; i++) hand_bits |= (unsigned int) (gUnityHandCheats[i] != 0) << i;
     gUnityOptions[UNITY_OPT_CHEATS] = bits;
+    gUnityOptions[UNITY_OPT_HAND_CHEATS] = hand_bits;
 }
 /* 0: original game, 1: held in game, 2: held in room, 3: released in room. */
 static int carry_mode;

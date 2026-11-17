@@ -17,6 +17,7 @@
 #include "game/area.h"
 #include "game/object_helpers.h"
 #include "pc/cliopts.h"
+#include "pc/unity_options.h"
 
 int sm64unity_init(const char *);
 int sm64unity_tick(uint16_t, int8_t, int8_t);
@@ -277,6 +278,18 @@ int main(int argc, char **argv) {
     struct Object *t = spawn(bhvThwomp, MODEL_NONE, 0, -900);
     ticks(2);
     CHECK(sm64unity_object_grab(t->oPosX, t->oPosY + 20, t->oPosZ, 30) == 0, "not picked up");
+
+    printf("The Cheats menu's hand switches, off:\n");
+    gUnityHandCheats[UNITY_HAND_PICK_UP] = 0;
+    struct Object *k = spawn(bhvGoomba, MODEL_GOOMBA, 300, 900);
+    ticks(30);
+    CHECK(sm64unity_object_grab(k->oPosX, k->oPosY + 20, k->oPosZ, 30) == 0, "Hands pick up enemies off: not picked up");
+    gUnityHandCheats[UNITY_HAND_SQUASH] = 0;
+    CHECK(!slap(k, k->oPosX, k->oPosY, k->oPosZ), "Hands squash off: a slap doesn't squash it");
+    gUnityHandCheats[UNITY_HAND_SQUASH] = 1;
+    gUnityHandCheats[UNITY_HAND_PICK_UP] = 1;
+    ticks(2);
+    CHECK(gUnityOptions[UNITY_OPT_HAND_CHEATS] == 7, "back on, kept with the options (%u)", gUnityOptions[UNITY_OPT_HAND_CHEATS]);
 
     ticks(60);
     printf("%s (%d failures)\n", failures ? "FAILED" : "PASSED", failures);

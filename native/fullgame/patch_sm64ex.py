@@ -56,6 +56,9 @@ MR_STRINGS = """
 #define TEXT_MR_QUALITY _("Quality")
 #define TEXT_MR_GLOVES  _("Gloves")
 #define TEXT_MR_YOURS   _("Your own")
+#define TEXT_MR_HAND_COLLECT _("Hands collect")
+#define TEXT_MR_HAND_SQUASH  _("Hands squash")
+#define TEXT_MR_HAND_PICK_UP _("Hands pick up enemies")
 """
 
 

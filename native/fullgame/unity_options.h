@@ -1,5 +1,6 @@
 #ifndef SM64_UNITY_OPTIONS_H
 #define SM64_UNITY_OPTIONS_H
+#include <stdbool.h>
 /* The options menu's values (unity_options.inc.h), shared with Unity (sm64unity_options, FullGame's GameOptions:
  * the same order). The graphics ones are choices Unity applies; the counters go up each time their button is
  * pressed. */
@@ -20,9 +21,21 @@ enum UnityOption {
     UNITY_OPT_HANDS,         /* your hands over the portal: 0 Mario's gloves, 1 your own (passthrough) */
     UNITY_OPT_CHEATS,        /* the Cheats menu's switches, one bit each in struct CheatList's order (bit 0 Enable
                                 cheats, on by default) */
+    UNITY_OPT_HAND_CHEATS,   /* the Cheats menu's switches for what your hands do in the game, a bit each in
+                                enum UnityHandCheat's order, all on by default */
     UNITY_OPT_COUNT
 };
 extern unsigned int gUnityOptions[UNITY_OPT_COUNT];
+/* Your hands in the game (unity_hands.inc.h, unity_room_objects.inc.h): cheats, so switches in the Cheats menu */
+enum UnityHandCheat {
+    UNITY_HAND_COLLECT,  /* touch a coin, star, key, cap or 1-up to collect it */
+    UNITY_HAND_SQUASH,   /* slap a Goomba from above to squash it */
+    UNITY_HAND_PICK_UP,  /* pinch, carry, throw and carry out into the room enemies and NPCs */
+    UNITY_HAND_CHEAT_COUNT
+};
+extern bool gUnityHandCheats[UNITY_HAND_CHEAT_COUNT]; /* (the menu's toggles) */
+/* Is it on: its switch, and Enable cheats */
+int unity_hand_cheat(int which);
 /* Each frame, before the game's: the volumes and the HUD into the PC port's settings */
 void unity_apply_options(void);
 #endif
