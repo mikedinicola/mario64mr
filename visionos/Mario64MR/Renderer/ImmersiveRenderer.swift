@@ -12,6 +12,12 @@ struct RoomLayerConfiguration: CompositorLayerConfiguration {
                            configuration: inout LayerRenderer.Configuration) {
         configuration.colorFormat = .bgra8Unorm_srgb
         configuration.depthFormat = .depth32Float
+        // (what you look at: a tracking area's value a pixel, for the system's hover effect)
+        let tracking = capabilities.supportedTrackingAreasFormats
+        if let format = tracking.first(where: { $0 == .r16Uint }) ?? tracking.first {
+            configuration.trackingAreasFormat = format
+            configuration.trackingAreasUsage = [.renderTarget, .shaderRead]  // (the compositor reads it: it must)
+        }
         // The options: foveation (on at any level) as the room opens; room for the resolution's 150%
         let foveation = capabilities.supportsFoveation && GameOptions.savedGraphics.foveation
         configuration.isFoveationEnabled = foveation
@@ -364,6 +370,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
             return m
         }
         for (slot, drawable) in drawables.enumerated() {
+            let trackingAreas = diorama == nil ? props.chestTrackingAreas(chest, drawable: drawable) : []
             for (index, view) in drawable.views.enumerated() {
                 let roomFromEye = head * view.transform
                 let eye = GameRenderer.RoomEye(
@@ -416,6 +423,12 @@ final class ImmersiveRenderer: @unchecked Sendable {
                 }
                 if graphics?.gloves == true { props.encodeGloves(hands, into: encoder, eye: eye) }
                 encoder.endEncoding()
+                if !trackingAreas.isEmpty,
+                   let tracking = makeTrackingEncoder(commands, drawable: drawable, view: view) {
+                    props.encodeTrackingAreas(trackingAreas, format: layer.configuration.trackingAreasFormat,
+                                              into: tracking, eye: eye)
+                    tracking.endEncoding()
+                }
             }
             drawable.encodePresent(commandBuffer: commands)
         }
@@ -707,6 +720,26 @@ final class ImmersiveRenderer: @unchecked Sendable {
             pass.depthAttachment.storeAction = .store
         }
         if layer.configuration.isFoveationEnabled {  // (foveation: the drawable's rate map for this view)
+            let maps = drawable.rasterizationRateMaps
+            if !maps.isEmpty { pass.rasterizationRateMap = maps[min(map.textureIndex, maps.count - 1)] }
+        }
+        let encoder = commands.makeRenderCommandEncoder(descriptor: pass)
+        encoder?.setViewport(map.viewport)
+        return encoder
+    }
+
+    /// A view's tracking areas (cleared: none), for what's drawn into it to light up when you look at it
+    private func makeTrackingEncoder(_ commands: MTLCommandBuffer, drawable: LayerRenderer.Drawable,
+                                     view: LayerRenderer.Drawable.View) -> MTLRenderCommandEncoder? {
+        let map = view.textureMap, textures = drawable.trackingAreasTextures
+        guard map.textureIndex < textures.count else { return nil }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = textures[map.textureIndex]
+        pass.colorAttachments[0].slice = map.sliceIndex
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        pass.colorAttachments[0].storeAction = .store
+        if layer.configuration.isFoveationEnabled {  // (as the view's colour is: the same pixels)
             let maps = drawable.rasterizationRateMaps
             if !maps.isEmpty { pass.rasterizationRateMap = maps[min(map.textureIndex, maps.count - 1)] }
         }

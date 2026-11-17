@@ -1,3 +1,4 @@
+import CompositorServices
 import Metal
 import MetalKit
 import simd
@@ -224,6 +225,53 @@ final class RoomProps {
             draw(quad, count: 6, model: model * Self.scale(SIMD3(1.15, 1.15, 1)), color: card, texture: pill,
                  flags: SIMD4(0, 0, 0, 1), blend: true, into: encoder, eye: eye)
         }
+    }
+
+    /// The chest's tiles you can take as tracking areas, each lit up by the system when you look at it (your gaze is
+    /// never the app's): registered on the drawable once a frame (`register`), then drawn into each view's tracking
+    /// areas texture with the values they were given
+    func chestTrackingAreas(_ chest: TreasureChest, drawable: LayerRenderer.Drawable) -> [(model: simd_float4x4, value: UInt16)] {
+        guard chest.visible, chest.openness > 0.6 else { return [] }
+        var areas: [(simd_float4x4, UInt16)] = []
+        for kind in SpawnKind.allCases where chest.available(kind) {
+            guard let model = chest.tileModel(kind) else { continue }
+            let area = drawable.addTrackingArea(identifier: .init(rawValue: UInt64(1000 + kind.rawValue)))
+            area.addHoverEffect(.automatic)
+            let value = area.renderValue.rawValue
+            if value != 0 { areas.append((model * Self.scale(SIMD3(1.15, 1.15, 1)), value)) }
+        }
+        return areas
+    }
+
+    func encodeTrackingAreas(_ areas: [(model: simd_float4x4, value: UInt16)], format: MTLPixelFormat,
+                             into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
+        guard !areas.isEmpty, let pipeline = trackingPipeline(format) else { return }
+        encoder.setRenderPipelineState(pipeline)
+        encoder.setCullMode(.none)
+        var e = eye
+        encoder.setVertexBuffer(quad, offset: 0, index: 0)
+        encoder.setVertexBytes(&e, length: MemoryLayout<GameRenderer.RoomEye>.stride, index: 2)
+        for (model, value) in areas {
+            var d = PropDraw(model: model, color: .one, flags: .zero, uvTransform: SIMD4(1, 1, 0, 0)), v = value
+            encoder.setVertexBytes(&d, length: MemoryLayout<PropDraw>.stride, index: 1)
+            encoder.setFragmentBytes(&v, length: MemoryLayout<UInt16>.stride, index: 3)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+        }
+    }
+
+    private var trackingPipelines: [MTLPixelFormat: MTLRenderPipelineState] = [:]
+    private func trackingPipeline(_ format: MTLPixelFormat) -> MTLRenderPipelineState? {
+        if let p = trackingPipelines[format] { return p }
+        let d = MTLRenderPipelineDescriptor()
+        d.vertexFunction = library.makeFunction(name: "prop_vertex")
+        d.fragmentFunction = library.makeFunction(name: "tracking_area_fragment")
+        d.colorAttachments[0].pixelFormat = format
+        guard let p = try? device.makeRenderPipelineState(descriptor: d) else {
+            print("Mario 64 MR: the tracking areas' pipeline didn't build")
+            return nil
+        }
+        trackingPipelines[format] = p
+        return p
     }
 
     // ---------------------------------------------------------------- Mario's gloves
