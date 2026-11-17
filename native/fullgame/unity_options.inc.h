@@ -88,13 +88,30 @@ static struct Option optsAudio[] = {
     DEF_OPT_SCROLL( optsAudioStr[3], &gUnityOptions[UNITY_OPT_ENV_VOLUME], 0, MAX_VOLUME, 1 ),
 };
 
+/* The PC port's cheats (src/pc/cheats.h), always in the menu: no pressing L three times to find them, and
+ * "Enable cheats" on from the start, so each one below works as soon as it is switched on. Kept between launches
+ * with the other options (UNITY_OPT_CHEATS, unity_apply_options) */
+static struct Option optsCheats[] = {
+    DEF_OPT_TOGGLE( optsCheatsStr[0], &Cheats.EnableCheats ),
+    DEF_OPT_TOGGLE( optsCheatsStr[1], &Cheats.MoonJump ),
+    DEF_OPT_TOGGLE( optsCheatsStr[2], &Cheats.GodMode ),
+    DEF_OPT_TOGGLE( optsCheatsStr[3], &Cheats.InfiniteLives ),
+    DEF_OPT_TOGGLE( optsCheatsStr[4], &Cheats.SuperSpeed ),
+    DEF_OPT_TOGGLE( optsCheatsStr[5], &Cheats.Responsive ),
+    DEF_OPT_TOGGLE( optsCheatsStr[6], &Cheats.ExitAnywhere ),
+    DEF_OPT_TOGGLE( optsCheatsStr[7], &Cheats.HugeMario ),
+    DEF_OPT_TOGGLE( optsCheatsStr[8], &Cheats.TinyMario ),
+};
+
 static struct SubMenu menuGraphics = DEF_SUBMENU( mrMenuStr[0], optsGraphics );
 static struct SubMenu menuAudio    = DEF_SUBMENU( mrMenuStr[1], optsAudio );
+static struct SubMenu menuCheats   = DEF_SUBMENU( menuStr[6], optsCheats );
 
 static struct Option optsMain[] = {
     DEF_OPT_SUBMENU( mrMenuStr[0], &menuGraphics ),
     DEF_OPT_SUBMENU( mrMenuStr[1], &menuAudio ),
     DEF_OPT_CHOICE ( mrMenuStr[2], &gUnityOptions[UNITY_OPT_HUD], mrToggleChoices ),
+    DEF_OPT_SUBMENU( menuStr[6], &menuCheats ),
     DEF_OPT_BUTTON ( mrMenuStr[3], mr_bring_back ),
 };
 

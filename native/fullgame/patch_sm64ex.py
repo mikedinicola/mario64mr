@@ -502,7 +502,7 @@ Gfx *geo_offset_klepto_held_object(""")
     end_marker = "static struct SubMenu menuMain = DEF_SUBMENU( menuStr[0], optsMain );\n"
     end = options.index(end_marker) + len(end_marker)
     options = options[:start] + '#include "pc/unity_options.inc.h"\n' + options[end:]
-    options = replace_once(options, "        if (!Cheats.EnableCheats) {", "        if (0) { // (no cheats menu)")
+    options = replace_once(options, "        if (!Cheats.EnableCheats) {", "        if (0) { // (the cheats menu is always there)")
     options = replace_once(options, "        controller_reconfigure(); // rebind using new config values\n        configfile_save(configfile_name());\n", "")
     (root / "src/game/options_menu.c").write_text(options)
     strings = original("include/text_options_strings.h.in")
