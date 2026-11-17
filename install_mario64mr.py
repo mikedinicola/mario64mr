@@ -197,6 +197,7 @@ def pack(work, out):
     files += [(p, "gfx/" + p.relative_to(work / PACK_BUILD).as_posix()) for p in sorted(tiles.rglob("*.png"))]
     for top in ("actors", "levels", "textures"):
         files += [(p, "gfx/" + p.relative_to(work).as_posix()) for p in sorted((work / top).rglob("*.png"))]
+    files += patch_sm64ex.stage_gen.pictures()  # (the disc stage's own pictures: yours, else our placeholders)
     missing = [str(p) for p, _ in files if not p.is_file()]
     if missing:
         sys.exit("not made: " + ", ".join(missing[:5]))

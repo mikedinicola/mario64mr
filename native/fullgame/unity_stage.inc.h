@@ -22,7 +22,13 @@
  *   (the game has no other use for it); on, the disc leans as you tilt your controller (sm64unity_stage_tilt, from the
  *   host: forward and right, as the stick is, the way the camera looks), up to STAGE_TILT_MOST; off, it eases level.
  *   Everything on it rides it as it turns (Mario by the game's own platform code, the other Marios, the boxes and the
- *   stage's pipe here), and boxes and tumbling Marios slide and roll downhill. */
+ *   stage's pipe here), and boxes and tumbling Marios slide and roll downhill.
+ * - The disc changes shape, its top a grid of heights (stage_disc_rebuild: its mesh and collision made again as they
+ *   change). D-pad right and left: the next and the one before of a hill, a valley, dunes, a pass and flat again,
+ *   each eased into over 3 seconds; D-pad down: a pizza, its crust a lip at the rim, its picture swapped in halfway
+ *   (and down again: back as it was). Everything standing on it is lifted or lowered with it. Its pictures, the
+ *   disc's and the pizza's, are textures in base.zip (stage_gen.py: disc.png, pizza.png, yours in stage/local/ else
+ *   stage/'s placeholders). */
 
 #include "levels/castle_grounds/header.h"
 #include "game/memory.h"
@@ -353,6 +359,337 @@ static void stage_tumble_step(struct UnityMario *u) {
     vec3s_copy(o->header.gfx.angle, angle);
 }
 
+/* ---- The disc's shape ---- */
+
+/* Its top: a grid of rings about its middle, STAGE_DISC_SIDES points round each; its rim a wall STAGE_DISC_THICKNESS
+ * deep, all the way round. Every point's height is its shape's (stage_shape_height); the mesh drawn and the collision
+ * are made again from them whenever they change (stage_disc_rebuild) */
+#define STAGE_DISC_RADIUS 3000.f
+#define STAGE_DISC_THICKNESS 300.f
+#define STAGE_DISC_RINGS 10
+#define STAGE_DISC_SIDES 40
+#define STAGE_DISC_POINTS (1 + STAGE_DISC_RINGS * STAGE_DISC_SIDES) /* (the middle, then ring by ring; then the rim's
+                                                                       bottom, STAGE_DISC_SIDES more) */
+#define STAGE_DISC_TOP_TRIS (STAGE_DISC_SIDES * (2 * STAGE_DISC_RINGS - 1))
+#define STAGE_DISC_TRIS (STAGE_DISC_TOP_TRIS + 2 * STAGE_DISC_SIDES)
+#define STAGE_DISC_BATCH 10 /* (triangles a vertex load: each its own three vertices) */
+#define STAGE_MORPH_STEPS 90 /* (3 seconds from one shape to the next) */
+enum { STAGE_FLAT, STAGE_HILL, STAGE_VALLEY, STAGE_DUNES, STAGE_PASS, STAGE_SHAPES, STAGE_PIZZA = STAGE_SHAPES };
+
+/* Its pictures: textures by name, from base.zip (stage_gen.PICTURES: install_mario64mr.py packs them there), the
+ * picture spanning the disc as STAGE_DISC_TEXELS square (any size: it's scaled to fit) */
+static const u8 stage_disc_texture[] = "levels/castle_grounds/stage_disc.rgba32";
+static const u8 stage_pizza_texture[] = "levels/castle_grounds/stage_pizza.rgba32";
+#define STAGE_DISC_TEXELS 64
+static const u8 stage_disc_wall[2][3] = { { 0x9C, 0x7A, 0x52 }, { 0xB8, 0x74, 0x34 } }; /* (its rim's: disc, pizza) */
+
+static struct {
+    int ready;
+    int shape, last_shape;           /* the shape it is or is becoming, and the last before the pizza */
+    int picture, from_picture, to_picture; /* (1: the pizza's) */
+    int step;                        /* into the change, of STAGE_MORPH_STEPS (there: it's done) */
+    float from[STAGE_DISC_POINTS], to[STAGE_DISC_POINTS], now[STAGE_DISC_POINTS], was[STAGE_DISC_POINTS];
+} stage_disc;
+static float stage_disc_xz[STAGE_DISC_POINTS + STAGE_DISC_SIDES][2];
+static u16 stage_disc_tri[STAGE_DISC_TRIS][3];
+static Vtx stage_disc_vtx[3 * STAGE_DISC_TRIS];
+static Gfx stage_disc_gfx[24 + 6 * (STAGE_DISC_TRIS / STAGE_DISC_BATCH + 2)];
+static s16 stage_disc_collision[8 + 3 * (STAGE_DISC_POINTS + STAGE_DISC_SIDES) + 3 * STAGE_DISC_TRIS];
+
+/* How high a shape is at (x, z) on the disc (its own space: its middle at 0 0) */
+static float stage_shape_height(int shape, float x, float z) {
+    float r = sqrtf(x * x + z * z) / STAGE_DISC_RADIUS;
+    if (r > 1.f) r = 1.f;
+    switch (shape) {
+        case STAGE_HILL: return 900.f * (1.f + cosf((float) M_PI * r)) / 2.f;    /* (a round hill, its foot the rim) */
+        case STAGE_VALLEY: return 800.f * r * r;                                 /* (a bowl) */
+        case STAGE_DUNES: return 120.f * (1.f - cosf(4.f * (float) M_PI * r));   /* (two rings of dunes) */
+        case STAGE_PASS: return 500.f * (x * x - z * z) / (STAGE_DISC_RADIUS * STAGE_DISC_RADIUS); /* (a saddle) */
+        case STAGE_PIZZA: {                                                      /* (its crust, a lip at the rim) */
+            float s = (r - 0.86f) / 0.1f;
+            s = s < 0.f ? 0.f : s > 1.f ? 1.f : s;
+            return 70.f * s * s * (3.f - 2.f * s);
+        }
+        default: return 0.f;
+    }
+}
+
+static int stage_disc_point(int ring, int side) {
+    return ring ? 1 + (ring - 1) * STAGE_DISC_SIDES + side % STAGE_DISC_SIDES : 0;
+}
+/* The game's own floor normal's y (surface_load.c), of a triangle by its points: above 0, facing up */
+static float stage_disc_up(int a, int b, int c) {
+    float (*p)[2] = stage_disc_xz;
+    return (p[b][1] - p[a][1]) * (p[c][0] - p[b][0]) - (p[b][0] - p[a][0]) * (p[c][1] - p[b][1]);
+}
+static void stage_disc_add_floor(int *n, int a, int b, int c) {
+    if (stage_disc_up(a, b, c) < 0.f) { int t = b; b = c; c = t; }
+    stage_disc_tri[*n][0] = a; stage_disc_tri[*n][1] = b; stage_disc_tri[*n][2] = c;
+    (*n)++;
+}
+/* The triangles: the middle's fan, each ring to the next as two a side (stage_disc_mesh_height finds them so), and
+ * the rim's wall facing out */
+static void stage_disc_layout(void) {
+    for (int ring = 0; ring <= STAGE_DISC_RINGS; ring++)
+        for (int side = 0; side < (ring ? STAGE_DISC_SIDES : 1); side++) {
+            float a = 2.f * (float) M_PI * side / STAGE_DISC_SIDES, rad = STAGE_DISC_RADIUS * ring / STAGE_DISC_RINGS;
+            int p = stage_disc_point(ring, side);
+            stage_disc_xz[p][0] = rad * sinf(a); stage_disc_xz[p][1] = rad * cosf(a);
+            if (ring == STAGE_DISC_RINGS) {
+                stage_disc_xz[STAGE_DISC_POINTS + side][0] = stage_disc_xz[p][0];
+                stage_disc_xz[STAGE_DISC_POINTS + side][1] = stage_disc_xz[p][1];
+            }
+        }
+    int n = 0;
+    for (int side = 0; side < STAGE_DISC_SIDES; side++)
+        stage_disc_add_floor(&n, 0, stage_disc_point(1, side), stage_disc_point(1, side + 1));
+    for (int ring = 1; ring < STAGE_DISC_RINGS; ring++)
+        for (int side = 0; side < STAGE_DISC_SIDES; side++) {
+            int a = stage_disc_point(ring, side), b = stage_disc_point(ring + 1, side);
+            int c = stage_disc_point(ring + 1, side + 1), d = stage_disc_point(ring, side + 1);
+            stage_disc_add_floor(&n, a, b, c);
+            stage_disc_add_floor(&n, a, c, d);
+        }
+    for (int side = 0; side < STAGE_DISC_SIDES; side++) {
+        int top0 = stage_disc_point(STAGE_DISC_RINGS, side), top1 = stage_disc_point(STAGE_DISC_RINGS, side + 1);
+        int bottom0 = STAGE_DISC_POINTS + side, bottom1 = STAGE_DISC_POINTS + (side + 1) % STAGE_DISC_SIDES;
+        /* (facing out: the game's wall normal of top0 top1 bottom1, along x z, the way out from the middle; if not,
+         * turned round) */
+        float (*p)[2] = stage_disc_xz;
+        float a[3] = { p[top0][0], 0.f, p[top0][1] }, b[3] = { p[top1][0], 0.f, p[top1][1] };
+        float c[3] = { p[bottom1][0], -STAGE_DISC_THICKNESS, p[bottom1][1] };
+        float nx = (b[1] - a[1]) * (c[2] - b[2]) - (b[2] - a[2]) * (c[1] - b[1]);
+        float nz = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+        int flip = nx * (a[0] + b[0]) + nz * (a[2] + b[2]) < 0.f;
+        u16 quad[2][3] = { { top0, top1, bottom1 }, { top0, bottom1, bottom0 } };
+        for (int t = 0; t < 2; t++, n++) {
+            stage_disc_tri[n][0] = quad[t][0];
+            stage_disc_tri[n][1] = flip ? quad[t][2] : quad[t][1];
+            stage_disc_tri[n][2] = flip ? quad[t][1] : quad[t][2];
+        }
+    }
+}
+
+/* A point's height now (the rim's bottom, under the top's) */
+static float stage_disc_y(int p) {
+    return p < STAGE_DISC_POINTS ? stage_disc.now[p]
+                                 : stage_disc.now[stage_disc_point(STAGE_DISC_RINGS, p - STAGE_DISC_POINTS)] - STAGE_DISC_THICKNESS;
+}
+
+/* Its mesh and collision, from its heights now */
+static void stage_disc_rebuild(void) {
+    /* The top's shading: each point's normal (its triangles' together), lit from a light of its own */
+    static float normal[STAGE_DISC_POINTS][3];
+    bzero(normal, sizeof(normal));
+    for (int t = 0; t < STAGE_DISC_TOP_TRIS; t++) {
+        u16 *k = stage_disc_tri[t];
+        float e1[3] = { stage_disc_xz[k[1]][0] - stage_disc_xz[k[0]][0], stage_disc_y(k[1]) - stage_disc_y(k[0]), stage_disc_xz[k[1]][1] - stage_disc_xz[k[0]][1] };
+        float e2[3] = { stage_disc_xz[k[2]][0] - stage_disc_xz[k[0]][0], stage_disc_y(k[2]) - stage_disc_y(k[0]), stage_disc_xz[k[2]][1] - stage_disc_xz[k[0]][1] };
+        float c[3] = { e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0] };
+        float s = c[1] < 0.f ? -1.f : 1.f;
+        for (int j = 0; j < 3; j++) for (int i = 0; i < 3; i++) normal[k[j]][i] += s * c[i];
+    }
+    const float light[3] = { -0.33f, 0.80f, 0.50f }; /* (about unit) */
+    const u8 *wall = stage_disc_wall[stage_disc.picture];
+    for (int t = 0; t < STAGE_DISC_TRIS; t++)
+        for (int j = 0; j < 3; j++) {
+            int p = stage_disc_tri[t][j];
+            Vtx_t *v = &stage_disc_vtx[3 * t + j].v;
+            float x = stage_disc_xz[p][0], z = stage_disc_xz[p][1];
+            v->ob[0] = (s16) roundf(x); v->ob[1] = (s16) roundf(stage_disc_y(p)); v->ob[2] = (s16) roundf(z);
+            v->flag = 0;
+            v->tc[0] = (s16) ((x / STAGE_DISC_RADIUS + 1.f) / 2.f * STAGE_DISC_TEXELS * 32);
+            v->tc[1] = (s16) ((z / STAGE_DISC_RADIUS + 1.f) / 2.f * STAGE_DISC_TEXELS * 32);
+            v->cn[3] = 0xFF;
+            if (t < STAGE_DISC_TOP_TRIS) {
+                float *n = normal[p], len = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+                float lit = len > 0.f ? (n[0] * light[0] + n[1] * light[1] + n[2] * light[2]) / len : 1.f;
+                u8 shade = (u8) (255.f * (0.55f + 0.45f * (lit > 0.f ? lit : 0.f)));
+                v->cn[0] = v->cn[1] = v->cn[2] = shade;
+            } else {
+                int bottom = p >= STAGE_DISC_POINTS;
+                for (int i = 0; i < 3; i++) v->cn[i] = (u8) (bottom ? wall[i] * 3 / 4 : wall[i]);
+            }
+        }
+
+    /* Drawn: the top with its picture, shaded; the rim plain */
+    Gfx *g = stage_disc_gfx;
+    gDPPipeSync(g++);
+    gDPSetCombineMode(g++, G_CC_MODULATERGB, G_CC_MODULATERGB);
+    gSPClearGeometryMode(g++, G_LIGHTING);
+    gSPTexture(g++, 0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON);
+    gDPLoadTextureBlock(g++, stage_disc.picture ? stage_pizza_texture : stage_disc_texture, G_IM_FMT_RGBA, G_IM_SIZ_32b,
+                        STAGE_DISC_TEXELS, STAGE_DISC_TEXELS, 0, G_TX_CLAMP, G_TX_CLAMP, 6, 6, G_TX_NOLOD, G_TX_NOLOD);
+    for (int t = 0; t < STAGE_DISC_TRIS; t += STAGE_DISC_BATCH) {
+        if (t == STAGE_DISC_TOP_TRIS) {
+            gSPTexture(g++, 0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_OFF);
+            gDPPipeSync(g++);
+            gDPSetCombineMode(g++, G_CC_SHADE, G_CC_SHADE);
+        }
+        int n = STAGE_DISC_TRIS - t < STAGE_DISC_BATCH ? STAGE_DISC_TRIS - t : STAGE_DISC_BATCH;
+        gSPVertex(g++, &stage_disc_vtx[3 * t], 3 * n, 0);
+        for (int k = 0; k < n; k += 2) {
+            if (k + 1 < n) { gSP2Triangles(g++, 3 * k, 3 * k + 1, 3 * k + 2, 0x0, 3 * k + 3, 3 * k + 4, 3 * k + 5, 0x0); }
+            else { gSP1Triangle(g++, 3 * k, 3 * k + 1, 3 * k + 2, 0x0); }
+        }
+    }
+    gDPPipeSync(g++);
+    gSPSetGeometryMode(g++, G_LIGHTING);
+    gSPEndDisplayList(g++);
+
+    /* Its collision, as level collision data is (the object's own: stage_disc_load_collision) */
+    s16 *c = stage_disc_collision;
+    *c++ = TERRAIN_LOAD_VERTICES;
+    *c++ = STAGE_DISC_POINTS + STAGE_DISC_SIDES;
+    for (int p = 0; p < STAGE_DISC_POINTS + STAGE_DISC_SIDES; p++) {
+        *c++ = (s16) roundf(stage_disc_xz[p][0]); *c++ = (s16) roundf(stage_disc_y(p)); *c++ = (s16) roundf(stage_disc_xz[p][1]);
+    }
+    *c++ = SURFACE_DEFAULT;
+    *c++ = STAGE_DISC_TRIS;
+    for (int t = 0; t < STAGE_DISC_TRIS; t++)
+        for (int j = 0; j < 3; j++) *c++ = (s16) stage_disc_tri[t][j];
+    *c++ = TERRAIN_LOAD_CONTINUE;
+    *c++ = TERRAIN_LOAD_END;
+}
+
+/* The disc's collision where it is now (load_object_collision_model's, for more vertices than it holds) */
+static void stage_disc_load_collision(struct Object *o) {
+    static s16 vertices[3 * (STAGE_DISC_POINTS + STAGE_DISC_SIDES)];
+    s16 *data = stage_disc_collision + 1;
+    if (!(gTimeStopState & TIME_STOP_ACTIVE)) {
+        transform_object_vertices(&data, vertices);
+        while (*data != TERRAIN_LOAD_CONTINUE) load_object_surfaces(&data, vertices);
+    }
+    o->header.gfx.node.flags |= GRAPH_RENDER_ACTIVE;
+}
+
+/* How high its top is at (x, z), its own space, by heights h: on the triangle there, as the collision is */
+static float stage_disc_mesh_height(const float *h, float x, float z) {
+    float ring = sqrtf(x * x + z * z) / STAGE_DISC_RADIUS * STAGE_DISC_RINGS;
+    u16 yaw = (u16) atan2s(z, x); /* (the game's way round: its points' too, x by sin and z by cos) */
+    int side = (int) ((u32) yaw * STAGE_DISC_SIDES >> 16) % STAGE_DISC_SIDES;
+    int k = (int) ring;
+    if (k >= STAGE_DISC_RINGS) k = STAGE_DISC_RINGS - 1;
+    int tris[2][3], count;
+    if (k == 0) {
+        tris[0][0] = 0; tris[0][1] = stage_disc_point(1, side); tris[0][2] = stage_disc_point(1, side + 1);
+        count = 1;
+    } else {
+        int pa = stage_disc_point(k, side), pb = stage_disc_point(k + 1, side);
+        int pc = stage_disc_point(k + 1, side + 1), pd = stage_disc_point(k, side + 1);
+        tris[0][0] = pa; tris[0][1] = pb; tris[0][2] = pc;
+        tris[1][0] = pa; tris[1][1] = pc; tris[1][2] = pd;
+        count = 2;
+    }
+    float best = 0.f;
+    for (int t = 0; t < count; t++) {
+        float (*p)[2] = stage_disc_xz;
+        int i0 = tris[t][0], i1 = tris[t][1], i2 = tris[t][2];
+        float d = (p[i1][1] - p[i2][1]) * (p[i0][0] - p[i2][0]) + (p[i2][0] - p[i1][0]) * (p[i0][1] - p[i2][1]);
+        float w0 = ((p[i1][1] - p[i2][1]) * (x - p[i2][0]) + (p[i2][0] - p[i1][0]) * (z - p[i2][1])) / d;
+        float w1 = ((p[i2][1] - p[i0][1]) * (x - p[i2][0]) + (p[i0][0] - p[i2][0]) * (z - p[i2][1])) / d;
+        float w2 = 1.f - w0 - w1;
+        best = w0 * h[i0] + w1 * h[i1] + w2 * h[i2];
+        if (w0 > -1e-3f && w1 > -1e-3f && w2 > -1e-3f) break; /* (in it; else the other) */
+    }
+    return best;
+}
+
+/* p in the disc's own space, the disc turned by angle */
+static void stage_disc_local(struct Object *disc, Vec3s angle, Vec3f p, Vec3f local) {
+    Mat4 m;
+    Vec3f offset = { p[0] - disc->oPosX, p[1] - disc->oPosY, p[2] - disc->oPosZ };
+    mtxf_rotate_zxy_and_translate(m, offset, angle);
+    linear_mtxf_transpose_mul_vec3f(m, local, offset);
+}
+/* Standing on the disc, turned by angle, its top heights h (within a few units of its top)? */
+static int stage_on_disc_at(struct Object *disc, Vec3s angle, const float *h, Vec3f p) {
+    Vec3f local;
+    stage_disc_local(disc, angle, p, local);
+    if (local[0] * local[0] + local[2] * local[2] > (STAGE_DISC_RADIUS + 30.f) * (STAGE_DISC_RADIUS + 30.f)) return 0;
+    return fabsf(local[1] - stage_disc_mesh_height(h, local[0], local[2])) < 10.f;
+}
+/* Standing on it, before its turn this step? (where it was turned, with its top as it is now) */
+static int stage_on_disc(struct Object *disc, Vec3f p) {
+    Vec3s was = { (s16) (disc->oFaceAnglePitch - disc->oAngleVelPitch), 0, (s16) (disc->oFaceAngleRoll - disc->oAngleVelRoll) };
+    return stage_on_disc_at(disc, was, stage_disc.now, p);
+}
+/* Something standing on it, lifted or lowered as its top is beneath it this step */
+static void stage_disc_lift(struct Object *disc, Vec3f p) {
+    Vec3s angle = { (s16) disc->oFaceAnglePitch, 0, (s16) disc->oFaceAngleRoll };
+    if (!stage_on_disc_at(disc, angle, stage_disc.was, p)) return;
+    Vec3f local, up;
+    stage_disc_local(disc, angle, p, local);
+    float rise = stage_disc_mesh_height(stage_disc.now, local[0], local[2]) - stage_disc_mesh_height(stage_disc.was, local[0], local[2]);
+    stage_turned(angle, 0.f, rise, 0.f, up);
+    p[0] += up[0]; p[1] += up[1]; p[2] += up[2];
+}
+
+/* Start changing to a shape (from wherever it is, partway through a change or not) */
+static void stage_disc_reshape(int shape) {
+    if (shape == stage_disc.shape) return;
+    memcpy(stage_disc.from, stage_disc.now, sizeof(stage_disc.from));
+    for (int p = 0; p < STAGE_DISC_POINTS; p++)
+        stage_disc.to[p] = stage_shape_height(shape, stage_disc_xz[p][0], stage_disc_xz[p][1]);
+    stage_disc.from_picture = stage_disc.picture;
+    stage_disc.to_picture = shape == STAGE_PIZZA;
+    stage_disc.shape = shape;
+    if (shape != STAGE_PIZZA) stage_disc.last_shape = shape;
+    stage_disc.step = 0;
+    play_sound(SOUND_GENERAL_BIG_POUND, gDefaultSoundArgs);
+}
+
+/* Arriving on the stage: flat, the disc's own picture (bhvStageDisc's init) */
+void stage_disc_init(void) {
+    stage_disc_layout();
+    bzero(&stage_disc, sizeof(stage_disc));
+    stage_disc.step = STAGE_MORPH_STEPS;
+    stage_disc.ready = 1;
+    stage_disc_rebuild();
+}
+
+/* A step of a change of shape (before the disc turns): the heights eased from the old shape's to the new's, the
+ * picture swapped halfway, and what stands on it lifted or lowered with it */
+static void stage_disc_shape_step(struct Object *o) {
+    if (stage_disc.step >= STAGE_MORPH_STEPS) return;
+    stage_disc.step++;
+    float t = (float) stage_disc.step / STAGE_MORPH_STEPS, e = t * t * (3.f - 2.f * t);
+    memcpy(stage_disc.was, stage_disc.now, sizeof(stage_disc.was));
+    for (int p = 0; p < STAGE_DISC_POINTS; p++)
+        stage_disc.now[p] = stage_disc.from[p] + (stage_disc.to[p] - stage_disc.from[p]) * e;
+    int picture = e < 0.5f ? stage_disc.from_picture : stage_disc.to_picture;
+    if (picture != stage_disc.picture) {
+        stage_disc.picture = picture;
+        if (picture) play_sound(SOUND_MENU_STAR_SOUND, gDefaultSoundArgs);
+    }
+    if (gMarioState && gMarioState->marioObj) stage_disc_lift(o, gMarioState->pos);
+    for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) {
+        struct UnityMario *u = &unity_marios[i];
+        if (u->obj && (u->obj->activeFlags & ACTIVE_FLAG_ACTIVE)) stage_disc_lift(o, u->m.pos);
+    }
+    const BehaviorScript *box = segmented_to_virtual(bhvStageBox);
+    for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_DESTRUCTIVE].next;
+         b != (struct Object *) &gObjectLists[OBJ_LIST_DESTRUCTIVE]; b = (struct Object *) b->header.next) {
+        if (b->behavior != box || b->oHeldState != HELD_FREE) continue;
+        Vec3f p = { b->oPosX, b->oPosY, b->oPosZ };
+        stage_disc_lift(o, p);
+        b->oPosX = p[0]; b->oPosY = p[1]; b->oPosZ = p[2];
+    }
+    stage_disc_rebuild();
+}
+
+/* The disc's mesh, as it's shaped now (its model's: stage_disc_model_geo) */
+Gfx *geo_stage_disc(s32 callContext, struct GraphNode *node, UNUSED void *context) {
+    if (callContext != GEO_CONTEXT_RENDER || !stage_disc.ready) return NULL;
+    node->flags = (LAYER_OPAQUE << 8) | (node->flags & 0xFF);
+    return stage_disc_gfx;
+}
+
+/* (tests) The shape it is or is becoming (STAGE_PIZZA, 5: the pizza); changing still?; the pizza's picture on? */
+int stage_disc_shape(void) { return stage_disc.shape; }
+int stage_disc_changing(void) { return stage_disc.step < STAGE_MORPH_STEPS; }
+int stage_disc_pizza(void) { return stage_disc.picture; }
+
 /* ---- Tilting ---- */
 
 static int stage_tilting;          /* (D-pad up turns it on and off) */
@@ -392,17 +729,12 @@ static void stage_disc_carry(struct Object *disc, Vec3f p) {
     linear_mtxf_mul_vec3f(m, moved, local);
     p[0] = disc->oPosX + moved[0]; p[1] = disc->oPosY + moved[1]; p[2] = disc->oPosZ + moved[2];
 }
-/* Standing on the disc (on its floor, within a few units of it)? */
-static int stage_on_disc(struct Object *disc, Vec3f p) {
-    struct Surface *floor;
-    float y = find_floor(p[0], p[1] + 50.f, p[2], &floor);
-    return floor && floor->object == disc && fabsf(p[1] - y) < 8.f;
-}
-
 /* The disc's step (bhvStageDisc, in the surface list: before Mario's platform displacement and everyone's own step):
- * it leans towards the controller's lean, or back level; what's on it rides along; its collision where it is now */
+ * its shape changes on, if it's changing; it leans towards the controller's lean, or back level; what's on it rides
+ * along; its collision where it is now */
 void stage_disc_loop(void) {
     struct Object *o = gCurrentObject;
+    stage_disc_shape_step(o);
     s16 pitch = 0, roll = 0;
     if (stage_tilting && gMarioState && gMarioState->area && gMarioState->area->camera) {
         /* The lean wanted: down the way the controller tips, as the stick would steer (camera-relative) */
@@ -451,18 +783,18 @@ void stage_disc_loop(void) {
     if (stage_pipe) {
         Vec3s angle = { (s16) o->oFaceAnglePitch, 0, (s16) o->oFaceAngleRoll };
         Vec3f at;
-        stage_turned(angle, 0.f, 0.f, STAGE_PIPE_Z, at);
+        stage_turned(angle, 0.f, stage_disc_mesh_height(stage_disc.now, 0.f, STAGE_PIPE_Z), STAGE_PIPE_Z, at);
         stage_pipe->oPosX = o->oPosX + at[0]; stage_pipe->oPosY = o->oPosY + at[1]; stage_pipe->oPosZ = o->oPosZ + at[2];
         stage_pipe->oFaceAnglePitch = o->oFaceAnglePitch; stage_pipe->oFaceAngleRoll = o->oFaceAngleRoll;
         stage_pipe->oFaceAngleYaw = 0;
         obj_build_transform_from_pos_and_angle(stage_pipe, O_POS_INDEX, O_FACE_ANGLE_INDEX);
     }
     obj_build_transform_from_pos_and_angle(o, O_POS_INDEX, O_FACE_ANGLE_INDEX);
-    load_object_collision_model();
+    stage_disc_load_collision(o);
 }
 
 /* Each step, before the Marios' own (bhvStageMosaic, in the spawner list): your B with one in front rolls it,
- * rather than punching; D-pad up turns tilting on or off */
+ * rather than punching; D-pad up turns tilting on or off; the rest of the D-pad changes the disc's shape */
 void stage_watch(void) {
     if (!stage_here() || !gMarioState || !gMarioState->controller) return;
     u16 pressed = gMarioState->controller->buttonPressed;
@@ -471,6 +803,11 @@ void stage_watch(void) {
         stage_tilting = !stage_tilting;
         play_sound(stage_tilting ? SOUND_MENU_CAMERA_ZOOM_IN : SOUND_MENU_CAMERA_ZOOM_OUT, gDefaultSoundArgs);
     }
+    /* D-pad right and left: the next shape, the one before; down: a pizza, and back */
+    int shape = stage_disc.shape == STAGE_PIZZA ? stage_disc.last_shape : stage_disc.shape;
+    if (pressed & R_JPAD) stage_disc_reshape((shape + 1) % STAGE_SHAPES);
+    if (pressed & L_JPAD) stage_disc_reshape((shape + STAGE_SHAPES - 1) % STAGE_SHAPES);
+    if (pressed & D_JPAD) stage_disc_reshape(stage_disc.shape == STAGE_PIZZA ? stage_disc.last_shape : STAGE_PIZZA);
 }
 
 /* An NPC Mario's mind: what its controller does this step */

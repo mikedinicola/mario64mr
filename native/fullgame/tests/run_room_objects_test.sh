@@ -28,5 +28,10 @@ cc -O1 -g -w -I include -I build/headless -I build/headless/include -I src -I . 
     -L"$SCRATCH" -lsm64game -lz -Wl,-rpath,"$SCRATCH" -o "$SCRATCH/$TEST"
 mkdir -p "$SCRATCH/save/res"
 ln -sf "$BASE" "$SCRATCH/save/res/base.zip"
+# (and the disc stage's pictures, as install_mario64mr.py packs them into base.zip: here, loose beside it)
+rm -rf "$SCRATCH/save/res/gfx"
+python3 -c "import sys, shutil; sys.path.insert(0, '$HERE/..'); import stage_gen; from pathlib import Path
+for src, name in stage_gen.pictures():
+    out = Path('$SCRATCH/save/res') / name; out.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(src, out)"
 cd "$SCRATCH/save"
 "$SCRATCH/$TEST" "$SCRATCH/save" 2>&1 | grep -v "texture format"

@@ -1,13 +1,15 @@
 """
 The disc stage's generated sources (patch_sm64ex.py writes them into the sm64ex checkout):
-- disc_mesh_c(): the disc, its display list and its collision (stage_disc.inc.c includes it);
-- mosaic_c(png): the boxes laid out on it, one a pixel of a picture (unity_stage.inc.h includes it).
+- mosaic_c(png): the boxes laid out on the disc, one a pixel of a picture (unity_stage.inc.h includes it);
+- pictures(): the disc's own pictures, for base.zip (install_mario64mr.py packs them). (The disc's mesh is made as
+  the game runs, for it changes shape: unity_stage.inc.h.)
 
 The art: your own goes in stage/local/ (ignored by git, so never pushed: like the ROM, it's yours to supply), and
 where a file isn't there, the placeholder of the same name in stage/ (committed, ours) is used instead:
 - mosaic.png: every pixel more than half opaque is a box of its colour, the picture's top row furthest from the
   stage's pipe;
-- (to come: disc.png and pizza.png, the disc's pictures.)
+- disc.png: the disc's top, the picture spanning it (its top row furthest from the pipe, as the mosaic's);
+- pizza.png: the disc's top when it's a pizza, the same way.
 Python's own libraries only (no Pillow): 8-bit RGB or RGBA PNGs, or palette ones (1, 2, 4 or 8 bits, with
 transparency).
 """
@@ -28,95 +30,79 @@ def art(name):
 
 
 
-DISC_RADIUS = 3000
-DISC_THICKNESS = 300
-DISC_SEGMENTS = 48
-# Placeholder colours until the disc's own picture: its top, and its rim
-DISC_TOP = (0xF2, 0xE6, 0xC4)
-DISC_TOP_EDGE = (0xD8, 0xC8, 0x9C)
-DISC_RIM = (0x9C, 0x7A, 0x52)
-# The disc's picture spans it: texture coordinates for a 512 texel square, in the vertex's 10.5 fixed point
-DISC_UV_SPAN = 512 * 32
+# The disc's pictures (yours in stage/local/, else stage/'s placeholders: make_placeholders), packed into base.zip
+# by install_mario64mr.py as the textures the game draws the disc with (unity_stage.inc.h names them the same). Any
+# size, square: the picture spans the disc, its top row furthest from the stage's pipe.
+PICTURES = {
+    "disc.png": "levels/castle_grounds/stage_disc.rgba32",
+    "pizza.png": "levels/castle_grounds/stage_pizza.rgba32",
+}
 
 
-def _rim(i, y):
-    a = 2 * math.pi * i / DISC_SEGMENTS
-    return (round(DISC_RADIUS * math.sin(a)), y, round(DISC_RADIUS * math.cos(a)))
+def pictures():
+    """[(the picture's file, its name in base.zip)]"""
+    return [(art(name), "gfx/" + texture + ".png") for name, texture in PICTURES.items()]
 
 
-def _uv(x, z):
-    return (round((x / DISC_RADIUS + 1) / 2 * DISC_UV_SPAN), round((z / DISC_RADIUS + 1) / 2 * DISC_UV_SPAN))
+def _mix(a, b, t):
+    t = min(1.0, max(0.0, t))
+    return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
 
 
-def _normal_y(a, b, c):
-    """The game's own surface normal's y (surface_load.c), to keep every floor facing up"""
-    return (b[2] - a[2]) * (c[0] - b[0]) - (b[0] - a[0]) * (c[2] - b[2])
+def _placeholder_disc(size):
+    rows = []
+    for py in range(size):
+        row = []
+        for px in range(size):
+            x, z = (px + 0.5) / size * 2 - 1, (py + 0.5) / size * 2 - 1
+            r = math.hypot(x, z)
+            check = (int((x + 1) * 8) + int((z + 1) * 8)) % 2
+            c = (0xF2, 0xE6, 0xC4) if check else (0xE4, 0xD4, 0xAC)
+            c = _mix(c, (0xC8, 0xB0, 0x80), (r - 0.75) / 0.25)
+            if abs(r - 0.93) < 0.012 or r < 0.04:
+                c = (0x9C, 0x7A, 0x52)
+            row.append(c + (255,))
+        rows.append(row)
+    return rows
 
 
-def _horizontal_normal(a, b, c):
-    nx = (b[1] - a[1]) * (c[2] - b[2]) - (b[2] - a[2]) * (c[1] - b[1])
-    nz = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0])
-    return nx, nz
+def _placeholder_pizza(size):
+    toppings = [(0.0, 0.0)] + [(0.42 * math.sin(a), 0.42 * math.cos(a)) for a in
+                               (2 * math.pi * (i + 0.5) / 6 for i in range(6))] + \
+               [(0.7 * math.sin(a), 0.7 * math.cos(a)) for a in (2 * math.pi * i / 9 for i in range(9))]
+    rows = []
+    for py in range(size):
+        row = []
+        for px in range(size):
+            x, z = (px + 0.5) / size * 2 - 1, (py + 0.5) / size * 2 - 1
+            r = math.hypot(x, z)
+            if r > 0.88:  # the crust, browner to its outside
+                c = _mix((0xE0, 0xA8, 0x58), (0xA8, 0x68, 0x2C), (r - 0.88) / 0.12)
+            elif r > 0.84:  # sauce showing
+                c = (0xC0, 0x30, 0x20)
+            else:  # cheese, blotched, with pepperoni
+                blotch = math.sin(x * 23) * math.sin(z * 19) + math.sin((x + z) * 31) * 0.5
+                c = _mix((0xF8, 0xD8, 0x60), (0xF0, 0xB8, 0x40), blotch * 0.5 + 0.3)
+                for tx, tz in toppings:
+                    d = math.hypot(x - tx, z - tz)
+                    if d < 0.1:
+                        c = _mix((0xB8, 0x28, 0x20), (0x88, 0x18, 0x14), d / 0.1)
+                        if math.sin(px * 1.7) * math.sin(py * 1.3) > 0.85:
+                            c = (0x70, 0x10, 0x10)
+            # Cut into eight slices
+            if r < 0.9:
+                a = math.atan2(x, z) % (math.pi / 4)
+                if min(a, math.pi / 4 - a) * r < 0.006:
+                    c = _mix(c, (0x90, 0x50, 0x20), 0.6)
+            row.append(c + (255,))
+        rows.append(row)
+    return rows
 
 
-def disc_mesh_c():
-    centre = (0, 0, 0)
-    top = [_rim(i, 0) for i in range(DISC_SEGMENTS)]
-    bottom = [_rim(i, -DISC_THICKNESS) for i in range(DISC_SEGMENTS)]
-    floors, walls = [], []
-    for i in range(DISC_SEGMENTS):
-        j = (i + 1) % DISC_SEGMENTS
-        tri = (centre, top[j], top[i])
-        if _normal_y(*tri) <= 0:
-            tri = (centre, top[i], top[j])
-        assert _normal_y(*tri) > 0
-        floors.append(tri)
-        for wall in ((top[i], top[j], bottom[j]), (top[i], bottom[j], bottom[i])):
-            nx, nz = _horizontal_normal(*wall)
-            mid = [sum(p[k] for p in wall) / 3 for k in range(3)]
-            if nx * mid[0] + nz * mid[2] < 0:  # (facing out from the disc)
-                wall = (wall[0], wall[2], wall[1])
-            walls.append(wall)
-
-    out = ["/* Generated by stage_gen.py: the disc (%d units across, %d thick, %d sides) */\n"
-           % (2 * DISC_RADIUS, DISC_THICKNESS, DISC_SEGMENTS)]
-    # Display list: triangles five at a time, each with vertices of its own (its corners' colours differ)
-    coloured = []
-    for t in floors:
-        coloured.append([(p, DISC_TOP if p == centre else DISC_TOP_EDGE) for p in t])
-    for t in walls:
-        coloured.append([(p, DISC_RIM if p[1] == 0 else tuple(c * 3 // 4 for c in DISC_RIM)) for p in t])
-    batches = [coloured[i:i + 5] for i in range(0, len(coloured), 5)]
-    for n, batch in enumerate(batches):
-        out.append("static const Vtx stage_disc_vertices_%d[] = {\n" % n)
-        for t in batch:
-            for (x, y, z), (r, g, b) in t:
-                u, v = _uv(x, z)
-                out.append("    {{{ %6d, %6d, %6d }, 0, { %6d, %6d }, { 0x%02x, 0x%02x, 0x%02x, 0xff }}},\n"
-                           % (x, y, z, u, v, r, g, b))
-        out.append("};\n")
-    out.append("static const Gfx stage_disc_dl_mesh[] = {\n")
-    for n, batch in enumerate(batches):
-        out.append("    gsSPVertex(stage_disc_vertices_%d, %d, 0),\n" % (n, 3 * len(batch)))
-        for k in range(0, len(batch), 2):
-            if k + 1 < len(batch):
-                out.append("    gsSP2Triangles(%d, %d, %d, 0x0, %d, %d, %d, 0x0),\n"
-                           % (3 * k, 3 * k + 1, 3 * k + 2, 3 * k + 3, 3 * k + 4, 3 * k + 5))
-            else:
-                out.append("    gsSP1Triangle(%d, %d, %d, 0x0),\n" % (3 * k, 3 * k + 1, 3 * k + 2))
-    out.append("    gsSPEndDisplayList(),\n};\n")
-
-    # Collision: the centre, the top rim, the bottom rim
-    points = [centre] + top + bottom
-    index = {p: i for i, p in enumerate(points)}
-    out.append("const Collision stage_disc_collision[] = {\n    COL_INIT(),\n    COL_VERTEX_INIT(%d),\n" % len(points))
-    for x, y, z in points:
-        out.append("    COL_VERTEX(%d, %d, %d),\n" % (x, y, z))
-    out.append("    COL_TRI_INIT(SURFACE_DEFAULT, %d),\n" % (len(floors) + len(walls)))
-    for t in floors + walls:
-        out.append("    COL_TRI(%d, %d, %d),\n" % tuple(index[p] for p in t))
-    out.append("    COL_TRI_STOP(),\n    COL_END(),\n};\n")
-    return "".join(out)
+def make_placeholders(size=256):
+    """stage/'s placeholder pictures (committed: run this to remake them)"""
+    write_png(PLACEHOLDERS / "disc.png", _placeholder_disc(size))
+    write_png(PLACEHOLDERS / "pizza.png", _placeholder_pizza(size))
 
 
 def read_png(path):

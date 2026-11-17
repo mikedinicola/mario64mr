@@ -41,6 +41,9 @@ void stage_npcs_pause(int paused);
 void stage_tumble_test(int n, float speed, s16 dir);
 void sm64unity_stage_tilt(float forward, float right);
 int sm64unity_stage_tilting(void);
+int stage_disc_shape(void);
+int stage_disc_changing(void);
+int stage_disc_pizza(void);
 extern const BehaviorScript bhvStageDisc[];
 #define ACT_STAGE_ROLL 0x0000047E
 #define ACT_STAGE_TUMBLE 0x0002047F
@@ -74,6 +77,38 @@ static void shot_near(const char *name, struct MarioState *m, struct MarioState 
     snapshot_from(path, 960, 540, eye, mid);
     printf("  (picture: %s)\n", path);
 }
+static float disc_height(float x, float z);
+/* A picture of the whole disc, from above its rim (by the pipe's side), looking down at its middle */
+static void overview(const char *name) {
+    const char *dir = getenv("STAGE_SNAPSHOTS");
+    if (!dir) return;
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s.png", dir, name);
+    float eye[3] = { 2600, 2800, 5200 }, at[3] = { 0, 0, -300 };
+    snapshot_from(path, 960, 540, eye, at);
+    printf("  (picture: %s)\n", path);
+}
+/* The mean distance of the boxes from the disc's middle */
+static float boxes_out(void) {
+    float sum = 0; int n = 0;
+    const BehaviorScript *behavior = segmented_to_virtual(bhvStageBox);
+    for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_DESTRUCTIVE].next;
+         b != (struct Object *) &gObjectLists[OBJ_LIST_DESTRUCTIVE]; b = (struct Object *) b->header.next)
+        if (b->behavior == behavior && b->oHeldState == HELD_FREE) { sum += hypotf(b->oPosX, b->oPosZ); n++; }
+    return n ? sum / n : 0;
+}
+/* A change of shape, waited out: 1 if Mario and the first NPC stayed on their feet on it all the while */
+static int ride_change(void) {
+    int riding = 1;
+    for (int i = 0; i < 100; i++) {
+        tick(0);
+        struct MarioState *n = stage_npc_state(0);
+        if (fabsf(gMarioState->pos[1] - gMarioState->floorHeight) > 5.f || (gMarioState->action & ACT_FLAG_AIR)
+            || fabsf(n->pos[1] - disc_height(n->pos[0], n->pos[2])) > 5.f || (n->action & ACT_FLAG_AIR)) riding = 0;
+    }
+    return riding;
+}
+
 /* The disc object, and how high its top is at (x, z) (from above, down onto it: not a box nor the pipe) */
 static struct Object *the_disc(void) {
     const BehaviorScript *behavior = segmented_to_virtual(bhvStageDisc);
@@ -95,6 +130,16 @@ static int stage_pipe_follows(struct Object *disc) {
         if (o->behavior == pipe)
             return o->oFaceAnglePitch == disc->oFaceAnglePitch && o->oFaceAngleRoll == disc->oFaceAngleRoll
                 && fabsf(o->oPosY) > 50.f;
+    return 0;
+}
+/* Is the stage's pipe standing on the disc's top, where it was put? */
+static int stage_pipe_follows_up(void) {
+    const BehaviorScript *pipe = segmented_to_virtual(bhvWarpPipe);
+    for (struct Object *o = (struct Object *) gObjectLists[OBJ_LIST_SURFACE].next;
+         o != (struct Object *) &gObjectLists[OBJ_LIST_SURFACE]; o = (struct Object *) o->header.next)
+        if (o->behavior == pipe) {
+            if (hypotf(o->oPosX, o->oPosZ - 2400) < 10.f) return fabsf(o->oPosY - (-500.f * 2400 * 2400 / (3000.f * 3000.f))) < 2.f;
+        }
     return 0;
 }
 /* An extra Mario put at (x, z), on its feet, facing yaw */
@@ -388,6 +433,66 @@ int main(int argc, char **argv) {
           && fabsf(disc_height(1500, 1500)) < 1.f, "D-pad up again: off, and it eases back level");
     CHECK(fabsf(gMarioState->pos[1] - gMarioState->floorHeight) < 5.f && stage_npcs() == 3, "everyone still on it");
     sm64unity_stage_tilt(0.f, 0.f);
+
+    /* Shapes: the rest of the D-pad */
+    printf("Shapes:\n");
+    for (int i = 0; i < 3; i++) stand(stage_npc_state(i), -900 + 600 * i, -1200, 0);
+    stand(gMarioState, 600, 600, 0);
+    ticks(10);
+    CHECK(stage_disc_shape() == 0 && !stage_disc_pizza() && !stage_disc_changing(), "flat at first, with its own picture");
+    overview("6-flat");
+    float spread = boxes_out();
+    tick(R_JPAD);
+    CHECK(stage_disc_changing() && stage_disc_shape() == 1, "D-pad right: changing to the next shape");
+    float halfway = 0;
+    for (int i = 0; i < 44; i++) tick(0);
+    halfway = disc_height(0, 0);
+    int rode = ride_change();
+    CHECK(!stage_disc_changing() && fabsf(disc_height(0, 0) - 900) < 5 && halfway > 200 && halfway < 700,
+          "a hill, eased into (%.0f halfway, %.0f high)", halfway, disc_height(0, 0));
+    CHECK(rode && gMarioState->pos[1] > 600, "Mario and the others rise with it, on their feet (Mario %.0f up)", gMarioState->pos[1]);
+    CHECK(boxes_out() > spread + 100, "and the boxes slide down it, out (%.0f to %.0f)", spread, boxes_out());
+    shot("6-hill-near");
+    overview("6-hill");
+    tick(R_JPAD);
+    rode = ride_change();
+    CHECK(fabsf(disc_height(0, 0)) < 5 && disc_height(2700, 0) > 500 && rode, "then a valley (%.0f at its rim)", disc_height(2700, 0));
+    overview("6-valley");
+    tick(R_JPAD);
+    rode = ride_change();
+    CHECK(fabsf(disc_height(0, 600) - 217) < 3 && fabsf(disc_height(0, 1500)) < 3 && rode, "then dunes (%.0f on the first)",
+          disc_height(0, 600));
+    overview("6-dunes");
+    tick(R_JPAD);
+    rode = ride_change();
+    CHECK(disc_height(2000, 0) > 150 && disc_height(0, 2000) < -150 && rode, "then a pass (%.0f, %.0f)", disc_height(2000, 0),
+          disc_height(0, 2000));
+    overview("6-pass");
+    CHECK(stage_pipe_follows_up(), "the stage's pipe stands on it where it's put");
+    tick(L_JPAD);
+    ride_change();
+    CHECK(stage_disc_shape() == 3 && fabsf(disc_height(0, 600) - 217) < 3, "D-pad left: back to the dunes");
+    tick(D_JPAD);
+    for (int i = 0; i < 40; i++) tick(0);
+    CHECK(!stage_disc_pizza(), "D-pad down: not a pizza yet, early on");
+    for (int i = 0; i < 10; i++) tick(0);
+    CHECK(stage_disc_pizza(), "its picture a pizza's halfway");
+    rode = ride_change();
+    CHECK(stage_disc_shape() == 5 && fabsf(disc_height(0, 0)) < 5 && disc_height(2990, 0) > 60 && rode,
+          "a pizza, its crust a lip at the rim (%.0f)", disc_height(2990, 0));
+    overview("6-pizza");
+    shot("6-pizza-near");
+    tick(D_JPAD);
+    ride_change();
+    CHECK(stage_disc_shape() == 3 && !stage_disc_pizza() && fabsf(disc_height(0, 600) - 217) < 3,
+          "D-pad down again: back to the dunes");
+    tick(R_JPAD);
+    for (int i = 0; i < 30; i++) tick(0);
+    tick(R_JPAD); /* (changing still: on to the next from where it is) */
+    rode = ride_change();
+    CHECK(stage_disc_shape() == 0 && fabsf(disc_height(750, 0)) < 1 && fabsf(disc_height(1500, -1500)) < 1 && rode,
+          "and right, partway, then right again: flat");
+    CHECK(fabsf(gMarioState->pos[1] - gMarioState->floorHeight) < 5.f && stage_npcs() == 3, "everyone still on it");
     stage_npcs_pause(0);
 
     /* Every box: as many Marios as there can be */
@@ -405,6 +510,9 @@ int main(int argc, char **argv) {
     CHECK(stage_npcs() >= most - 2, "they get along (%d of %d left)", stage_npcs(), most);
     CHECK(stage_hud_count() == 1 + stage_npcs(), "all counted (%d)", stage_hud_count());
 
+    tick(D_JPAD);
+    ticks(100);
+    CHECK(stage_disc_shape() == 5, "a pizza again, to leave it so");
     CHECK(through_pipe(0, 0, 2400, 1), "the stage's pipe takes him back to Castle Grounds (area %d)", gCurrAreaIndex);
     ticks(60);
     printf("  Mario at %.0f %.0f %.0f\n", gMarioState->pos[0], gMarioState->pos[1], gMarioState->pos[2]);
@@ -416,6 +524,7 @@ int main(int argc, char **argv) {
     CHECK(through_pipe(-2400, 260, 4400, 2), "and through it again");
     CHECK(stage_boxes() == stage_mosaic_boxes(), "the picture laid out again (%d boxes)", stage_boxes());
     CHECK(stage_npcs() == 0, "and only Mario again");
+    CHECK(stage_disc_shape() == 0 && !stage_disc_pizza() && fabsf(disc_height(2850, 0)) < 1, "and the disc flat, its own again");
 
     printf(failures ? "FAILED (%d failures)\n" : "PASSED (%d failures)\n", failures);
     return failures != 0;

@@ -1,26 +1,16 @@
-/* The disc stage (Castle Grounds' area 2, through the pipe by where Mario starts): the disc, and the boxes on it.
- * Mario 64 MR's own geometry, nothing of the ROM's. Included in levels/castle_grounds/leveldata.c by
- * patch_sm64ex.py, after the disc's mesh and collision (stage_disc_mesh.inc.c, made by stage_gen.py).
+/* The disc stage (Castle Grounds' area 2, through the pipe by where Mario starts): its boxes, and its want of any
+ * ground of its own. Mario 64 MR's own geometry, nothing of the ROM's. Included in levels/castle_grounds/leveldata.c by
+ * patch_sm64ex.py.
  *
- * The disc is shaded by its vertices' colours until it has its own picture. It's an object (bhvStageDisc: it tilts),
- * its collision loaded as it turns; the area's own ground is none. Nothing is under it, so Mario can't walk off its
- * edge (out of bounds). */
+ * The disc is an object (bhvStageDisc: it tilts, and changes shape), its mesh and collision made as the game runs
+ * (unity_stage.inc.h, geo_stage_disc); the area's own ground is none. Nothing is under it, so Mario can't walk off
+ * its edge (out of bounds). */
 
 const Collision stage_disc_no_collision[] = {
     COL_INIT(),
     COL_VERTEX_INIT(0),
     COL_TRI_STOP(),
     COL_END(),
-};
-
-const Gfx stage_disc_dl_ground[] = {
-    gsDPPipeSync(),
-    gsDPSetCombineMode(G_CC_SHADE, G_CC_SHADE),
-    gsSPClearGeometryMode(G_LIGHTING),
-    gsSPDisplayList(stage_disc_dl_mesh),
-    gsDPPipeSync(),
-    gsSPSetGeometryMode(G_LIGHTING),
-    gsSPEndDisplayList(),
 };
 
 /* A box: a cube STAGE_BOX_SIZE across standing on its origin, its faces lit from above, in the colour the object

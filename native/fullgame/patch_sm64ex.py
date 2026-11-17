@@ -374,11 +374,11 @@ def prepare(root, rom, sixty=True, external_data=True):
                   '    END_LOOP(),\n'
                   '};\n'
                   'extern void stage_disc_loop(void);\n'
-                  'extern const Collision stage_disc_collision[];\n'
+                  'extern void stage_disc_init(void);\n'
                   'const BehaviorScript bhvStageDisc[] = {\n'  # (the stage's ground, tilting: unity_stage.inc.h)
                   '    BEGIN(OBJ_LIST_SURFACE),\n'
                   '    OR_INT(oFlags, (OBJ_FLAG_COMPUTE_DIST_TO_MARIO | OBJ_FLAG_UPDATE_GFX_POS_AND_ANGLE)),\n'
-                  '    LOAD_COLLISION_DATA(stage_disc_collision),\n'
+                  '    CALL_NATIVE(stage_disc_init),\n'
                   '    SET_FLOAT(oCollisionDistance, 10000),\n'
                   '    BEGIN_LOOP(),\n'
                   '        CALL_NATIVE(stage_disc_loop),\n'
@@ -601,11 +601,11 @@ Gfx *geo_offset_klepto_held_object(""")
     # The disc stage: Castle Grounds' area 2 (stage_disc.inc.c, stage_disc_geo.inc.c), through a pipe by where Mario
     # starts outside the castle. The pipe is warp node 0x32 there; it comes out of the stage's own pipe, node 0x0A,
     # and back the same way. Its boxes (unity_stage.inc.h) lie on it as mosaic.png's picture (stage/local/'s, yours, else
-    # stage/'s placeholder: stage_gen.art). The disc itself is an object (bhvStageDisc), for it tilts: the area's
-    # own ground is none.
+    # stage/'s placeholder: stage_gen.art). The disc itself is an object (bhvStageDisc), for it tilts and changes
+    # shape, its mesh and collision made as the game runs (unity_stage.inc.h): the area's own ground is none. Its
+    # pictures are textures in base.zip (stage_gen.pictures: install_mario64mr.py packs them).
     grounds = "levels/castle_grounds/"
     (root / grounds / "leveldata.c").write_text(original(grounds + "leveldata.c")
-                                                + '#include "levels/castle_grounds/areas/2/stage_disc_mesh.inc.c"\n'
                                                 + '#include "levels/castle_grounds/areas/2/stage_disc.inc.c"\n')
     (root / grounds / "geo.c").write_text(original(grounds + "geo.c")
                                           + '#include "levels/castle_grounds/areas/2/stage_disc_geo.inc.c"\n')
@@ -615,11 +615,11 @@ Gfx *geo_offset_klepto_held_object(""")
                           "#define MODEL_STAGE_DISC MODEL_LEVEL_GEOMETRY_05\n"
                           "extern const GeoLayout stage_disc_geo[];\nextern const GeoLayout stage_box_geo[];\n"
                           "extern const GeoLayout stage_disc_model_geo[];\n"
-                          "extern const Gfx stage_disc_dl_ground[];\nextern const Gfx stage_disc_dl_box[];\n"
-                          "extern const Collision stage_disc_collision[];\nextern const Collision stage_disc_no_collision[];\n"
+                          "extern const Gfx stage_disc_dl_box[];\nextern const Collision stage_disc_no_collision[];\n"
                           "extern const BehaviorScript bhvStageBox[];\nextern const BehaviorScript bhvStageMosaic[];\n"
                           "extern const BehaviorScript bhvStageDisc[];\n"
-                          "struct GraphNode;\nGfx *geo_stage_box(s32 callContext, struct GraphNode *node, void *context);\n\n"
+                          "struct GraphNode;\nGfx *geo_stage_box(s32 callContext, struct GraphNode *node, void *context);\n"
+                          "Gfx *geo_stage_disc(s32 callContext, struct GraphNode *node, void *context);\n\n"
                           "// script\n")
     (root / grounds / "header.h").write_text(header)
     script = original(grounds + "script.c")
@@ -651,7 +651,6 @@ Gfx *geo_offset_klepto_held_object(""")
     FREE_LEVEL_POOL(),""")
     (root / grounds / "script.c").write_text(script)
     (root / grounds / "areas/2").mkdir(exist_ok=True)
-    (root / grounds / "areas/2/stage_disc_mesh.inc.c").write_text(stage_gen.disc_mesh_c())
     (root / "src/pc/stage_mosaic.inc.h").write_text(stage_gen.mosaic_c())
     for name in ("stage_disc.inc.c", "stage_disc_geo.inc.c"):
         shutil.copy2(HERE / name, root / grounds / "areas/2" / name)

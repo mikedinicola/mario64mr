@@ -1,5 +1,5 @@
 /* The disc stage's geo layouts (Castle Grounds' area 2): the stage, with Castle Grounds' own sky and camera; the disc,
- * an object of its own for it tilts (bhvStageDisc); and a box (unity_stage.inc.h). Included in
+ * an object of its own for it tilts and changes shape (bhvStageDisc); and a box (unity_stage.inc.h). Included in
  * levels/castle_grounds/geo.c by patch_sm64ex.py. */
 const GeoLayout stage_disc_geo[] = {
    GEO_NODE_SCREEN_AREA(10, SCREEN_WIDTH/2, SCREEN_HEIGHT/2, SCREEN_WIDTH/2, SCREEN_HEIGHT/2),
@@ -29,7 +29,7 @@ const GeoLayout stage_disc_geo[] = {
 const GeoLayout stage_disc_model_geo[] = {
    GEO_CULLING_RADIUS(4000),
    GEO_OPEN_NODE(),
-      GEO_DISPLAY_LIST(LAYER_OPAQUE, stage_disc_dl_ground),
+      GEO_ASM(0, geo_stage_disc), /* (its mesh, as it's shaped now: unity_stage.inc.h) */
    GEO_CLOSE_NODE(),
    GEO_END(),
 };
