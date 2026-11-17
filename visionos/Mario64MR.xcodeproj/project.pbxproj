@@ -34,10 +34,10 @@
 		9F73F930B2142512EF197BD9 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C17BF3C984C3F4C5803FE34B /* Metal.framework */; };
 		A1D5135FB4D76F34960EC809 /* SpatialControllers.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B25744D9B286AEA53F19E0 /* SpatialControllers.swift */; };
 		B6D61905B2673091F5C50683 /* Mario64MRApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B76ACB4BACE212A1D0E7938D /* Mario64MRApp.swift */; };
+		C4E5A1D2B3F4061728394A5B /* TreasureChest.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5F6B2E3C4A5172839405B6C /* TreasureChest.swift */; };
 		CCD398FFD74F9D436621B6C3 /* ImmersiveRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E201BEFE8AF929559A79171F /* ImmersiveRenderer.swift */; };
 		E093D695B090A938A776B98E /* CompositorServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CB1DD4AB1EC0CE1344AA1712 /* CompositorServices.framework */; };
 		E7D6770BB438D204A732EEAF /* RoomPlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F7340C8F92D6C1C7DB67773 /* RoomPlacement.swift */; };
-		C4E5A1D2B3F4061728394A5B /* TreasureChest.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5F6B2E3C4A5172839405B6C /* TreasureChest.swift */; };
 		EF26E1B89871844570516234 /* Cartridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7676E3B3887EFCF59AB82C3A /* Cartridge.swift */; };
 		F11133D0BB78769A0F93253D /* TitleScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = AED565824E6717B29E252745 /* TitleScreen.swift */; };
 		F645B840CD83BE01F20CDBF5 /* GameRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F43AEDE2DB291E5E35525CD /* GameRenderer.swift */; };
@@ -79,7 +79,6 @@
 		7ACFB0947ABEBB5BE4664230 /* GameShaders.msl */ = {isa = PBXFileReference; lastKnownFileType = text; path = GameShaders.msl; sourceTree = "<group>"; };
 		7D08E37159B83E89B4908AFA /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = System/Library/Frameworks/GameController.framework; sourceTree = SDKROOT; };
 		7F7340C8F92D6C1C7DB67773 /* RoomPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomPlacement.swift; sourceTree = "<group>"; };
-		D5F6B2E3C4A5172839405B6C /* TreasureChest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreasureChest.swift; sourceTree = "<group>"; };
 		943F5996D2653E5553963EF2 /* Data */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Data; path = Build/Data; sourceTree = SOURCE_ROOT; };
 		9804ACE3F4CB94673186F407 /* GameHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameHost.swift; sourceTree = "<group>"; };
 		9DD4CFD5E67B1A2DED671C72 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
@@ -94,6 +93,7 @@
 		C6A18C5A275A7BE2627FA820 /* GameOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameOptions.swift; sourceTree = "<group>"; };
 		CB1DD4AB1EC0CE1344AA1712 /* CompositorServices.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CompositorServices.framework; path = System/Library/Frameworks/CompositorServices.framework; sourceTree = SDKROOT; };
 		CF233E5AB95DE6BC17C8FD9B /* N64Texture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = N64Texture.swift; sourceTree = "<group>"; };
+		D5F6B2E3C4A5172839405B6C /* TreasureChest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreasureChest.swift; sourceTree = "<group>"; };
 		E201BEFE8AF929559A79171F /* ImmersiveRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImmersiveRenderer.swift; sourceTree = "<group>"; };
 		F44E64A21D2674F2B26E052E /* TexturePacks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TexturePacks.swift; sourceTree = "<group>"; };
 		FA91C4F5557E9231F3E72B88 /* RoomMesh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomMesh.swift; sourceTree = "<group>"; };
@@ -334,7 +334,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = RC8MH6T24Z;
 				"EXCLUDED_ARCHS[sdk=xrsimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -359,7 +359,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = RC8MH6T24Z;
 				"EXCLUDED_ARCHS[sdk=xrsimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
