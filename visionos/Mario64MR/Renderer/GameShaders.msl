@@ -287,6 +287,11 @@ vertex PropVaryings prop_vertex(uint vid [[vertex_id]], const device PropVertex 
     return out;
 }
 
+/// A tracking area's value (the system's hover effect lights up the one you look at), where a prop is drawn
+fragment ushort tracking_area_fragment(PropVaryings in [[stage_in]], constant ushort &value [[buffer(3)]]) {
+    return value;
+}
+
 fragment float4 prop_fragment(PropVaryings in [[stage_in]], constant PropDraw &draw [[buffer(1)]],
                               constant RoomEye &eye [[buffer(2)]],
                               texture2d<float> texture [[texture(0)]], sampler s [[sampler(0)]]) {
