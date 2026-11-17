@@ -272,6 +272,13 @@ int main(int argc, char **argv) {
         for (int k = 0; k < 3; k++) if (at1[k * 4 + 1] - at0[k * 4 + 1] > top[k]) top[k] = at1[k * 4 + 1] - at0[k * 4 + 1];
     }
     CHECK(top[0] > 100 && top[1] > 100 && top[2] > 100, "and all jumped with A (%.0f %.0f %.0f up)", top[0], top[1], top[2]);
+    {
+        int stand = 1;
+        for (struct Object *o = (struct Object *) gObjectLists[OBJ_LIST_PLAYER].next;
+             o != (struct Object *) &gObjectLists[OBJ_LIST_PLAYER]; o = (struct Object *) o->header.next)
+            if (o != gMarioObject && o->header.gfx.unk38.animYTrans != gMarioObject->header.gfx.unk38.animYTrans) stand = 0;
+        CHECK(stand, "and stand as high as he does (animations at %d)", gMarioObject->header.gfx.unk38.animYTrans);
+    }
     CHECK(gCurrLevelNum == LEVEL_CASTLE_GROUNDS && gMarioState->action, "the first one's still playing");
     ticks(30);
     sm64unity_marios(at1, 3);
