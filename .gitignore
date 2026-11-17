@@ -6,3 +6,6 @@ Mario64MRData-work/
 *.apk
 __pycache__/
 .DS_Store
+
+# Your own art for the disc stage (see native/fullgame/stage_gen.py), kept out of the repo
+native/fullgame/stage/local/

@@ -10,6 +10,8 @@ import struct
 import subprocess
 from pathlib import Path
 
+import stage_gen
+
 HERE = Path(__file__).resolve().parent
 REVISION = "d7ca2c04364a6dd0dac58b47151e04e26887e6f0"
 
@@ -334,6 +336,27 @@ def prepare(root, rom, sixty=True, external_data=True):
                   '        CALL_NATIVE(unity_marios_update),\n'
                   '    END_LOOP(),\n'
                   '};\n')
+    # The disc stage's boxes, and the picture they're laid out in (unity_stage.inc.h)
+    behaviors += ('\nextern void stage_box_init(void);\nextern void stage_box_loop(void);\n'
+                  'const BehaviorScript bhvStageBox[] = {\n'
+                  '    BEGIN(OBJ_LIST_DESTRUCTIVE),\n'
+                  '    OR_INT(oFlags, (OBJ_FLAG_HOLDABLE | OBJ_FLAG_COMPUTE_DIST_TO_MARIO | OBJ_FLAG_SET_FACE_YAW_TO_MOVE_YAW'
+                  ' | OBJ_FLAG_UPDATE_GFX_POS_AND_ANGLE)),\n'
+                  '    DROP_TO_FLOOR(),\n'
+                  '    SET_HOME(),\n'
+                  '    CALL_NATIVE(stage_box_init),\n'
+                  '    BEGIN_LOOP(),\n'
+                  '        SET_INT(oIntangibleTimer, 0),\n'
+                  '        CALL_NATIVE(stage_box_loop),\n'
+                  '    END_LOOP(),\n'
+                  '};\n'
+                  'extern void stage_mosaic_lay(void);\n'
+                  'const BehaviorScript bhvStageMosaic[] = {\n'
+                  '    BEGIN(OBJ_LIST_DEFAULT),\n'
+                  '    CALL_NATIVE(stage_mosaic_lay),\n'
+                  '    BEGIN_LOOP(),\n'  # (not deactivated: it would never be laid out again, its respawn info says)
+                  '    END_LOOP(),\n'
+                  '};\n')
     (root / "data/behavior_data.c").write_text(behaviors)
     # Out in the room, the stick steers by your head rather than by the game camera (unity_mr.c, unity_stick_yaw)
     mario = original("src/game/mario.c")
@@ -517,7 +540,7 @@ Gfx *geo_offset_klepto_held_object(""")
                        "    unity_note_sky(background, colorIndex);\n    return init_skybox_display_list(player, background, colorIndex);\n}")
     sky = sky.replace('extern int unity_is_mr(void);\n', 'extern int unity_is_mr(void);\nextern void unity_note_sky(int background, int color);\n', 1)
     (root / "src/game/skybox.c").write_text(sky)
-    surface = original("src/engine/surface_load.c") + '\n#include "pc/unity_room.inc.h"\n#include "pc/unity_hands.inc.h"\n#include "pc/unity_room_objects.inc.h"\n#include "pc/unity_spawn.inc.h"\n#include "pc/unity_marios.inc.h"\n'
+    surface = original("src/engine/surface_load.c") + '\n#include "pc/unity_room.inc.h"\n#include "pc/unity_hands.inc.h"\n#include "pc/unity_room_objects.inc.h"\n#include "pc/unity_spawn.inc.h"\n#include "pc/unity_marios.inc.h"\n#include "pc/unity_stage.inc.h"\n'
     surface = 'extern int unity_draw_far(void);\n' + replace_once(surface, "#ifndef NODRAWINGDISTANCE\n    if (marioDist < gCurrentObject->oDrawingDistance) {",
                                                                "#ifndef NODRAWINGDISTANCE\n    if (unity_draw_far() || marioDist < gCurrentObject->oDrawingDistance) {")
     (root / "src/engine/surface_load.c").write_text(surface)
@@ -537,16 +560,22 @@ Gfx *geo_offset_klepto_held_object(""")
     (root / "include/text_options_strings.h.in").write_text(strings)
     # The disc stage: Castle Grounds' area 2 (stage_disc.inc.c, stage_disc_geo.inc.c), through a pipe by where Mario
     # starts outside the castle. The pipe is warp node 0x32 there; it comes out of the stage's own pipe, node 0x0A,
-    # and back the same way.
+    # and back the same way. Its boxes (unity_stage.inc.h) lie on it as mosaic.png's picture (stage/local/'s, yours, else
+    # stage/'s placeholder: stage_gen.art).
     grounds = "levels/castle_grounds/"
     (root / grounds / "leveldata.c").write_text(original(grounds + "leveldata.c")
+                                                + '#include "levels/castle_grounds/areas/2/stage_disc_mesh.inc.c"\n'
                                                 + '#include "levels/castle_grounds/areas/2/stage_disc.inc.c"\n')
     (root / grounds / "geo.c").write_text(original(grounds + "geo.c")
                                           + '#include "levels/castle_grounds/areas/2/stage_disc_geo.inc.c"\n')
     header = original(grounds + "header.h")
     header = replace_once(header, "// script\n",
-                          "// the disc stage (area 2)\nextern const GeoLayout stage_disc_geo[];\n"
-                          "extern const Gfx stage_disc_dl_ground[];\nextern const Collision stage_disc_collision[];\n\n"
+                          "// the disc stage (area 2)\n#define MODEL_STAGE_BOX MODEL_LEVEL_GEOMETRY_04\n"
+                          "extern const GeoLayout stage_disc_geo[];\nextern const GeoLayout stage_box_geo[];\n"
+                          "extern const Gfx stage_disc_dl_ground[];\nextern const Gfx stage_disc_dl_box[];\n"
+                          "extern const Collision stage_disc_collision[];\n"
+                          "extern const BehaviorScript bhvStageBox[];\nextern const BehaviorScript bhvStageMosaic[];\n"
+                          "struct GraphNode;\nGfx *geo_stage_box(s32 callContext, struct GraphNode *node, void *context);\n\n"
                           "// script\n")
     (root / grounds / "header.h").write_text(header)
     script = original(grounds + "script.c")
@@ -555,12 +584,17 @@ Gfx *geo_offset_klepto_held_object(""")
         OBJECT(/*model*/ MODEL_CASTLE_GROUNDS_WARP_PIPE, /*pos*/ -2400, 260, 4400, /*angle*/ 0, 0, 0, /*behParam*/ 0x00320000, /*beh*/ bhvWarpPipe),
         WARP_NODE(/*id*/ 0x32, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x02, /*destNode*/ 0x0A, /*flags*/ WARP_NO_CHECKPOINT),
         JUMP_LINK(script_func_local_1),""")
+    script = replace_once(script, """    LOAD_MODEL_FROM_GEO(MODEL_CASTLE_GROUNDS_CANNON_GRILL, castle_grounds_geo_000724),
+""", """    LOAD_MODEL_FROM_GEO(MODEL_CASTLE_GROUNDS_CANNON_GRILL, castle_grounds_geo_000724),
+    LOAD_MODEL_FROM_GEO(MODEL_STAGE_BOX,                   stage_box_geo),
+""")
     script = replace_once(script, """    END_AREA(),
 
     FREE_LEVEL_POOL(),""", """    END_AREA(),
 
     AREA(/*index*/ 2, stage_disc_geo),
         OBJECT(/*model*/ MODEL_CASTLE_GROUNDS_WARP_PIPE, /*pos*/ 0, 0, 2400, /*angle*/ 0, 0, 0, /*behParam*/ 0x000A0000, /*beh*/ bhvWarpPipe),
+        OBJECT(/*model*/ MODEL_NONE, /*pos*/ 0, 0, 0, /*angle*/ 0, 0, 0, /*behParam*/ 0x00000000, /*beh*/ bhvStageMosaic),
         WARP_NODE(/*id*/ 0x0A, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x32, /*flags*/ WARP_NO_CHECKPOINT),
         WARP_NODE(/*id*/ 0xF1, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x32, /*flags*/ WARP_NO_CHECKPOINT),
         TERRAIN(/*terrainData*/ stage_disc_collision),
@@ -571,9 +605,11 @@ Gfx *geo_offset_klepto_held_object(""")
     FREE_LEVEL_POOL(),""")
     (root / grounds / "script.c").write_text(script)
     (root / grounds / "areas/2").mkdir(exist_ok=True)
+    (root / grounds / "areas/2/stage_disc_mesh.inc.c").write_text(stage_gen.disc_mesh_c())
+    (root / "src/pc/stage_mosaic.inc.h").write_text(stage_gen.mosaic_c())
     for name in ("stage_disc.inc.c", "stage_disc_geo.inc.c"):
         shutil.copy2(HERE / name, root / grounds / "areas/2" / name)
-    for name in ("unity_bridge.h", "unity_bridge.c", "unity_mr.c", "unity_room.inc.h", "unity_hands.inc.h", "unity_room_objects.inc.h", "unity_spawn.inc.h", "unity_marios.inc.h", "unity_options.h", "unity_options.inc.h"):
+    for name in ("unity_bridge.h", "unity_bridge.c", "unity_mr.c", "unity_room.inc.h", "unity_hands.inc.h", "unity_room_objects.inc.h", "unity_spawn.inc.h", "unity_marios.inc.h", "unity_stage.inc.h", "unity_options.h", "unity_options.inc.h"):
         shutil.copy2(HERE / name, root / "src/pc" / name)
     (root / "baserom.us.z64").write_bytes(rom)
     # Sequence zero is authored as data-only assembly upstream. Read its exact

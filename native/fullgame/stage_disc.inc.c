@@ -1,52 +1,55 @@
-/* The disc stage (Castle Grounds' area 2, through the pipe by where Mario starts): its ground and what Mario stands
- * on. Mario 64 MR's own geometry, drawn with the grass of your ROM's Castle Grounds (outside_09003800). Included in
- * levels/castle_grounds/leveldata.c by patch_sm64ex.py.
+/* The disc stage (Castle Grounds' area 2, through the pipe by where Mario starts): the disc, and the boxes on it.
+ * Mario 64 MR's own geometry, nothing of the ROM's. Included in levels/castle_grounds/leveldata.c by
+ * patch_sm64ex.py, after the disc's mesh and collision (stage_disc_mesh.inc.c, made by stage_gen.py).
  *
- * For now a flat square of grass, 6000 units across at height 0; the disc comes later. Nothing is under it, so Mario
- * can't walk off its edges (out of bounds). */
-
-#define STAGE_DISC_HALF 3000
-/* The grass repeats every 512 units: 32 texels, in the vertex's 10.5 fixed point */
-#define STAGE_DISC_UV(units) ((units) * 32 * 32 / 512)
-
-static const Vtx stage_disc_ground_vertices[] = {
-    {{{ -STAGE_DISC_HALF, 0, -STAGE_DISC_HALF }, 0, { STAGE_DISC_UV(-STAGE_DISC_HALF), STAGE_DISC_UV(-STAGE_DISC_HALF) }, { 0xff, 0xff, 0xff, 0xff }}},
-    {{{ -STAGE_DISC_HALF, 0,  STAGE_DISC_HALF }, 0, { STAGE_DISC_UV(-STAGE_DISC_HALF), STAGE_DISC_UV( STAGE_DISC_HALF) }, { 0xff, 0xff, 0xff, 0xff }}},
-    {{{  STAGE_DISC_HALF, 0,  STAGE_DISC_HALF }, 0, { STAGE_DISC_UV( STAGE_DISC_HALF), STAGE_DISC_UV( STAGE_DISC_HALF) }, { 0xff, 0xff, 0xff, 0xff }}},
-    {{{  STAGE_DISC_HALF, 0, -STAGE_DISC_HALF }, 0, { STAGE_DISC_UV( STAGE_DISC_HALF), STAGE_DISC_UV(-STAGE_DISC_HALF) }, { 0xff, 0xff, 0xff, 0xff }}},
-};
+ * The disc is shaded by its vertices' colours until it has its own picture. Nothing is under it, so Mario can't walk
+ * off its edge (out of bounds). */
 
 const Gfx stage_disc_dl_ground[] = {
     gsDPPipeSync(),
-    gsDPSetCombineMode(G_CC_MODULATERGB, G_CC_MODULATERGB),
-    gsSPClearGeometryMode(G_LIGHTING),
-    gsDPSetTile(G_IM_FMT_RGBA, G_IM_SIZ_16b, 0, 0, G_TX_LOADTILE, 0, G_TX_WRAP | G_TX_NOMIRROR, G_TX_NOMASK, G_TX_NOLOD, G_TX_WRAP | G_TX_NOMIRROR, G_TX_NOMASK, G_TX_NOLOD),
-    gsSPTexture(0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON),
-    gsDPTileSync(),
-    gsDPSetTile(G_IM_FMT_RGBA, G_IM_SIZ_16b, 8, 0, G_TX_RENDERTILE, 0, G_TX_WRAP | G_TX_NOMIRROR, 5, G_TX_NOLOD, G_TX_WRAP | G_TX_NOMIRROR, 5, G_TX_NOLOD),
-    gsDPSetTileSize(0, 0, 0, (32 - 1) << G_TEXTURE_IMAGE_FRAC, (32 - 1) << G_TEXTURE_IMAGE_FRAC),
-    gsDPSetTextureImage(G_IM_FMT_RGBA, G_IM_SIZ_16b, 1, outside_09003800),
-    gsDPLoadSync(),
-    gsDPLoadBlock(G_TX_LOADTILE, 0, 0, 32 * 32 - 1, CALC_DXT(32, G_IM_SIZ_16b_BYTES)),
-    gsSPVertex(stage_disc_ground_vertices, 4, 0),
-    gsSP2Triangles(0, 1, 2, 0x0, 0, 2, 3, 0x0),
-    gsSPTexture(0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_OFF),
-    gsDPPipeSync(),
     gsDPSetCombineMode(G_CC_SHADE, G_CC_SHADE),
+    gsSPClearGeometryMode(G_LIGHTING),
+    gsSPDisplayList(stage_disc_dl_mesh),
+    gsDPPipeSync(),
     gsSPSetGeometryMode(G_LIGHTING),
     gsSPEndDisplayList(),
 };
 
-const Collision stage_disc_collision[] = {
-    COL_INIT(),
-    COL_VERTEX_INIT(4),
-    COL_VERTEX(-STAGE_DISC_HALF, 0, -STAGE_DISC_HALF),
-    COL_VERTEX(-STAGE_DISC_HALF, 0,  STAGE_DISC_HALF),
-    COL_VERTEX( STAGE_DISC_HALF, 0,  STAGE_DISC_HALF),
-    COL_VERTEX( STAGE_DISC_HALF, 0, -STAGE_DISC_HALF),
-    COL_TRI_INIT(SURFACE_DEFAULT, 2),
-    COL_TRI(0, 1, 2),
-    COL_TRI(0, 2, 3),
-    COL_TRI_STOP(),
-    COL_END(),
+/* A box: a cube STAGE_BOX_SIZE across standing on its origin, its faces lit from above, in the colour the object
+ * gives it (the environment colour: geo_stage_box) */
+#define STAGE_BOX_HALF 50
+#define STAGE_BOX_FACE(x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3, shade) \
+    {{{ x0, y0, z0 }, 0, { 0, 0 }, { shade, shade, shade, 0xff }}}, \
+    {{{ x1, y1, z1 }, 0, { 0, 0 }, { shade, shade, shade, 0xff }}}, \
+    {{{ x2, y2, z2 }, 0, { 0, 0 }, { shade, shade, shade, 0xff }}}, \
+    {{{ x3, y3, z3 }, 0, { 0, 0 }, { shade, shade, shade, 0xff }}}
+#define H STAGE_BOX_HALF
+#define T (2 * STAGE_BOX_HALF)
+static const Vtx stage_box_vertices[] = {
+    STAGE_BOX_FACE(-H, T, -H,  -H, T,  H,   H, T,  H,   H, T, -H, 0xff), /* top */
+    STAGE_BOX_FACE(-H, 0,  H,   H, 0,  H,   H, T,  H,  -H, T,  H, 0xd8), /* +z */
+    STAGE_BOX_FACE( H, 0, -H,  -H, 0, -H,  -H, T, -H,   H, T, -H, 0xb0), /* -z */
+    STAGE_BOX_FACE( H, 0,  H,   H, 0, -H,   H, T, -H,   H, T,  H, 0xc4), /* +x */
+    STAGE_BOX_FACE(-H, 0, -H,  -H, 0,  H,  -H, T,  H,  -H, T, -H, 0xc4), /* -x */
+    STAGE_BOX_FACE(-H, 0, -H,   H, 0, -H,   H, 0,  H,  -H, 0,  H, 0x80), /* bottom */
+};
+#undef H
+#undef T
+
+const Gfx stage_disc_dl_box[] = {
+    gsDPPipeSync(),
+    gsDPSetCombineLERP(SHADE, 0, ENVIRONMENT, 0, 0, 0, 0, SHADE, SHADE, 0, ENVIRONMENT, 0, 0, 0, 0, SHADE),
+    gsSPClearGeometryMode(G_LIGHTING),
+    gsSPVertex(stage_box_vertices, 24, 0),
+    gsSP2Triangles( 0,  1,  2, 0x0,  0,  2,  3, 0x0),
+    gsSP2Triangles( 4,  5,  6, 0x0,  4,  6,  7, 0x0),
+    gsSP2Triangles( 8,  9, 10, 0x0,  8, 10, 11, 0x0),
+    gsSP2Triangles(12, 13, 14, 0x0, 12, 14, 15, 0x0),
+    gsSP2Triangles(16, 17, 18, 0x0, 16, 18, 19, 0x0),
+    gsSP2Triangles(20, 21, 22, 0x0, 20, 22, 23, 0x0),
+    gsDPPipeSync(),
+    gsDPSetCombineMode(G_CC_SHADE, G_CC_SHADE),
+    gsDPSetEnvColor(255, 255, 255, 255),
+    gsSPSetGeometryMode(G_LIGHTING),
+    gsSPEndDisplayList(),
 };
