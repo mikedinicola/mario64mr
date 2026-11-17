@@ -18,6 +18,9 @@
 #include "object_fields.h"
 #include "behavior_data.h"
 #include "pc/cliopts.h"
+#include "engine/math_util.h"
+#include "snapshot.h"
+#include <stdlib.h>
 
 int sm64unity_init(const char *);
 int sm64unity_tick(uint16_t, int8_t, int8_t);
@@ -29,6 +32,14 @@ int stage_boxes(void);
 int stage_mosaic_boxes(void);
 int stage_npcs(void);
 int stage_hud_count(void);
+int stage_rolls(void);
+int stage_knocks(void);
+int stage_tumbling(int n);
+struct MarioState *stage_npc_state(int n);
+void stage_npcs_pause(int paused);
+void stage_tumble_test(int n, float speed, s16 dir);
+#define ACT_STAGE_ROLL 0x0000047E
+#define ACT_STAGE_TUMBLE 0x0002047F
 int stage_box_mario(struct Object *o);
 int sm64unity_marios(float *out, int max);
 extern const BehaviorScript bhvStageBox[];
@@ -37,6 +48,35 @@ static int failures;
 #define CHECK(c, ...) do { if (c) printf("  ok   " __VA_ARGS__); else { printf("  FAIL " __VA_ARGS__); failures++; } printf("\n"); } while (0)
 
 static void tick(uint16_t b) { sm64unity_tick(b, 0, 0); sm64unity_render_current(); }
+static void tick_stick(uint16_t b, int8_t x, int8_t y) { sm64unity_tick(b, x, y); sm64unity_render_current(); }
+/* A picture of the frame, where STAGE_SNAPSHOTS says (if it does) */
+static void shot(const char *name) {
+    const char *dir = getenv("STAGE_SNAPSHOTS");
+    if (!dir) return;
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s.png", dir, name);
+    snapshot(path, 960, 540);
+    printf("  (picture: %s)\n", path);
+}
+/* And a near one, from beside m (side: its left, 1, or right, -1, or from ahead, 0), looking at it and at n */
+static void shot_near(const char *name, struct MarioState *m, struct MarioState *n, int side) {
+    const char *dir = getenv("STAGE_SNAPSHOTS");
+    if (!dir) return;
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/%s.png", dir, name);
+    float mid[3] = { (m->pos[0] + n->pos[0]) / 2, m->pos[1] + 70, (m->pos[2] + n->pos[2]) / 2 };
+    s16 look = side ? (s16) (m->faceAngle[1] + side * 0x4000) : m->faceAngle[1];
+    float eye[3] = { mid[0] + 420 * sins(look), mid[1] + 110, mid[2] + 420 * coss(look) };
+    snapshot_from(path, 960, 540, eye, mid);
+    printf("  (picture: %s)\n", path);
+}
+/* An extra Mario put at (x, z), on its feet, facing yaw */
+static void stand(struct MarioState *m, float x, float z, s16 yaw) {
+    m->pos[0] = x; m->pos[1] = 0; m->pos[2] = z;
+    m->vel[0] = m->vel[1] = m->vel[2] = 0; m->forwardVel = 0;
+    m->faceAngle[1] = yaw;
+    set_mario_action(m, ACT_IDLE, 0);
+}
 static void ticks(int n) { for (int i = 0; i < n; i++) tick(0); }
 
 /* The box furthest along +x on the stage (the picture's right edge: nothing between it and the rim), of those never
@@ -192,6 +232,85 @@ int main(int argc, char **argv) {
     int on = 1;
     for (int i = 0; i < n; i++) on &= hypotf(at[4 * i], at[4 * i + 2]) < 3000 && at[4 * i + 1] > -1.f;
     CHECK(on, "all on the disc");
+
+    /* Rolling one: B with it just in front */
+    printf("Rolling:\n");
+    stage_npcs_pause(1);
+    struct MarioState *a = stage_npc_state(0), *b = stage_npc_state(1), *c = stage_npc_state(2);
+    stand(gMarioState, 0, 600, -0x4000); /* (-x: across the camera, behind him as he came out of the pipe) */
+    stand(a, -120, 600, 0x4000);
+    stand(b, 600, -800, 0);
+    stand(c, -600, -800, 0);
+    ticks(30);
+    shot("1-before");
+    tick(B_BUTTON);
+    CHECK(gMarioState->action == ACT_STAGE_ROLL && stage_tumbling(0) == 2, "B: Mario rolls the one in front (%08x, %d)",
+          gMarioState->action, stage_tumbling(0));
+    float rolled_from[3] = { gMarioState->pos[0], 0, gMarioState->pos[2] };
+    s16 spin0 = 0;
+    int ahead = 1;
+    float tilt = 0;
+    for (int i = 0; i < 45; i++) {
+        tick_stick(B_BUTTON, -100, 0); /* (stick left: -x, as the camera looks) */
+        float d = hypotf(a->pos[0] - gMarioState->pos[0], a->pos[2] - gMarioState->pos[2]);
+        s16 way = atan2s(a->pos[2] - gMarioState->pos[2], a->pos[0] - gMarioState->pos[0]);
+        if (fabsf(d - 95.f) > 5.f || abs((s16) (way - gMarioState->faceAngle[1])) > 0x100) ahead = 0;
+        if (i == 0) spin0 = a->marioObj->header.gfx.angle[2];
+        if (i == 25) { shot("2-rolling"); shot_near("2-rolling-side", gMarioState, a, 1); }
+        if (i == 30) shot_near("2-rolling-front", gMarioState, a, 0);
+        if (i == 35) shot_near("2-rolling-other-side", gMarioState, a, -1);
+        tilt = a->marioObj->header.gfx.angle[1];
+    }
+    float rolled = hypotf(gMarioState->pos[0] - rolled_from[0], gMarioState->pos[2] - rolled_from[2]);
+    CHECK(gMarioState->action == ACT_STAGE_ROLL && rolled > 250, "B held, the stick: he rolls it along (%.0f units)", rolled);
+    CHECK(ahead && stage_tumbling(0) == 2, "it just ahead of him all the way");
+    CHECK(a->marioObj->header.gfx.angle[2] != spin0 && (s16) (tilt - gMarioState->faceAngle[1]) == 0x4000,
+          "lying across the way, turning over (%d)", (int) (s16) (a->marioObj->header.gfx.angle[2] - spin0));
+    CHECK(gMarioState->marioBodyState->torsoAngle[0] > 0, "he leans over it, hands out (%d)",
+          gMarioState->marioBodyState->torsoAngle[0]);
+    /* Let go: it tumbles on, into b on its way, and both get up */
+    s16 way = gMarioState->faceAngle[1];
+    stand(b, a->pos[0] + 400.f * sins(way), a->pos[2] + 400.f * coss(way), 0);
+    float let_go[3] = { a->pos[0], 0, a->pos[2] };
+    int knocks = stage_knocks();
+    tick(0);
+    CHECK(gMarioState->action != ACT_STAGE_ROLL && stage_tumbling(0) == 1, "B let up: he lets go, it tumbles on");
+    int b_tumbled = 0;
+    for (int i = 0; i < 400; i++) {
+        tick(0);
+        if (stage_tumbling(1) == 1) b_tumbled = 1;
+        if (i == 6) { shot("3-tumbling"); shot_near("3-tumbling-near", a, a, 1); }
+        if (i == 9) shot_near("3-tumbling-near-2", a, a, 1);
+        if (i == 12) shot_near("3-tumbling-near-3", a, a, 1);
+    }
+    float went = hypotf(a->pos[0] - let_go[0], a->pos[2] - let_go[2]);
+    CHECK(went > 150, "on ahead (%.0f units)", went);
+    CHECK(b_tumbled && stage_knocks() > knocks, "and knocks over the one in its way");
+    CHECK(stage_tumbling(0) == 0 && stage_tumbling(1) == 0 && !(a->action & ACT_FLAG_AIR) && a->action != ACT_STAGE_TUMBLE
+          && b->action != ACT_STAGE_TUMBLE, "they get up again (%08x, %08x)", a->action, b->action);
+    ticks(60);
+    shot("4-up-again");
+    CHECK(a->action == ACT_IDLE && b->action == ACT_IDLE && stage_npcs() == 3, "on their feet");
+    /* Tumbling into the rim: back off it */
+    stand(c, 2500, 0, 0x4000);
+    stage_tumble_test(2, 40, 0x4000);
+    float outmost = 0;
+    for (int i = 0; i < 300; i++) { tick(0); if (c->pos[0] > outmost) outmost = c->pos[0]; }
+    CHECK(stage_npcs() == 3 && c->pos[0] < outmost - 50 && outmost < 2950 && c->action != ACT_STAGE_TUMBLE,
+          "tumbled at the rim, it rolls back off it (to %.0f, back to %.0f)", outmost, c->pos[0]);
+    /* The NPCs roll each other */
+    stage_npcs_pause(0);
+    int rolls = stage_rolls();
+    int most_tumbling = 0;
+    for (int t = 0; t < 4000 && stage_rolls() - rolls < 2; t++) {
+        tick(0);
+        int n = 0;
+        for (int i = 0; i < 3; i++) n += stage_tumbling(i) > 0;
+        if (n > most_tumbling) most_tumbling = n;
+    }
+    CHECK(stage_rolls() - rolls >= 2 && most_tumbling > 0, "on their own, they roll each other (%d rolls)", stage_rolls() - rolls);
+    ticks(600);
+    CHECK(stage_npcs() == 3, "and none of them falls off (%d)", stage_npcs());
     /* Every box: as many Marios as there can be */
     const BehaviorScript *boxes = segmented_to_virtual(bhvStageBox);
     for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_DESTRUCTIVE].next;

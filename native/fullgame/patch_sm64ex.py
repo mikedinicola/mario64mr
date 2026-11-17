@@ -175,6 +175,22 @@ def prepare(root, rom, sixty=True, external_data=True):
         area = replace_once(area, '        render_hud();\n\n        gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);\n        render_text_labels();\n',
                             tag % 3 + '        render_hud();\n\n        gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);\n        render_text_labels();\n' + tag % 0)
     (root / "src/game/area.c").write_text(area)
+    # On the disc stage, one Mario rolling another along, leaning over it (unity_stage.inc.h: stage_act_roll); and the
+    # one rolled's own action, never Mario's (stage_act_tumble)
+    moving = original("src/game/mario_actions_moving.c")
+    moving = replace_once(moving, 's32 mario_execute_moving_action(struct MarioState *m) {\n',
+                          'extern s32 stage_act_roll(struct MarioState *m);\nextern s32 stage_act_tumble(struct MarioState *m);\n'
+                          's32 mario_execute_moving_action(struct MarioState *m) {\n')
+    moving = replace_once(moving, '        case ACT_WALKING:                  cancel = act_walking(m);                  break;\n',
+                          '        case ACT_WALKING:                  cancel = act_walking(m);                  break;\n'
+                          '        case 0x0000047E /* ACT_STAGE_ROLL */: cancel = stage_act_roll(m);        break;\n'
+                          '        case 0x0002047F /* ACT_STAGE_TUMBLE */: cancel = stage_act_tumble(m);    break;\n')
+    (root / "src/game/mario_actions_moving.c").write_text(moving)
+    misc = original("src/game/mario_misc.c")
+    misc = replace_once(misc, '        if (action != ACT_BUTT_SLIDE && action != ACT_HOLD_BUTT_SLIDE && action != ACT_WALKING\n',
+                        '        if (action != ACT_BUTT_SLIDE && action != ACT_HOLD_BUTT_SLIDE && action != ACT_WALKING\n'
+                        '            && action != 0x0000047E /* ACT_STAGE_ROLL */\n')
+    (root / "src/game/mario_misc.c").write_text(misc)
     # On the disc stage, how many Marios there are, with the rest of the HUD (unity_stage.inc.h, stage_hud)
     hud = original("src/game/hud.c")
     hud = replace_once(hud, '        if (hudDisplayFlags & HUD_DISPLAY_FLAG_TIMER && configHUD) {\n            render_hud_timer();\n        }\n',
@@ -357,11 +373,12 @@ def prepare(root, rom, sixty=True, external_data=True):
                   '        CALL_NATIVE(stage_box_loop),\n'
                   '    END_LOOP(),\n'
                   '};\n'
-                  'extern void stage_mosaic_lay(void);\n'
+                  'extern void stage_mosaic_lay(void);\nextern void stage_watch(void);\n'
                   'const BehaviorScript bhvStageMosaic[] = {\n'
-                  '    BEGIN(OBJ_LIST_DEFAULT),\n'
+                  '    BEGIN(OBJ_LIST_SPAWNER),\n'  # (each step before the Marios': stage_watch)
                   '    CALL_NATIVE(stage_mosaic_lay),\n'
                   '    BEGIN_LOOP(),\n'  # (not deactivated: it would never be laid out again, its respawn info says)
+                  '        CALL_NATIVE(stage_watch),\n'
                   '    END_LOOP(),\n'
                   '};\n')
     (root / "data/behavior_data.c").write_text(behaviors)

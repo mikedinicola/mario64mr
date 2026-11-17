@@ -12,7 +12,12 @@
  *   over to Mario, now and then jumps, and keeps away from the edge. Up to UNITY_NPC_MARIOS of them; they're gone as
  *   the extra Marios are, when Mario leaves the stage.
  * - How many Marios there are (Mario too) is counted at the bottom of the screen, in the HUD's own letters
- *   (stage_hud, after the rest of the HUD). */
+ *   (stage_hud, after the rest of the HUD).
+ * - Marios roll each other. B with another Mario just in front, standing (Mario, or an NPC that means to): he leans
+ *   over it, hands out and down, and rolls it along ahead of him as he would a barrel (ACT_STAGE_ROLL, steered by
+ *   the stick, as long as B is held). The one rolled lies down and tumbles over and over (stage_tumble_step); let go
+ *   (B let up, or a jump), it tumbles on, slowing, knocks over any Mario it rolls into to tumble on too, rolls back
+ *   off the rim rather than over it, and gets up again once it stops. Only the other Marios are rolled, not yours. */
 
 #include "levels/castle_grounds/header.h"
 #include "game/memory.h"
@@ -21,6 +26,7 @@
 #include "game/spawn_sound.h"
 #include "game/print.h"
 #include "game/level_update.h"
+#include "game/mario_step.h"
 #include "pc/stage_mosaic.inc.h"
 
 /* (obj_behaviors.c's own, as its objects step: on the floor, into a wall) */
@@ -42,6 +48,29 @@ extern s16 object_step(void);
 #define STAGE_NPC_NEAR_MARIO 350.f
 #define STAGE_NPC_WALK 48.f
 #define STAGE_NPC_JUMP_ONE_IN 200
+/* Rolling one: how near in front it must be (and how far round from straight ahead), how fast he rolls it at
+ * most, how quickly he turns, how far ahead of him it tumbles, how hard a let go sends it on, how far he leans */
+#define STAGE_ROLL_REACH 170.f
+#define STAGE_ROLL_ANGLE 0x2800
+#define STAGE_ROLL_SPEED 16.f
+#define STAGE_ROLL_TURN 0x280
+#define STAGE_ROLL_GAP 95.f
+#define STAGE_ROLL_PUSH 10.f
+#define STAGE_ROLL_LEAN 0x1C00
+/* Tumbling: lying as he dives (MARIO_ANIM_DIVE: his length along the way he faces, its line this far up and ahead of
+ * his feet), across the way he's rolled, turning over about that line, as round as he is (how high off the ground it
+ * is); how quickly it slows, below what it stops, how near it knocks another over, the rim it rolls back off */
+#define STAGE_TUMBLE_AXIS_UP 30.f
+#define STAGE_TUMBLE_AXIS_AHEAD 30.f
+#define STAGE_TUMBLE_RADIUS 35.f
+#define STAGE_TUMBLE_SLOWING 0.985f
+#define STAGE_TUMBLE_DRAG 0.25f
+#define STAGE_TUMBLE_STOP 2.f
+#define STAGE_TUMBLE_HIT 90.f
+#define STAGE_TUMBLE_RIM 2900.f
+/* What the NPCs are for rolling each other: how near they look for one, how long they roll it */
+#define STAGE_NPC_ROLL_LOOK 1200.f
+#define STAGE_NPC_ROLL_ONE_IN 4
 
 static struct ObjectHitbox stage_box_hitbox = {
     /* interactType:      */ INTERACT_GRABBABLE,
@@ -91,8 +120,231 @@ int stage_box_mario(struct Object *o) {
     return 1;
 }
 
+/* Is Mario on the stage? */
+static int stage_here(void) { return gCurrLevelNum == LEVEL_CASTLE_GROUNDS && gCurrAreaIndex == 2; }
+
+/* Rolling: who's rolling it, and who it is */
+#define ACT_STAGE_ROLL 0x0000047E /* (0x07E | ACT_FLAG_MOVING) rolling another Mario along: stage_act_roll */
+#define ACT_STAGE_TUMBLE 0x0002047F /* (0x07F | ACT_FLAG_MOVING | ACT_FLAG_INVULNERABLE) rolled, tumbling: the extra
+                                       Marios' only (stage_tumble_step, in place of the Mario code) */
+static int stage_rolls_started, stage_tumbles_knocked;
+static int stage_tumble_way(void);
+static struct UnityMario *stage_rolled_by(struct MarioState *m) {
+    for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) {
+        struct UnityMario *t = &unity_marios[i];
+        if (t->obj && t->tumbling && t->tumble.by == m) return t;
+    }
+    return NULL;
+}
+static float stage_distance(float ax, float az, float bx, float bz) { return sqrtf((ax - bx) * (ax - bx) + (az - bz) * (az - bz)); }
+static s16 stage_turn_toward(s16 from, s16 to, s16 most) {
+    s16 d = (s16) (to - from);
+    return (s16) (from + (d > most ? most : d < -most ? -most : d));
+}
+/* Can it be rolled (on its feet, not tumbling, nor rolling one), or roll one (and its hands free)? */
+static int stage_rollable(struct UnityMario *t) {
+    return t->obj && !t->tumbling && !t->lost && !(t->m.action & ACT_FLAG_AIR) && t->m.action != ACT_STAGE_ROLL
+        && !(t->m.action & ACT_FLAG_INTANGIBLE) && t->m.floor;
+}
+static int stage_can_roll(struct MarioState *m) {
+    u32 a = m->action;
+    return !m->heldObj && (a == ACT_IDLE || a == ACT_WALKING || a == ACT_DECELERATING || a == ACT_PANTING
+                           || a == ACT_BRAKING || a == ACT_STANDING_AGAINST_WALL || a == ACT_BRAKING_STOP);
+}
+/* Tumbling free, at speed, along dir */
+static void stage_tumble_start(struct UnityMario *t, struct MarioState *by, float speed, s16 dir) {
+    if (!t->tumbling) t->tumble.spin = 0;
+    t->tumbling = 1;
+    t->tumble.by = by;
+    t->tumble.speed = speed;
+    t->tumble.dir = dir;
+    t->m.action = ACT_STAGE_TUMBLE;
+    t->m.forwardVel = 0.f;
+    vec3f_set(t->m.vel, 0.f, 0.f, 0.f);
+    t->m.heldObj = NULL;
+}
+/* The one just in front of m it would roll, if any */
+static struct UnityMario *stage_roll_target(struct MarioState *m) {
+    struct UnityMario *best = NULL;
+    float nearest = STAGE_ROLL_REACH;
+    for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) {
+        struct UnityMario *t = &unity_marios[i];
+        if (&t->m == m || !stage_rollable(t)) continue;
+        float dx = t->m.pos[0] - m->pos[0], dz = t->m.pos[2] - m->pos[2], d = sqrtf(dx * dx + dz * dz);
+        s16 off = (s16) (atan2s(dz, dx) - m->faceAngle[1]);
+        if (d < nearest && fabsf(t->m.pos[1] - m->pos[1]) < 80.f && off < STAGE_ROLL_ANGLE && off > -STAGE_ROLL_ANGLE) {
+            nearest = d;
+            best = t;
+        }
+    }
+    return best;
+}
+/* m starts rolling the one in front of it, if there's one. 1 if so */
+static int stage_roll_start(struct MarioState *m) {
+    if (!stage_can_roll(m)) return 0;
+    struct UnityMario *t = stage_roll_target(m);
+    if (!t) return 0;
+    stage_tumble_start(t, m, 0.f, m->faceAngle[1]);
+    play_sound(SOUND_MARIO_WHOA, t->obj->header.gfx.cameraToObject);
+    set_mario_action(m, ACT_STAGE_ROLL, 0);
+    m->forwardVel = m->forwardVel > STAGE_ROLL_SPEED ? STAGE_ROLL_SPEED : m->forwardVel;
+    stage_rolls_started++;
+    return 1;
+}
+/* Let go of it: it tumbles on, ahead (or back off the rim) */
+static void stage_roll_let_go(struct UnityMario *t, struct MarioState *by, float push) {
+    if (!t || t->tumble.by != by) return;
+    t->tumble.by = NULL;
+    t->tumble.speed = (by->forwardVel > 0.f ? by->forwardVel : 0.f) + push;
+}
+/* Where it's rolled to: just ahead of him, turned over by as far as it went */
+static void stage_roll_carry(struct UnityMario *t, struct MarioState *by) {
+    float x = by->pos[0] + STAGE_ROLL_GAP * sins(by->faceAngle[1]), z = by->pos[2] + STAGE_ROLL_GAP * coss(by->faceAngle[1]);
+    struct Surface *floor;
+    float y = find_floor(x, by->pos[1] + 100.f, z, &floor);
+    if (!floor || stage_distance(x, z, 0.f, 0.f) > STAGE_TUMBLE_RIM) { /* (at the rim: it rolls back off it) */
+        stage_roll_let_go(t, by, 0.f);
+        t->tumble.dir = (s16) (by->faceAngle[1] + 0x8000);
+        t->tumble.speed = 6.f;
+        return;
+    }
+    float moved = stage_distance(x, z, t->m.pos[0], t->m.pos[2]);
+    t->tumble.spin += (s16) (moved / STAGE_TUMBLE_RADIUS * 0x10000 / (2 * M_PI)) * stage_tumble_way();
+    t->tumble.dir = by->faceAngle[1];
+    t->m.pos[0] = x; t->m.pos[1] = y; t->m.pos[2] = z;
+    t->m.floor = floor; t->m.floorHeight = y;
+}
+
+/* (x, y, z) of a Mario's own, turned as he's drawn turned by angle (geo_process_object's rotation) */
+static void stage_turned(Vec3s angle, float x, float y, float z, Vec3f out) {
+    Mat4 turn;
+    Vec3f zero = { 0.f, 0.f, 0.f };
+    mtxf_rotate_zxy_and_translate(turn, zero, angle);
+    for (int j = 0; j < 3; j++) out[j] = x * turn[0][j] + y * turn[1][j] + z * turn[2][j];
+}
+/* Which way the spin turns him over forwards (his top on ahead, the way he's rolled): 1 or -1 */
+static int stage_tumble_way(void) {
+    static int way;
+    if (!way) {
+        Vec3s angle = { 0, 0x4000, 0x400 }; /* (rolled along +z, so lying along +x: turned a little over) */
+        Vec3f top;
+        stage_turned(angle, 0.f, 1.f, 0.f, top);
+        way = top[2] > 0.f ? 1 : -1;
+    }
+    return way;
+}
+
+/* Mario's own action, rolling one along (mario_execute_moving_action) */
+s32 stage_act_roll(struct MarioState *m) {
+    struct UnityMario *t = stage_rolled_by(m);
+    if (!t) return set_mario_action(m, ACT_IDLE, 0);
+    if (m->input & INPUT_A_PRESSED) {
+        stage_roll_let_go(t, m, STAGE_ROLL_PUSH);
+        return set_jumping_action(m, ACT_JUMP, 0);
+    }
+    if (!(m->controller->buttonDown & B_BUTTON)) {
+        stage_roll_let_go(t, m, STAGE_ROLL_PUSH);
+        return set_mario_action(m, m->forwardVel > 2.f ? ACT_DECELERATING : ACT_IDLE, 0);
+    }
+    float target = (m->input & INPUT_NONZERO_ANALOG) ? m->intendedMag / 32.f * STAGE_ROLL_SPEED : 0.f;
+    float v = m->forwardVel;
+    v = v < target ? (v + 1.f > target ? target : v + 1.f) : (v - 2.f < target ? target : v - 2.f);
+    if (m->input & INPUT_NONZERO_ANALOG) m->faceAngle[1] = stage_turn_toward(m->faceAngle[1], m->intendedYaw, STAGE_ROLL_TURN);
+    mario_set_forward_vel(m, v);
+    s32 step = perform_ground_step(m);
+    if (step == GROUND_STEP_LEFT_GROUND) {
+        stage_roll_let_go(t, m, 0.f);
+        return set_mario_action(m, ACT_FREEFALL, 0);
+    }
+    if (step == GROUND_STEP_HIT_WALL) mario_set_forward_vel(m, 0.f);
+    set_mario_anim_with_accel(m, MARIO_ANIM_PUSHING, (s32) (m->forwardVel / 4.f * 0x10000));
+    m->marioBodyState->handState = MARIO_HAND_OPEN;
+    m->marioBodyState->torsoAngle[0] = STAGE_ROLL_LEAN; /* (leaning over it: geo_mario_tilt_torso, let for this) */
+    m->marioBodyState->torsoAngle[1] = m->marioBodyState->torsoAngle[2] = 0;
+    stage_roll_carry(t, m);
+    return FALSE;
+}
+/* (never Mario's own: ACT_STAGE_TUMBLE is the extra Marios', who run no Mario code while in it) */
+s32 stage_act_tumble(struct MarioState *m) { return set_mario_action(m, ACT_IDLE, 0); }
+
+/* A rolled Mario's step: rolled along, or tumbling on, or getting up */
+static void stage_tumble_step(struct UnityMario *u) {
+    struct MarioState *m = &u->m;
+    struct Object *o = u->obj;
+    if (u->tumble.by && u->tumble.by->action != ACT_STAGE_ROLL) u->tumble.by = NULL; /* (he stopped rolling it) */
+    if (!u->tumble.by) {
+        float speed = u->tumble.speed;
+        /* Stopped: it turns on over onto its front (as it lies in a dive), then gets up from it, where it's drawn */
+        if (speed < STAGE_TUMBLE_STOP) {
+            s16 left = (s16) (0 - u->tumble.spin) * stage_tumble_way();
+            if (left > 0x600 || left < 0) u->tumble.spin += 0x600 * stage_tumble_way();
+            else {
+                u->tumbling = 0;
+                m->faceAngle[1] = (s16) (u->tumble.dir + 0x4000); /* (his head's way) */
+                m->faceAngle[0] = m->faceAngle[2] = 0;
+                m->pos[0] -= STAGE_TUMBLE_AXIS_AHEAD * sins(m->faceAngle[1]);
+                m->pos[2] -= STAGE_TUMBLE_AXIS_AHEAD * coss(m->faceAngle[1]);
+                vec3f_copy(o->header.gfx.pos, m->pos);
+                vec3s_set(o->header.gfx.angle, 0, m->faceAngle[1], 0);
+                set_mario_action(m, ACT_STOMACH_SLIDE_STOP, 0);
+                return;
+            }
+        } else {
+            float x = m->pos[0] + speed * sins(u->tumble.dir), z = m->pos[2] + speed * coss(u->tumble.dir);
+            struct Surface *floor;
+            float y = find_floor(x, m->pos[1] + 100.f, z, &floor);
+            if (!floor || stage_distance(x, z, 0.f, 0.f) > STAGE_TUMBLE_RIM) { /* (the rim: back off it) */
+                u->tumble.dir += 0x8000;
+                u->tumble.speed *= 0.6f;
+            } else {
+                m->pos[0] = x; m->pos[1] = y; m->pos[2] = z;
+                m->floor = floor; m->floorHeight = y;
+                u->tumble.spin += (s16) (speed / STAGE_TUMBLE_RADIUS * 0x10000 / (2 * M_PI)) * stage_tumble_way();
+                u->tumble.speed = speed * STAGE_TUMBLE_SLOWING - STAGE_TUMBLE_DRAG;
+                /* Into another Mario: that one's knocked over to tumble on too, and this one slows */
+                for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) {
+                    struct UnityMario *t = &unity_marios[i];
+                    if (t == u || !stage_rollable(t)) continue;
+                    if (stage_distance(t->m.pos[0], t->m.pos[2], x, z) < STAGE_TUMBLE_HIT) {
+                        stage_tumble_start(t, NULL, speed * 0.8f, u->tumble.dir);
+                        play_sound(SOUND_MARIO_WHOA, t->obj->header.gfx.cameraToObject);
+                        u->tumble.speed *= 0.5f;
+                        stage_tumbles_knocked++;
+                    }
+                }
+            }
+        }
+    }
+    /* Drawn lying across the way it rolls (facing a quarter turn round from it), turned over about its length by its
+     * spin, that line where it is, as high as he's round */
+    m->action = ACT_STAGE_TUMBLE;
+    vec3f_set(m->vel, 0.f, 0.f, 0.f);
+    m->forwardVel = 0.f;
+    m->faceAngle[1] = u->tumble.dir;
+    set_mario_animation(m, MARIO_ANIM_DIVE);
+    m->marioBodyState->eyeState = MARIO_EYES_DEAD;
+    m->marioBodyState->handState = MARIO_HAND_OPEN;
+    m->marioBodyState->action = m->action;
+    vec3s_set(m->marioBodyState->torsoAngle, 0, 0, 0);
+    Vec3s angle = { 0, (s16) (u->tumble.dir + 0x4000), u->tumble.spin };
+    Vec3f line;
+    stage_turned(angle, 0.f, STAGE_TUMBLE_AXIS_UP, STAGE_TUMBLE_AXIS_AHEAD, line);
+    o->header.gfx.throwMatrix = NULL;
+    o->header.gfx.pos[0] = m->pos[0] - line[0];
+    o->header.gfx.pos[1] = m->pos[1] + STAGE_TUMBLE_RADIUS - line[1];
+    o->header.gfx.pos[2] = m->pos[2] - line[2];
+    vec3s_copy(o->header.gfx.angle, angle);
+}
+
+/* Each step, before the Marios' own (bhvStageMosaic, in the spawner list): your B with one in front rolls it,
+ * rather than punching */
+void stage_watch(void) {
+    if (gMarioState && gMarioState->controller && (gMarioState->controller->buttonPressed & B_BUTTON) && stage_here())
+        stage_roll_start(gMarioState);
+}
+
 /* An NPC Mario's mind: what its controller does this step */
-enum { STAGE_NPC_IDLE, STAGE_NPC_WANDER, STAGE_NPC_FOLLOW };
+enum { STAGE_NPC_IDLE, STAGE_NPC_WANDER, STAGE_NPC_FOLLOW, STAGE_NPC_GO_ROLL, STAGE_NPC_ROLLING };
 static u32 stage_npc_random(struct UnityMario *u) {
     u32 x = u->brain.seed ? u->brain.seed : 1;
     x ^= x << 13; x ^= x >> 17; x ^= x << 5;
@@ -100,12 +352,28 @@ static u32 stage_npc_random(struct UnityMario *u) {
 }
 static int stage_npc_between(struct UnityMario *u, int lo, int hi) { return lo + (int) (stage_npc_random(u) % (u32) (hi - lo + 1)); }
 
+static int stage_npcs_paused; /* (for tests: they stand still) */
 static void stage_npc_think(struct UnityMario *u) {
     struct MarioState *m = &u->m;
     struct Controller *pad = &u->pad;
+    if (stage_npcs_paused) { memset(pad, 0, sizeof(*pad)); u->brain.mode = STAGE_NPC_IDLE; u->brain.timer = 30; return; }
     /* What next, its time up for this */
     if (--u->brain.timer <= 0) {
-        if (u->brain.mode == STAGE_NPC_IDLE) {
+        struct UnityMario *other = NULL;
+        if (u->brain.mode == STAGE_NPC_IDLE && stage_npc_between(u, 1, STAGE_NPC_ROLL_ONE_IN) == 1) {
+            float nearest = STAGE_NPC_ROLL_LOOK; /* (another to roll: the nearest) */
+            for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) {
+                struct UnityMario *t = &unity_marios[i];
+                if (t == u || !stage_rollable(t)) continue;
+                float d = stage_distance(t->m.pos[0], t->m.pos[2], m->pos[0], m->pos[2]);
+                if (d < nearest) { nearest = d; other = t; }
+            }
+        }
+        if (other) {
+            u->brain.mode = STAGE_NPC_GO_ROLL;
+            u->brain.target = other;
+            u->brain.timer = 300;
+        } else if (u->brain.mode == STAGE_NPC_IDLE) {
             if (stage_npc_between(u, 0, 9) < 7) {
                 u->brain.mode = STAGE_NPC_WANDER;
                 float a = stage_npc_between(u, 0, 0xFFFF), r = STAGE_NPC_ROAM * sqrtf(stage_npc_between(u, 0, 1000) / 1000.f);
@@ -126,12 +394,47 @@ static void stage_npc_think(struct UnityMario *u) {
         u->brain.z = gMarioState->pos[2];
     }
     float speed = 0.f;
-    if (sqrtf(m->pos[0] * m->pos[0] + m->pos[2] * m->pos[2]) > STAGE_NPC_SAFE) { /* (near the edge: back to the middle) */
+    u16 down = 0;
+    /* Rolling one: B held, and on ahead, turning a little, till its time's up */
+    if (u->brain.mode == STAGE_NPC_ROLLING) {
+        if (m->action != ACT_STAGE_ROLL) {
+            u->brain.mode = STAGE_NPC_IDLE;
+            u->brain.timer = stage_npc_between(u, 20, 90);
+        } else {
+            down = B_BUTTON;
+            u->brain.yaw = (s16) (m->faceAngle[1] + stage_npc_between(u, -0x200, 0x200));
+            if (stage_distance(m->pos[0], m->pos[2], 0.f, 0.f) > STAGE_NPC_ROAM) /* (not towards the rim) */
+                u->brain.yaw = atan2s(-m->pos[2], -m->pos[0]);
+            speed = STAGE_NPC_WALK;
+            if (u->brain.timer <= 1) down = 0; /* (let go: it tumbles on) */
+        }
+    }
+    /* Going to roll one: up to it, then B, facing it */
+    if (u->brain.mode == STAGE_NPC_GO_ROLL) {
+        struct UnityMario *t = u->brain.target;
+        if (!t || !stage_rollable(t)) {
+            u->brain.mode = STAGE_NPC_IDLE;
+            u->brain.timer = stage_npc_between(u, 20, 90);
+        } else {
+            float dx = t->m.pos[0] - m->pos[0], dz = t->m.pos[2] - m->pos[2];
+            u->brain.yaw = atan2s(dz, dx);
+            s16 off = (s16) (u->brain.yaw - m->faceAngle[1]);
+            if (sqrtf(dx * dx + dz * dz) < STAGE_ROLL_REACH - 30.f && off < 0x1800 && off > -0x1800) {
+                if (stage_roll_start(m)) {
+                    u->brain.mode = STAGE_NPC_ROLLING;
+                    u->brain.timer = stage_npc_between(u, 45, 150);
+                    down = B_BUTTON;
+                }
+            } else speed = sqrtf(dx * dx + dz * dz) < 300.f ? 24.f : STAGE_NPC_WALK;
+        }
+    }
+    if (u->brain.mode < STAGE_NPC_GO_ROLL && sqrtf(m->pos[0] * m->pos[0] + m->pos[2] * m->pos[2]) > STAGE_NPC_SAFE) {
+        /* (near the edge: back to the middle) */
         u->brain.mode = STAGE_NPC_WANDER;
         u->brain.x = u->brain.z = 0.f;
         u->brain.timer = 60;
     }
-    if (u->brain.mode != STAGE_NPC_IDLE) {
+    if (u->brain.mode != STAGE_NPC_IDLE && u->brain.mode < STAGE_NPC_GO_ROLL) {
         float dx = u->brain.x - m->pos[0], dz = u->brain.z - m->pos[2];
         if (sqrtf(dx * dx + dz * dz) < (u->brain.mode == STAGE_NPC_FOLLOW ? STAGE_NPC_NEAR_MARIO : 120.f)) {
             u->brain.mode = STAGE_NPC_IDLE;
@@ -142,9 +445,11 @@ static void stage_npc_think(struct UnityMario *u) {
         }
     }
     /* Now and then, on its way, a jump (A held a while, for its full height) */
-    u16 down = 0;
-    if (u->brain.hold > 0) { u->brain.hold--; down = A_BUTTON; }
-    else if (speed > 0.f && stage_npc_between(u, 1, STAGE_NPC_JUMP_ONE_IN) == 1) { u->brain.hold = 10; down = A_BUTTON; }
+    if (u->brain.hold > 0) { u->brain.hold--; down |= A_BUTTON; }
+    else if (speed > 0.f && u->brain.mode < STAGE_NPC_GO_ROLL && stage_npc_between(u, 1, STAGE_NPC_JUMP_ONE_IN) == 1) {
+        u->brain.hold = 10;
+        down |= A_BUTTON;
+    }
     pad->buttonPressed = down & ~pad->buttonDown;
     pad->buttonDown = down;
     pad->stickX = 0.f; /* (straight ahead: unity_marios_steer turns it the way it means) */
@@ -224,6 +529,21 @@ void stage_mosaic_lay(void) {
     }
 }
 
+/* How many rolls there have been, and Marios knocked over by tumbling ones (for tests) */
+int stage_rolls(void) { return stage_rolls_started; }
+int stage_knocks(void) { return stage_tumbles_knocked; }
+/* For tests: the n-th extra Mario (of sm64unity_marios' order); is it tumbling (1), or rolled along (2)? its state; the
+ * NPCs standing still or not; one sent tumbling */
+static struct UnityMario *stage_nth(int n) {
+    for (int i = 0; i < UNITY_EXTRA_MARIOS; i++)
+        if (unity_marios[i].obj && (unity_marios[i].obj->activeFlags & ACTIVE_FLAG_ACTIVE) && n-- == 0) return &unity_marios[i];
+    return NULL;
+}
+int stage_tumbling(int n) { struct UnityMario *u = stage_nth(n); return u ? u->tumbling + (u->tumble.by != NULL) : -1; }
+struct MarioState *stage_npc_state(int n) { struct UnityMario *u = stage_nth(n); return u ? &u->m : NULL; }
+void stage_npcs_pause(int paused) { stage_npcs_paused = paused; }
+void stage_tumble_test(int n, float speed, s16 dir) { struct UnityMario *u = stage_nth(n); if (u) stage_tumble_start(u, NULL, speed, dir); }
+
 /* How many NPC Marios there are (for tests) */
 int stage_npcs(void) { return unity_marios_npcs(); }
 
@@ -232,7 +552,6 @@ int stage_npcs(void) { return unity_marios_npcs(); }
 #define STAGE_HUD_Y 16
 static int stage_hud_shown;
 int stage_hud_count(void) { return stage_hud_shown; }
-static int stage_here(void) { return gCurrLevelNum == LEVEL_CASTLE_GROUNDS && gCurrAreaIndex == 2; }
 void stage_hud(void) {
     stage_hud_shown = 0;
     if (!stage_here() || !gMarioObject) return;

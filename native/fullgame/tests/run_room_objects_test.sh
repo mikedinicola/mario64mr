@@ -25,7 +25,7 @@ cp build/headless/sm64.us.f3dex2e "$SCRATCH/libsm64game.dylib"
 install_name_tool -id @rpath/libsm64game.dylib "$SCRATCH/libsm64game.dylib"
 cc -O1 -g -w -I include -I build/headless -I build/headless/include -I src -I . -DVERSION_US -D_LANGUAGE_C -DNON_MATCHING \
     -DAVOID_UB -DF3DEX_GBI_2E -DEXT_OPTIONS_MENU -DEXTERNAL_DATA -fno-strict-aliasing -fwrapv "$HERE/$TEST.c" \
-    -L"$SCRATCH" -lsm64game -Wl,-rpath,"$SCRATCH" -o "$SCRATCH/$TEST"
+    -L"$SCRATCH" -lsm64game -lz -Wl,-rpath,"$SCRATCH" -o "$SCRATCH/$TEST"
 mkdir -p "$SCRATCH/save/res"
 ln -sf "$BASE" "$SCRATCH/save/res/base.zip"
 cd "$SCRATCH/save"

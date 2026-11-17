@@ -13,6 +13,8 @@
  * - in the level only, for now: not carried out into the room.
  * Or it's a Mario of its own (an NPC: the disc stage's, unity_stage.inc.h), steered by a controller of its own that
  * stage_npc_think works: it goes where it means to whichever way the camera faces (unity_marios_steer).
+ * Rolled along by another Mario, or tumbling on after (the stage's too), it runs none of the game's Mario code:
+ * stage_tumble_step moves and turns it.
  * Its model reads its body state: it's swapped into gBodyStates[0] while its object is drawn (geo_process_object).
  * Tilted to the floor (crawling, sliding: align_with_floor), it's drawn by a matrix of its own: the game keeps one a
  * player (sFloorAlignMatrix[m->unk00]), so each extra one's step uses player 2's, then copies it out. */
@@ -45,12 +47,15 @@ struct UnityMario {
     Mat4 floorAlign;    /* tilted to the floor: how it's drawn (its object's throwMatrix) */
     int npc;            /* steered by its own controller, not yours */
     struct Controller pad;
-    struct { int mode, timer, hold; float x, z; s16 yaw; u32 seed; } brain; /* (stage_npc_think's) */
+    struct { int mode, timer, hold; float x, z; s16 yaw; u32 seed; struct UnityMario *target; } brain; /* (stage_npc_think's) */
+    int tumbling;       /* rolled along, or tumbling on (stage_tumble_step's) */
+    struct { struct MarioState *by; float speed; s16 dir, spin; } tumble;
 };
 extern Mat4 sFloorAlignMatrix[2]; /* (mario_actions_moving.c: a player each, by MarioState's unk00) */
 static struct UnityMario unity_marios[UNITY_EXTRA_MARIOS];
 extern const BehaviorScript bhvUnityMario[];
 static void stage_npc_think(struct UnityMario *u); /* (unity_stage.inc.h) */
+static void stage_tumble_step(struct UnityMario *u);
 
 /* (its object's oBehParams is its slot's, from 1) */
 static struct UnityMario *unity_mario_slot(struct Object *o) {
@@ -103,6 +108,8 @@ static struct UnityMario *unity_marios_make(float x, float y, float z, s16 yaw, 
     u->npc = npc;
     memset(&u->pad, 0, sizeof(u->pad));
     memset(&u->brain, 0, sizeof(u->brain));
+    u->tumbling = 0;
+    memset(&u->tumble, 0, sizeof(u->tumble));
     u->brain.seed = 0x9E3779B9u * (u32) slot;
     m->spawnInfo = gMarioState->spawnInfo;
     m->statusForCamera = &u->camera;
@@ -179,9 +186,10 @@ void unity_marios_update(void) {
     struct MarioState *first = gMarioState;
     struct Object *firstObj = gMarioObject;
     m->area = gCurrentArea;
-    if (u->npc) stage_npc_think(u);
+    if (u->npc && !u->tumbling) stage_npc_think(u); /* (gMarioState still the first Mario) */
     gMarioState = m; gMarioObject = o;
-    execute_mario_action(o);
+    if (u->tumbling) stage_tumble_step(u);
+    else execute_mario_action(o);
     gMarioState = first; gMarioObject = firstObj;
     /* Tilted to the floor: its own copy of the tilt, or the next one's step would move it there */
     if (o->header.gfx.throwMatrix == &sFloorAlignMatrix[m->unk00]) {
