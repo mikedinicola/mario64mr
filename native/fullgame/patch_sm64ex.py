@@ -175,6 +175,13 @@ def prepare(root, rom, sixty=True, external_data=True):
         area = replace_once(area, '        render_hud();\n\n        gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);\n        render_text_labels();\n',
                             tag % 3 + '        render_hud();\n\n        gDPSetScissor(gDisplayListHead++, G_SC_NON_INTERLACE, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);\n        render_text_labels();\n' + tag % 0)
     (root / "src/game/area.c").write_text(area)
+    # On the disc stage, how many Marios there are, with the rest of the HUD (unity_stage.inc.h, stage_hud)
+    hud = original("src/game/hud.c")
+    hud = replace_once(hud, '        if (hudDisplayFlags & HUD_DISPLAY_FLAG_TIMER && configHUD) {\n            render_hud_timer();\n        }\n',
+                       '        if (hudDisplayFlags & HUD_DISPLAY_FLAG_TIMER && configHUD) {\n            render_hud_timer();\n        }\n'
+                       '        if (configHUD) stage_hud();\n')
+    hud = replace_once(hud, 'void render_hud(void) {\n', 'extern void stage_hud(void);\nvoid render_hud(void) {\n')
+    (root / "src/game/hud.c").write_text(hud)
     acts = original("src/menu/star_select.c")
     if sixty:
         # (for MarioFace) The act select (the stars of a course) is a menu of its own, stage 4; the level is
@@ -366,6 +373,11 @@ def prepare(root, rom, sixty=True, external_data=True):
     mario = replace_once(mario, '#include <PR/ultratypes.h>\n',
                          '#include <PR/ultratypes.h>\nextern s16 unity_stick_yaw(s16);\n').replace(
         stick, 'atan2s(-controller->stickY, controller->stickX) + unity_stick_yaw(m->area->camera->yaw);')
+    # (an NPC Mario goes the way it means to, whichever way the camera faces: unity_marios.inc.h, unity_marios_steer)
+    mario = replace_once(mario, '        m->intendedYaw = m->faceAngle[1];\n    }\n}\n',
+                         '        m->intendedYaw = m->faceAngle[1];\n    }\n    unity_marios_steer(m);\n}\n')
+    mario = replace_once(mario, 'extern s16 unity_stick_yaw(s16);\n',
+                         'extern s16 unity_stick_yaw(s16);\nstruct MarioState;\nextern void unity_marios_steer(struct MarioState *m);\n')
     # (an extra Mario under water leaves the camera as it is: unity_marios.inc.h)
     mario = replace_once(mario, 'void set_submerged_cam_preset_and_spawn_bubbles(struct MarioState *m) {\n',
                          'extern int unity_marios_is_extra_state(struct MarioState *m);\n'

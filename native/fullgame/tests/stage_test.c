@@ -1,9 +1,11 @@
 /* Headless test of the disc stage (stage_disc.inc.c): the pipe by where Mario starts in Castle Grounds takes him to
- * area 2, he stands on its ground, and its own pipe brings him back by the first. Run by run_room_objects_test.sh
+ * area 2, he stands on its ground, and its own pipe brings him back by the first. On it, the boxes (picked up,
+ * thrown) and the Marios that come out of them (unity_stage.inc.h). Run by run_room_objects_test.sh
  * (TEST=stage_test), against the game library built with no host. */
 #include <stdio.h>
 #include <stdint.h>
 #include <math.h>
+#include <time.h>
 #include <ultra64.h>
 #include "sm64.h"
 #include "types.h"
@@ -25,6 +27,10 @@ void sm64unity_mr_geometry(int);
 int sm64unity_render_current(void);
 int stage_boxes(void);
 int stage_mosaic_boxes(void);
+int stage_npcs(void);
+int stage_hud_count(void);
+int stage_box_mario(struct Object *o);
+int sm64unity_marios(float *out, int max);
 extern const BehaviorScript bhvStageBox[];
 
 static int failures;
@@ -33,16 +39,34 @@ static int failures;
 static void tick(uint16_t b) { sm64unity_tick(b, 0, 0); sm64unity_render_current(); }
 static void ticks(int n) { for (int i = 0; i < n; i++) tick(0); }
 
-/* Mario dropped onto the top of the pipe at (x, y, z), then the game run until he's in area `area` (or not) */
-/* The box furthest along +x on the stage (the picture's right edge: nothing between it and the rim) */
-static struct Object *rightmost_box(void) {
+/* The box furthest along +x on the stage (the picture's right edge: nothing between it and the rim), of those never
+ * picked up yet if `untaken` */
+static struct Object *rightmost_box(int untaken) {
     struct Object *best = NULL;
     const BehaviorScript *behavior = segmented_to_virtual(bhvStageBox);
     for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_DESTRUCTIVE].next;
          b != (struct Object *) &gObjectLists[OBJ_LIST_DESTRUCTIVE]; b = (struct Object *) b->header.next)
-        if (b->behavior == behavior && (!best || b->oPosX > best->oPosX)) best = b;
+        if (b->behavior == behavior && (!untaken || !b->oAction) && (!best || b->oPosX > best->oPosX)) best = b;
     return best;
 }
+
+/* Mario put just +x of the box, facing it, and B pressed: 1 if he's holding it */
+static int pick_up(struct Object *box) {
+    gMarioState->pos[0] = box->oPosX + 100; gMarioState->pos[1] = 0; gMarioState->pos[2] = box->oPosZ;
+    gMarioState->vel[0] = gMarioState->vel[1] = gMarioState->vel[2] = 0; gMarioState->forwardVel = 0;
+    gMarioState->faceAngle[1] = -0x4000; /* (-x, towards it) */
+    set_mario_action(gMarioState, ACT_IDLE, 0);
+    ticks(5);
+    for (int i = 0; i < 30 && gMarioState->heldObj != box; i++) tick(i < 2 ? B_BUTTON : 0);
+    return gMarioState->heldObj == box;
+}
+static int throw_held(void) {
+    ticks(20); /* (done picking it up) */
+    for (int i = 0; i < 30 && gMarioState->heldObj; i++) tick(i < 2 ? B_BUTTON : 0);
+    return !gMarioState->heldObj;
+}
+
+/* Mario dropped onto the top of the pipe at (x, y, z), then the game run until he's in area `area` (or not) */
 
 static int through_pipe(float x, float y, float z, int area) {
     gMarioState->pos[0] = x; gMarioState->pos[1] = y + 400; gMarioState->pos[2] = z;
@@ -99,22 +123,23 @@ int main(int argc, char **argv) {
     /* The boxes: laid out as the picture, picked up, thrown, never broken */
     printf("Boxes:\n");
     CHECK(stage_boxes() == stage_mosaic_boxes(), "the picture's %d boxes are on the disc (%d)", stage_mosaic_boxes(), stage_boxes());
-    struct Object *box = rightmost_box();
+    float at[4 * 130];
+    CHECK(stage_npcs() == 0 && sm64unity_marios(at, 130) == 0, "only Mario, at first");
+    CHECK(stage_hud_count() == 1, "the count at the bottom of the screen says so (%d)", stage_hud_count());
+    struct Object *box = rightmost_box(0);
     CHECK(box && fabsf(box->oPosY) < 1.f && box->oBehParams != 0, "standing on it, coloured (0x%06x)",
           box ? (unsigned) box->oBehParams : 0);
-    gMarioState->pos[0] = box->oPosX + 100; gMarioState->pos[1] = 0; gMarioState->pos[2] = box->oPosZ;
-    gMarioState->vel[0] = gMarioState->vel[1] = gMarioState->vel[2] = 0; gMarioState->forwardVel = 0;
-    gMarioState->faceAngle[1] = -0x4000; /* (-x, towards it) */
-    set_mario_action(gMarioState, ACT_IDLE, 0);
-    ticks(5);
-    for (int i = 0; i < 30 && gMarioState->heldObj != box; i++) tick(i < 2 ? B_BUTTON : 0);
-    CHECK(gMarioState->heldObj == box, "Mario picks it up with B");
+    float lay[2] = { box->oPosX, box->oPosZ };
+    CHECK(pick_up(box), "Mario picks it up with B");
+    CHECK(stage_npcs() == 1 && sm64unity_marios(at, 130) == 1 && hypotf(at[0] - lay[0], at[2] - lay[1]) < 1.f,
+          "and another Mario comes out of where it lay (%d)", stage_npcs());
+    tick(0);
+    CHECK(stage_hud_count() == 2, "two Marios counted (%d)", stage_hud_count());
     ticks(20);
     /* Thrown towards the rim (+x) */
     gMarioState->faceAngle[1] = 0x4000;
     float thrownFrom[3] = { gMarioState->pos[0], gMarioState->pos[1], gMarioState->pos[2] };
-    for (int i = 0; i < 30 && gMarioState->heldObj; i++) tick(i < 2 ? B_BUTTON : 0);
-    CHECK(!gMarioState->heldObj, "and throws it with B");
+    CHECK(throw_held(), "and throws it with B");
     float highest = box->oPosY;
     for (int i = 0; i < 20; i++) { tick(0); if (box->oPosY > highest) highest = box->oPosY; }
     ticks(200);
@@ -132,14 +157,67 @@ int main(int argc, char **argv) {
     CHECK((box->activeFlags & ACTIVE_FLAG_ACTIVE) && box->oPosX < 2900 && fabsf(box->oPosY) < 1.f,
           "thrown into the rim, it bounces back onto the disc (%.0f %.0f %.0f)", box->oPosX, box->oPosY, box->oPosZ);
 
+    /* The Marios: one more for each box picked up, the first time only */
+    printf("Marios:\n");
+    CHECK(pick_up(box) && throw_held() && stage_npcs() == 1, "the same box again: no more (%d)", stage_npcs());
+    for (int i = 0; i < 2; i++) {
+        struct Object *next = rightmost_box(1);
+        CHECK(next && pick_up(next) && throw_held(), "another box picked up");
+    }
+    CHECK(stage_npcs() == 3, "a Mario for each (%d)", stage_npcs());
+    tick(0);
+    CHECK(stage_hud_count() == 4, "four counted (%d)", stage_hud_count());
+    /* On their own: about the disc, never off it */
+    float from[4 * 3];
+    sm64unity_marios(from, 3);
+    gMarioState->pos[0] = -1500; gMarioState->pos[2] = 1500; /* (away from them, for them to come to) */
+    int furthest = 0, jumped = 0;
+    float nearest = 1e9f;
+    for (int t = 0; t < 3000; t++) {
+        tick(0);
+        int n = sm64unity_marios(at, 3);
+        for (int i = 0; i < n; i++) {
+            float d = hypotf(at[4 * i] - from[4 * i], at[4 * i + 2] - from[4 * i + 2]);
+            if (d > furthest) furthest = (int) d;
+            if (at[4 * i + 1] > 100.f) jumped = 1;
+            float m = hypotf(at[4 * i] - gMarioState->pos[0], at[4 * i + 2] - gMarioState->pos[2]);
+            if (m < nearest) nearest = m;
+        }
+        if (stage_npcs() < 3) break;
+    }
+    CHECK(stage_npcs() == 3, "over %d steps none falls off the disc (%d left)", 3000, stage_npcs());
+    CHECK(furthest > 1000 && jumped, "they wander (%d units at most) and jump", furthest);
+    CHECK(nearest < 500.f, "and come over to Mario (%.0f units from him)", nearest);
+    int n = sm64unity_marios(at, 3);
+    int on = 1;
+    for (int i = 0; i < n; i++) on &= hypotf(at[4 * i], at[4 * i + 2]) < 3000 && at[4 * i + 1] > -1.f;
+    CHECK(on, "all on the disc");
+    /* Every box: as many Marios as there can be */
+    const BehaviorScript *boxes = segmented_to_virtual(bhvStageBox);
+    for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_DESTRUCTIVE].next;
+         b != (struct Object *) &gObjectLists[OBJ_LIST_DESTRUCTIVE]; b = (struct Object *) b->header.next)
+        if (b->behavior == boxes && !b->oAction) { b->oAction = 1; stage_box_mario(b); }
+    int most = stage_npcs();
+    CHECK(most == (stage_mosaic_boxes() < 128 ? stage_mosaic_boxes() : 128), "%d Marios at most (%d boxes)", most,
+          stage_mosaic_boxes());
+    clock_t start = clock();
+    ticks(300);
+    double ms = 1000.0 * (clock() - start) / CLOCKS_PER_SEC / 300;
+    printf("  %d Marios: %.2f ms a step (with drawing)\n", stage_npcs(), ms);
+    CHECK(stage_npcs() >= most - 2, "they get along (%d of %d left)", stage_npcs(), most);
+    CHECK(stage_hud_count() == 1 + stage_npcs(), "all counted (%d)", stage_hud_count());
+
     CHECK(through_pipe(0, 0, 2400, 1), "the stage's pipe takes him back to Castle Grounds (area %d)", gCurrAreaIndex);
     ticks(60);
     printf("  Mario at %.0f %.0f %.0f\n", gMarioState->pos[0], gMarioState->pos[1], gMarioState->pos[2]);
     CHECK(gCurrAreaIndex == 1 && hypotf(gMarioState->pos[0] + 2400, gMarioState->pos[2] - 4400) < 1500
           && fabsf(gMarioState->pos[1] - 260) < 1.f, "by the first pipe, on the grass");
+    CHECK(stage_npcs() == 0, "the other Marios stay behind (%d)", stage_npcs());
+    CHECK(stage_hud_count() == 0, "no count off the stage");
 
     CHECK(through_pipe(-2400, 260, 4400, 2), "and through it again");
     CHECK(stage_boxes() == stage_mosaic_boxes(), "the picture laid out again (%d boxes)", stage_boxes());
+    CHECK(stage_npcs() == 0, "and only Mario again");
 
     printf(failures ? "FAILED (%d failures)\n" : "PASSED (%d failures)\n", failures);
     return failures != 0;
