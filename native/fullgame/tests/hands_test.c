@@ -1,5 +1,6 @@
 /* Headless test of your hands touching the game (unity_hands.inc.h), from the hand triangles alone
- * (sm64unity_game_hands): touch a coin to collect it, slap a Goomba to squash it, carry one on your palm.
+ * (sm64unity_game_hands, sm64unity_game_hand_points, sm64unity_object_grab): touch a coin to collect it, with a palm
+ * or a fingertip, slap a Goomba to squash it, carry one on your palm, pinch one to pick it up.
  * Run by run_headless_test.sh. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,10 +30,15 @@ int sm64unity_room_mesh(const s16 *, int);
 float sm64unity_room_floor(float, float, float);
 int sm64unity_render_current(void);
 int sm64unity_game_hands(const s16 *, int);
+int sm64unity_game_hand_points(const float *, int, float);
+int sm64unity_object_grab(float, float, float, float);
+int sm64unity_object_hold(float, float, float);
+void sm64unity_object_release(float, float, float);
 int sm64unity_carry(int, float, float, float, float, float, float);
 int sm64unity_carry_mode(void);
 
 static int failures;
+#define CHECK_QUIET(c) do { if (!(c)) { printf("  FAIL held\n"); failures++; } } while (0)
 #define CHECK(c, ...) do { if (c) printf("  ok   " __VA_ARGS__); else { printf("  FAIL " __VA_ARGS__); failures++; } printf("\n"); } while (0)
 
 static void tick(uint16_t b) { sm64unity_tick(b, 0, 0); sm64unity_render_current(); }
@@ -148,6 +154,33 @@ int main(int argc, char **argv) {
     for (int i = 0; i < 30; i++) { palm(tx + i * 10, ty, t->oPosZ); tick(0); }
     sm64unity_game_hands(NULL, 0);
     CHECK(fabsf(t->oPosX - tx) < 1, "stays where it is");
+
+    printf("A fingertip (a joint, no palm):\n");
+    struct Object *tip = spawn(bhvYellowCoin, MODEL_YELLOW_COIN, 400, 400);
+    ticks(2);
+    coins = gMarioState->numCoins;
+    for (int i = 0; i < 10; i++) {
+        float p[3] = { tip->oPosX, tip->oPosY + 10, tip->oPosZ };
+        sm64unity_game_hand_points(p, 1, 20);
+        tick(0);
+    }
+    sm64unity_game_hand_points(NULL, 0, 20);
+    ticks(5);
+    CHECK(gMarioState->numCoins == coins + 1, "a coin a fingertip touches is Mario's (%d coins, were %d)", gMarioState->numCoins, coins);
+
+    printf("Pinch to pick up:\n");
+    struct Object *p = spawn(bhvGoomba, MODEL_GOOMBA, -900, -900);
+    ticks(30);
+    CHECK(sm64unity_object_grab(p->oPosX, p->oPosY + 20, p->oPosZ, 30) == 1, "a pinch on a Goomba picks it up");
+    float hx = p->oPosX, hy = p->oPosY + 220, hz = p->oPosZ;
+    for (int i = 0; i < 30; i++) { CHECK_QUIET(sm64unity_object_hold(hx + i * 10, hy, hz)); tick(0); }
+    CHECK(p->oPosX - hx > 200 && p->oPosY > hy - 100, "it hangs from the pinch as it moves (moved %.0f along, %.0f up)",
+          p->oPosX - hx, p->oPosY - (hy - 200));
+    sm64unity_object_release(0, 0, 0);
+    float dropped = p->oPosY;
+    ticks(60);
+    CHECK((p->activeFlags & ACTIVE_FLAG_ACTIVE) && p->oPosY < dropped - 100, "let go of, it falls (%.0f down)", dropped - p->oPosY);
+    CHECK(sm64unity_object_grab(t->oPosX, t->oPosY + 20, t->oPosZ, 30) == 0, "a Thwomp can't be pinched");
 
     printf("%s (%d failures)\n", failures ? "FAILED" : "PASSED", failures);
     return failures != 0;
