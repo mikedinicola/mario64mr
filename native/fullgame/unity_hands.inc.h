@@ -17,8 +17,12 @@
 #include "game/interaction.h"
 #include "engine/math_util.h"
 
-#define UNITY_HANDS_TOUCH 1
-#define UNITY_HANDS_CARRY 1
+#include "pc/unity_options.h"
+
+/* (each a cheat, switched off in the options' Cheats menu) */
+#define UNITY_HANDS_TOUCH unity_hand_cheat(UNITY_HAND_COLLECT)
+#define UNITY_HANDS_SQUASH unity_hand_cheat(UNITY_HAND_SQUASH)
+#define UNITY_HANDS_CARRY unity_hand_cheat(UNITY_HAND_PICK_UP)
 
 extern int unity_mario_carried(void);
 /* (unity_room_objects.inc.h: enemies and NPCs carried out into the room) */
@@ -284,7 +288,7 @@ static int unity_hand_slaps(struct Object *o) {
 }
 
 void unity_hands_squash(void) {
-    if ((gTimeStopState & TIME_STOP_ACTIVE) || unity_room_depth || !unity_hand_bounds()) return;
+    if (!UNITY_HANDS_SQUASH || (gTimeStopState & TIME_STOP_ACTIVE) || unity_room_depth || !unity_hand_bounds()) return;
     if (unity_last_hand_count <= 0 && unity_last_hand_point_count <= 0) return;
     static const int lists[] = { OBJ_LIST_PUSHABLE, OBJ_LIST_GENACTOR, OBJ_LIST_DESTRUCTIVE, OBJ_LIST_DEFAULT };
     for (int l = 0; l < (int) (sizeof(lists) / sizeof(lists[0])); l++) {
@@ -467,7 +471,7 @@ static void unity_hold(struct Object *o, float x, float y, float z) {
  * 1 if it picked one up */
 EXPORT int sm64unity_object_grab(float x, float y, float z, float reach) {
     if (!isfinite(x) || !isfinite(y) || !isfinite(z) || !isfinite(reach) || unity_room_depth) return 0;
-    if (!gMarioObject || unity_mario_carried() || unity_still_held()) return 0;
+    if (!UNITY_HANDS_CARRY || !gMarioObject || unity_mario_carried() || unity_still_held()) return 0;
     static const int lists[] = { OBJ_LIST_PUSHABLE, OBJ_LIST_GENACTOR, OBJ_LIST_DESTRUCTIVE, OBJ_LIST_DEFAULT };
     struct Object *best = NULL;
     float bestDistance = reach;
