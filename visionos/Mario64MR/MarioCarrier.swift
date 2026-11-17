@@ -49,7 +49,10 @@ final class MarioCarrier {
     /// How far below the pinch he hangs (he's held by the top of his head), metres
     private let hang: Float = 0.12
 
-    func update(hands: [HandState], geometry g: RoomGeometry) {
+    /// How many can be out in the room at once (UNITY_ROOM_OBJECTS)
+    static let roomObjects = 16
+
+    func update(hands: [HandState], geometry g: RoomGeometry, picks: [ChestPick] = []) {
         let camera = Self.camera(), worldFromView = camera.inverse
         let viewFromRoom = g.roomFromView.inverse
         func inGame(_ p: SIMD3<Float>) -> Bool {
@@ -104,6 +107,33 @@ final class MarioCarrier {
         let reaching = hands.contains { $0.tracked && inGame($0.reach) }
         sm64unity_hold_camera(onHand == 2 ? 2 : reaching || held != nil || holding != nil ? 1 : 0)
 
+        // Taken out of the treasure chest: by a pinch, held by it at once (in the room, or in the level if the pinch
+        // is through the window; anywhere with no room scanned yet, or another Mario out in the room: beside Mario),
+        // carried on below; by a look, put down near Mario
+        for pick in picks {
+            let kind = pick.kind.rawValue
+            guard let i = pick.hand, i < hands.count, hands[i].tracked else {
+                _ = sm64unity_spawn_near_mario(kind)
+                continue
+            }
+            guard holding == nil, held == nil else { continue }
+            let p = hands[i].pinch
+            var made: Int32 = 0
+            if inGame(p) {
+                let w = world(p)
+                made = sm64unity_spawn_held(kind, 0, w.x, w.y, w.z)
+            } else if roomHasSurfaces {
+                let a = p * units
+                made = sm64unity_spawn_held(kind, 1, a.x, a.y, a.z)
+            }
+            if made == 1 {
+                holding = i
+                holdingInRoom = !inGame(p)
+            } else if made == 0 {
+                _ = sm64unity_spawn_near_mario(kind)
+            }
+        }
+
         // Picking him up; a pinch through the window anywhere else picks up the enemy or NPC nearest it
         for (i, hand) in hands.enumerated() {
             let began = hand.tracked && hand.pinching && !wasPinching[i]
@@ -155,8 +185,8 @@ final class MarioCarrier {
         }
 
         // Out in the room, walking back through the window: back into the game there, going the way it was
-        var outside = [Float](repeating: 0, count: 8 * 4)
-        let count = Int(sm64unity_room_objects(&outside, 4))
+        var outside = [Float](repeating: 0, count: 8 * Self.roomObjects)
+        let count = Int(sm64unity_room_objects(&outside, Int32(Self.roomObjects)))
         for k in 0..<count where outside[k * 8 + 1] == 0 {
             let o = outside[(k * 8)..<(k * 8 + 8)].map { $0 }
             let at = SIMD3(o[2], o[3], o[4]) / units

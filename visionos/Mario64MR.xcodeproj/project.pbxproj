@@ -37,6 +37,7 @@
 		CCD398FFD74F9D436621B6C3 /* ImmersiveRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E201BEFE8AF929559A79171F /* ImmersiveRenderer.swift */; };
 		E093D695B090A938A776B98E /* CompositorServices.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CB1DD4AB1EC0CE1344AA1712 /* CompositorServices.framework */; };
 		E7D6770BB438D204A732EEAF /* RoomPlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F7340C8F92D6C1C7DB67773 /* RoomPlacement.swift */; };
+		C4E5A1D2B3F4061728394A5B /* TreasureChest.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5F6B2E3C4A5172839405B6C /* TreasureChest.swift */; };
 		EF26E1B89871844570516234 /* Cartridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7676E3B3887EFCF59AB82C3A /* Cartridge.swift */; };
 		F11133D0BB78769A0F93253D /* TitleScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = AED565824E6717B29E252745 /* TitleScreen.swift */; };
 		F645B840CD83BE01F20CDBF5 /* GameRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F43AEDE2DB291E5E35525CD /* GameRenderer.swift */; };
@@ -78,6 +79,7 @@
 		7ACFB0947ABEBB5BE4664230 /* GameShaders.msl */ = {isa = PBXFileReference; lastKnownFileType = text; path = GameShaders.msl; sourceTree = "<group>"; };
 		7D08E37159B83E89B4908AFA /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = System/Library/Frameworks/GameController.framework; sourceTree = SDKROOT; };
 		7F7340C8F92D6C1C7DB67773 /* RoomPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomPlacement.swift; sourceTree = "<group>"; };
+		D5F6B2E3C4A5172839405B6C /* TreasureChest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TreasureChest.swift; sourceTree = "<group>"; };
 		943F5996D2653E5553963EF2 /* Data */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Data; path = Build/Data; sourceTree = SOURCE_ROOT; };
 		9804ACE3F4CB94673186F407 /* GameHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameHost.swift; sourceTree = "<group>"; };
 		9DD4CFD5E67B1A2DED671C72 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
@@ -212,6 +214,7 @@
 				E201BEFE8AF929559A79171F /* ImmersiveRenderer.swift */,
 				FA91C4F5557E9231F3E72B88 /* RoomMesh.swift */,
 				7F7340C8F92D6C1C7DB67773 /* RoomPlacement.swift */,
+				D5F6B2E3C4A5172839405B6C /* TreasureChest.swift */,
 				194C5C257E8D09FFA5448CA8 /* RoomProps.swift */,
 			);
 			path = Renderer;
@@ -314,6 +317,7 @@
 				404DF67DE2B85CEAF1B7D879 /* N64Texture.swift in Sources */,
 				831998582ED4B977FC13FE36 /* RoomMesh.swift in Sources */,
 				E7D6770BB438D204A732EEAF /* RoomPlacement.swift in Sources */,
+				C4E5A1D2B3F4061728394A5B /* TreasureChest.swift in Sources */,
 				31D7F8F7465595A350AFD00F /* RoomProps.swift in Sources */,
 				A1D5135FB4D76F34960EC809 /* SpatialControllers.swift in Sources */,
 				29C2520D71F9D7F771978A55 /* TexturePacks.swift in Sources */,

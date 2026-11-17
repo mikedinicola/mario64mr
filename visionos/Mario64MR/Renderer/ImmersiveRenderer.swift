@@ -58,6 +58,8 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private var cartridge: Cartridge?
     /// The level as a diorama on a table, while it is one
     private var diorama: Diorama?
+    /// The treasure chest by the window, and what was taken out of it this frame
+    private let chest = TreasureChest()
     /// (the simulator's stand-in room's planes)
     private var standInPlanes: [RoomPlane] = []
     private var lastTime: TimeInterval?
@@ -149,7 +151,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
             // The Digital Crown in a diorama: back to the window (the room opens again), not out of the room
             let width = diorama != nil ? cartridge.map { $0.window.halfSize.x * 2 } : nil
             link.update { $0.reopenWidth = width }
-            link.update { $0.on = false; $0.head = nil; $0.facing = nil; $0.debugRelease = nil; $0.geometry = nil; $0.hands = [] }
+            link.update { $0.on = false; $0.head = nil; $0.facing = nil; $0.debugRelease = nil; $0.geometry = nil; $0.hands = []; $0.picks = [] }
             link.onClose?()
             tracking.cancel()
             session.stop()
@@ -259,11 +261,23 @@ final class ImmersiveRenderer: @unchecked Sendable {
             (hands, gazes) = scriptedDioramaHands(time, cartridge: cartridge, stage: link.current.stage,
                                                   eye: eyePosition)
         }
+        if ProcessInfo.processInfo.arguments.contains("-chest") {
+            (hands, gazes) = scriptedChestInput(time, stage: link.current.stage, eye: eyePosition)
+        }
         #endif
         let dt = Float(lastTime.map { time - $0 } ?? 0)
         lastTime = time
         let planes = planeFinder.current + standInPlanes
         let stage = link.current.stage
+        // The treasure chest by the window: in a course, the window open, Mario playing (not in a cutscene) (looks it
+        // used aren't the frame's)
+        chest.spawnable = link.current.spawnable
+        let showChest = cartridge.isOpen && diorama == nil && stage == 3 && gameFrame?.title == nil && chest.spawnable != 0
+        if !showChest, chest.isOpen { chest.close() }
+        let taken = chest.update(window: cartridge.window, show: showChest, hands: hands, gazes: gazes,
+                                 eye: eyePosition, time: time, dt: dt)
+        gazes.removeAll { taken.usedGazes.contains($0.id) }
+        let picks = taken.picks
         // Held by its lower part over a table (or the floor): the circle shows where it would go down
         let low = cartridge.heldLow
         let circle = low.flatMap { Self.circle(under: $0.bottom, planes: planes) }
@@ -330,6 +344,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
             $0.head = SIMD3(headInView.x, headInView.y, headInView.z); $0.up = up
             $0.facing = SIMD2(levelBack.x, levelBack.z)
             $0.geometry = geometry; $0.hands = hands; $0.dioramaForward = dioramaForward; $0.busy = busy
+            $0.picks += picks
         }
 
         let actorFromClip = { (draw: GameFrame.Draw) -> simd_float4x4 in
@@ -388,6 +403,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
                 // The handle, and where the window will go down, last: they're blended (into depth only where they
                 // show), so whatever came after them (Mario out in the room) would paint over
                 // their soft edges
+                props.encodeChest(chest, into: encoder, eye: eye)
                 if diorama == nil, cartridge.isOpen {
                     props.encodeHandle(placement, held: !cartridge.holding.isEmpty, into: encoder, eye: eye)
                 }
@@ -484,6 +500,52 @@ final class ImmersiveRenderer: @unchecked Sendable {
             return ([HandState(), hand(p, pinching: pinching)], gaze)
         }
         return ([], nil)
+    }
+
+    /// With -chest (and -demo, into Castle Grounds): 2 s after Mario can play, a fingertip touches the treasure chest open;
+    /// a hand pinches the Goomba out and puts it down on the stand-in room's counter; then looks and pinches take a
+    /// coin box and two more Marios into the level near Mario
+    private var chestSince: TimeInterval?
+    private var chestHandFrom: SIMD3<Float>?
+    private var chestGazed = Set<Int>()
+
+    private func scriptedChestInput(_ time: TimeInterval, stage: Int32, eye: SIMD3<Float>) -> ([HandState], [GazePinch]) {
+        func hand(_ p: SIMD3<Float>, pinching: Bool) -> HandState {
+            var h = HandState(tracked: true)
+            h.pinch = p; h.reach = p; h.pinching = pinching
+            h.palm = p + SIMD3(0, -0.05, 0.08)
+            h.joints = HandState.debugJoints(pinch: p, eye: eye)
+            return h
+        }
+        if chestSince == nil {
+            guard stage == 3, chest.available(.goomba) else { return ([], []) }  // (past the intro: Mario's to play)
+            chestSince = time
+        }
+        let s = time - chestSince!
+        let up = SIMD3<Float>(chest.pose.columns.1.x, chest.pose.columns.1.y, chest.pose.columns.1.z)
+        let front = SIMD3<Float>(chest.pose.columns.2.x, chest.pose.columns.2.y, chest.pose.columns.2.z)
+        let middle = SIMD3<Float>(chest.pose.columns.3.x, chest.pose.columns.3.y, chest.pose.columns.3.z)
+        if s > 2 && s < 3 {  // a fingertip from in front, into the chest and out again
+            let k = Float(1 - abs(s - 2.5) * 2)
+            return ([HandState(), hand(middle + up * 0.04 + front * (0.15 - 0.13 * k), pinching: false)], [])
+        }
+        if s > 4.5 && s < 8, let tile = chest.tileCenter(.goomba), let to = link.current.debugRelease {
+            if chestHandFrom == nil { chestHandFrom = tile }
+            let from = chestHandFrom!, over = SIMD3(to.x, max(from.y, to.y) + 0.08, to.z)
+            let k = Float(min(max((s - 5) / 2.2, 0), 1))
+            // (up and over, then down onto it: not through the chest)
+            let p = k < 0.7 ? from + (over - from) * (k / 0.7) : over + (to + SIMD3(0, 0.06, 0) - over) * ((k - 0.7) / 0.3)
+            return ([HandState(), hand(p, pinching: s > 4.8 && s < 7.4)], [])
+        }
+        for (at, kind) in [(9.0, SpawnKind.coinBox), (11.0, .mario), (12.5, .mario)] where s > at && s < at + 0.3 {
+            guard let tile = chest.tileCenter(kind) else { break }
+            let p = eye + SIMD3(0.15, -0.45, -0.25)
+            let id = 3_000_000 + Int(at * 10)
+            let gaze = GazePinch(id: id, began: chestGazed.insert(id).inserted, origin: eye,
+                                 direction: simd_normalize(tile - eye), hand: 1, position: p)
+            return ([HandState(), hand(p, pinching: true)], [gaze])
+        }
+        return ([], [])
     }
 
     /// With -cart (debug builds, for the simulator, which has no hands): two hands take the cartridge in front of
@@ -706,6 +768,10 @@ final class RoomLink: @unchecked Sendable {
         var reopenWidth: Float?
         /// (from the game) the options menu's graphics
         var graphics = GameOptions.savedGraphics
+        /// What was taken out of the treasure chest since the game last looked (it takes them), and (from the game)
+        /// which kinds it can spawn now, bits by SpawnKind
+        var picks: [ChestPick] = []
+        var spawnable: UInt32 = 0
     }
     private let state = OSAllocatedUnfairLock(initialState: State())
     /// Called (on the room's thread) when the room closes

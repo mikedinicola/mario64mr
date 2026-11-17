@@ -55,6 +55,10 @@ int sm64unity_object_grab_room(float x, float y, float z, float reach);
 int sm64unity_room_objects(float *out, int max);
 int sm64unity_room_object_return(int slot, float x, float y, float z, float vx, float vy, float vz);
 void sm64unity_room_objects_return(void);
+// (unity_spawn.inc.h: what's taken out of the treasure chest, by SpawnKind)
+unsigned int sm64unity_spawn_available(void);
+int sm64unity_spawn_held(int kind, int in_room, float x, float y, float z);
+int sm64unity_spawn_near_mario(int kind);
 float sm64unity_room_floor(float x, float y, float z);
 int sm64unity_carry(int mode, float x, float y, float z, float vx, float vy, float vz);
 int sm64unity_carry_mode(void);
