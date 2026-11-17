@@ -28,6 +28,7 @@ struct Mario64MRApp: App {
 /// The game in a flat window, played with a gamepad (or a keyboard), and the button that opens it into the room
 struct GameWindow: View {
     static let roomSpace = "Room", flatWindow = "Flat"
+    @MainActor private static var openedRoomAtLaunch = false
     let game: GameHost
     @State private var renderer: GameRenderer?
     @State private var packs = TexturePacks()
@@ -69,8 +70,13 @@ struct GameWindow: View {
             if renderer == nil, let device = game.device {
                 renderer = GameRenderer(device: device, frames: game.output)
             }
+            // The app opens straight into the room, once: after the Digital Crown brings the game back to this
+            // window, it stays here until you open the room again
+            if !Self.openedRoomAtLaunch {
+                Self.openedRoomAtLaunch = true
+                Task { await openRoom() }
+            }
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("-room") { Task { await openRoom() } }
             // (-importPack <path>: imports it, and shows the texture packs)
             let arguments = ProcessInfo.processInfo.arguments
             if let i = arguments.firstIndex(of: "-importPack"), i + 1 < arguments.count {
