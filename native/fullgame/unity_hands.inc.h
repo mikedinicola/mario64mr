@@ -327,7 +327,10 @@ void unity_hands_touch(void) {
 
 /* ---- Carry on your palm ---- */
 
+int unity_spawned(struct Object *o);
 static int unity_carryable(struct Object *o) {
+    /* (what came out of the treasure chest, a power-up box too) */
+    if (unity_spawned(o)) return o != unity_held_obj && o->oHeldState == HELD_FREE;
     if (o == unity_held_obj || o->collisionData || o->oHeldState != HELD_FREE) return 0;
     const BehaviorScript *b = o->behavior;
 #define UNITY_IS(bhv) (b == segmented_to_virtual(bhv))
@@ -470,7 +473,8 @@ static void unity_hold(struct Object *o, float x, float y, float z) {
 EXPORT int sm64unity_object_grab(float x, float y, float z, float reach) {
     if (!isfinite(x) || !isfinite(y) || !isfinite(z) || !isfinite(reach) || unity_room_depth) return 0;
     if (!UNITY_HANDS_CARRY || !gMarioObject || unity_mario_carried() || unity_still_held()) return 0;
-    static const int lists[] = { OBJ_LIST_PUSHABLE, OBJ_LIST_GENACTOR, OBJ_LIST_DESTRUCTIVE, OBJ_LIST_DEFAULT };
+    /* (surfaces: only what came out of the treasure chest, a power-up box: unity_carryable) */
+    static const int lists[] = { OBJ_LIST_PUSHABLE, OBJ_LIST_GENACTOR, OBJ_LIST_DESTRUCTIVE, OBJ_LIST_DEFAULT, OBJ_LIST_SURFACE };
     struct Object *best = NULL;
     float bestDistance = reach;
     for (int l = 0; l < (int) (sizeof(lists) / sizeof(lists[0])); l++) {

@@ -125,6 +125,8 @@ static int camera_reset_due;
 int unity_camera_reset_due(void) { int due=camera_reset_due; camera_reset_due=0; return due; }
 int unity_mario_outside(void) { return carry_mode >= 2; }
 int unity_mario_carried(void) { return carry_mode != 0; }
+/* In a hand now (not let go of out in the room) */
+int unity_mario_held(void) { return carry_mode == 1 || carry_mode == 2; }
 /* The camera holds still while Mario is carried, and while the host asks (a hand reaching into the game: the world
  * holds still for it, and billboards face the camera) */
 int unity_camera_frozen(void) { return carry_mode != 0 || hold_camera; }
@@ -180,8 +182,10 @@ static void return_to_game(void) {
 }
 /* A warp (level_update.c, init_mario_after_warp) puts him at its spawn point, in the game */
 extern void unity_room_objects_warped(void);
+extern void unity_marios_warped(void);
 void unity_mario_warped(void) {
     unity_room_objects_warped(); /* (and what was out in the room with him, unity_room_objects.inc.h) */
+    unity_marios_warped(); /* (the extra Marios gone: unity_marios.inc.h) */
     if (!carry_mode) return;
     carry_mode=0;
     unity_skip_interpolation();
