@@ -24,7 +24,7 @@ final class RoomProps {
     private let device: MTLDevice
     private let library: MTLLibrary
     private let colorFormat: MTLPixelFormat, depthFormat: MTLPixelFormat
-    /// The pipelines (opaque, blended, title opaque, title blended, gloves) by sample count
+    /// The pipelines (opaque, blended, title opaque, title blended, gloves, the window's picture) by sample count
     private var pipelineSets: [Int: [MTLRenderPipelineState]] = [:]
     /// The room's MSAA samples (the options' anti-aliasing): the pipelines drawn with
     var sampleCount = 1
@@ -166,15 +166,18 @@ final class RoomProps {
     /// the app draws, not over it). Last, and only where something's drawn already: each pixel blended by how much
     /// of the game is there, so out in your room, where the passthrough shows, your hands are your own.
     func encodeGloves(_ hands: [HandState], into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
-        var bones = hands.filter { $0.tracked }.flatMap { $0.gloveBones }.map { [$0.0, $0.1] }.flatMap { $0 }
-        guard !bones.isEmpty, let pipelines = pipelines() else { return }
-        encoder.setRenderPipelineState(pipelines[4])
-        encoder.setDepthStencilState(depthWrite)
-        encoder.setCullMode(.none)
+        let gloves = hands.filter { $0.tracked }.map { $0.gloveBones }
+            .filter { $0.count == HandState.gloveBoneCount }
+        guard !gloves.isEmpty, let pipelines = pipelines() else { return }
+        var bones = gloves.flatMap { $0 }.flatMap { [$0.0, $0.1] }
         var e = eye
+        encoder.setCullMode(.front)  // (the capsules wind anticlockwise from outside)
         encoder.setVertexBuffer(capsule, offset: 0, index: 0)
         encoder.setVertexBytes(&bones, length: bones.count * MemoryLayout<SIMD4<Float>>.stride, index: 1)
         encoder.setVertexBytes(&e, length: MemoryLayout<GameRenderer.RoomEye>.stride, index: 2)
+        encoder.setFragmentBytes(&e, length: MemoryLayout<GameRenderer.RoomEye>.stride, index: 2)
+        encoder.setRenderPipelineState(pipelines[4])
+        encoder.setDepthStencilState(depthWrite)
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: Self.capsuleVertices.count / 4,
                                instanceCount: bones.count / 2)
     }
@@ -373,10 +376,11 @@ final class RoomProps {
         return out
     }()
 
-    /// A capsule's unit sphere (GloveVertex: direction, then 0 for the lower end, 1 the upper): rings from the bottom pole to the equator round the lower end, then again
-    /// from the equator to the top pole round the upper, the band between the two equators its side
+    /// A capsule's unit sphere (GloveVertex: direction, then 0 for the lower end, 1 the upper): rings from the
+    /// bottom pole to the equator round the lower end, then again from the equator to the top pole round the upper,
+    /// the band between the two equators its side. Wound anticlockwise from outside
     private static let capsuleVertices: [Float] = {
-        let slices = 12, half = 4
+        let slices = 20, half = 6  // (smooth: drawn as it is, no more than a few thousand triangles a hand)
         var rings: [[SIMD4<Float>]] = []
         for end in 0...1 {
             for k in 0...half {

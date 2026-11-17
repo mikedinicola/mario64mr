@@ -324,11 +324,19 @@ fragment float4 window_picture_fragment(PropVaryings in [[stage_in]], constant R
 }
 
 // ---------------------------------------------------------------- Mario's gloves over your hands
-// A capsule (instanced, one a bone): a unit sphere's lower half round one end, its upper half round the other, the
-// band between them its side
+// Each hand's glove as a mesh of its pieces (HandState.gloveBones), one instance a piece: a capsule along each,
+// its radius going from one end's to the other's (the palm's, fat enough to read as one), and the cuff the same
+// capsule cut flat at both ends, its open end's rim a grey line. Drawn as solid things are, into depth.
+constant uint gloveBoneCount = 24;  // (the palm 8, the fingers 3 each, the cuff last)
 struct GloveVertex { packed_float3 direction; float end; };
 struct GloveBone { float4 a; float4 b; };  // xyz: the ends (room metres), w: their radii
-struct GloveVaryings { float4 position [[position]]; float3 normal; };
+struct GloveVaryings {
+    float4 position [[position]];
+    float3 room;
+    float3 normal;
+    float cap;   // the cuff's flat ends: more than 0 on them (the side 0)
+    float ring;  // the cuff's flat ends: 1 at the rim, 0 in the middle
+};
 
 vertex GloveVaryings glove_vertex(uint vid [[vertex_id]], uint bone [[instance_id]],
                                   const device GloveVertex *vertices [[buffer(0)]],
@@ -340,20 +348,47 @@ vertex GloveVaryings glove_vertex(uint vid [[vertex_id]], uint bone [[instance_i
     float3 x = normalize(cross(y, abs(y.x) < 0.9 ? float3(1, 0, 0) : float3(0, 0, 1)));
     float3 z = cross(x, y);
     float3 d = float3(v.direction);
-    float3 n = x * d.x + y * d.y + z * d.z;
     float4 end = v.end > 0.5 ? b.b : b.a;
+    uint piece = bone % gloveBoneCount;
     GloveVaryings out;
-    out.position = eye.viewProjection * float4(end.xyz + n * end.w, 1);
-    out.normal = n;
+    out.cap = 0; out.ring = 0;
+    float3 normal = x * d.x + y * d.y + z * d.z;
+    if (piece < 8) {
+        // The palm's pieces shaded mostly as the palm's two faces are (each turned towards the face it's on), so
+        // they read as one puffy palm rather than ridges: the palm's facing, across the index and little fingers'
+        // pieces (both from the wrist)
+        constant GloveBone *hand = bones + (bone - piece);
+        float3 across = cross(hand[0].b.xyz - hand[0].a.xyz, hand[3].b.xyz - hand[3].a.xyz);
+        if (length(across) > 1e-8) {
+            float3 face = normalize(across);
+            normal = normalize(mix(normal, face * (dot(normal, face) >= 0 ? 1.0 : -1.0), 0.85 * sqrt(abs(dot(normal, face)))));
+        }
+    } else if (piece == gloveBoneCount - 1) {  // the cuff: its round ends pressed flat into discs
+        if (abs(d.y) > 1e-4) normal = y * sign(d.y);
+        out.cap = v.end > 0.5 && abs(d.y) > 1e-4 ? 1 : 0;  // (the rim: only the open end's, up the arm)
+        out.ring = length(d.xz);
+        d.y = 0;
+    }
+    float3 room = end.xyz + (x * d.x + y * d.y + z * d.z) * end.w;
+    out.position = eye.viewProjection * float4(room, 1);
+    out.room = room;
+    out.normal = normal;
     return out;
 }
 
-// White cloth, softly lit. Blended by what's already there (RoomProps.encodeGloves): only over the game, the
-// passthrough left showing your own hand everywhere else
-fragment float4 glove_fragment(GloveVaryings in [[stage_in]]) {
+// White cloth, softly lit from above and from where you look (what faces you is never in shadow, its edges turning
+// a cool grey). Blended by what's already there (RoomProps.encodeGloves): only over the game, the passthrough left
+// showing your own hand everywhere else
+fragment float4 glove_fragment(GloveVaryings in [[stage_in]], constant RoomEye &eye [[buffer(2)]]) {
     float3 n = normalize(in.normal);
-    float light = 0.62 + 0.38 * saturate(dot(n, normalize(float3(0.3, 1, 0.5))));
-    return float4(float3(0.92) * light, 1);
+    float3 origin = (eye.roomFromWindow * float4(eye.eye.xyz, 1)).xyz;
+    float3 ray = normalize(in.room - origin);
+    float above = saturate(dot(n, normalize(float3(0.3, 1, 0.5))) * 0.5 + 0.5);
+    float facing = saturate(dot(n, -ray));
+    float light = saturate(0.45 * above * above + 0.6 * sqrt(facing));
+    float3 color = mix(float3(0.40, 0.43, 0.52), float3(0.98), light);
+    if (in.cap > 0.01 && in.ring > 0.9) color = float3(0.45, 0.46, 0.5);  // (the cuff's rim)
+    return float4(color * 0.92, 1);  // (linear)
 }
 
 // ---------------------------------------------------------------- The title screen's face (libgoddard)
