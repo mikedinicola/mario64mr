@@ -107,36 +107,57 @@ enum GamePad {
     }
 }
 
-/// How far the controller in your hand leans (radians: x its right side down, y its top tipped forward, away from
-/// you), from its motion sensors' gravity: a DualSense's, or any paired controller with them. Read while the disc
-/// stage's tilting is on (`on`); the way you hold it when it turns on is level. Game thread.
-/// (The gamepad's axes are taken as x right, y towards its top, z out of its face: forwardSign and rightSign flip
-/// a way if a controller reads the other way round. Not yet tried on a headset.)
+/// How far the controller in your hand leans from level with the ground (radians: x its right side down, y its top
+/// tipped forward, away from you), from gravity as its motion sensors feel it: a DualSense's, or any paired controller
+/// with them. Read while the disc stage's tilting is on (`on`). Game thread.
+/// A DualSense (or DualShock 4) gives no gravity of its own, only its total acceleration: gravity is that smoothed,
+/// the shakes and jolts of your hands left out. Controllers that do give gravity are read as they give it.
+/// The controller's axes are Game Controller's own: x to its right, y towards its top (away from you), z out of its
+/// face. Whichever way the reading points (gravity, or the push that holds the controller up), it's taken as pointing
+/// down through the controller's back. forwardSign and rightSign flip a lean if it goes the wrong way.
+/// While tilting is on, what it reads goes to the console twice a second ("Tilt: ..."): if it's wrong, those say how.
 final class ControllerTilt {
     private static let forwardSign: Float = 1, rightSign: Float = 1
-    private var level: SIMD3<Float>?
-    private var wasOn = false
+    /// How much of each new reading of the acceleration goes into the gravity made from it (per game step: a tenth
+    /// of a second or so to settle; the game eases the disc's lean too)
+    private static let smoothing: Float = 0.5
+    private var smoothed: SIMD3<Float>?
+    private var raw = SIMD3<Float>()
+    private var source = ""
+    private var steps = 0
 
     func read(on: Bool) -> SIMD2<Float> {
-        defer { wasOn = on }
-        guard on, let gravity = Self.gravity() else { level = nil; return .zero }
-        if !wasOn || level == nil { level = gravity }
-        guard let level else { return .zero }
-        // Each lean: in its own plane (right: x and z; forward: y and z), from level to now
-        let right = atan2(gravity.x, -gravity.z) - atan2(level.x, -level.z)
-        let forward = atan2(gravity.y, -gravity.z) - atan2(level.y, -level.z)
-        return SIMD2(Self.rightSign * Self.wrapped(right), Self.forwardSign * Self.wrapped(forward))
+        guard on, var down = gravity() else { smoothed = nil; return .zero }
+        if down.z > 0 { down = -down } // (down, through its back, held face up)
+        // Each lean from level: right, its right side down (down along +x); forward, its top down (down along +y)
+        let right = atan2(down.x, -down.z)
+        let forward = atan2(down.y, -down.z)
+        let lean = SIMD2(Self.rightSign * right, Self.forwardSign * forward)
+        steps += 1
+        if steps % 15 == 0 {
+            func f(_ v: Float) -> String { String(format: "%+.2f", v) }
+            print("Tilt: \(source) \(f(raw.x)) \(f(raw.y)) \(f(raw.z)) -> right \(f(lean.x * 180 / .pi))°, forward \(f(lean.y * 180 / .pi))°")
+        }
+        return lean
     }
 
-    private static func wrapped(_ a: Float) -> Float { atan2(sin(a), cos(a)) }
-
-    /// Gravity as the first controller with motion feels it (its sensors turned on, if they must be)
-    private static func gravity() -> SIMD3<Float>? {
+    /// Gravity as the first controller with motion feels it (its sensors turned on, if they must be: a DualSense's)
+    private func gravity() -> SIMD3<Float>? {
         for controller in GCController.controllers() {
             guard let motion = controller.motion else { continue }
             if motion.sensorsRequireManualActivation && !motion.sensorsActive { motion.sensorsActive = true }
-            guard motion.hasGravityAndUserAcceleration else { continue }
-            let g = SIMD3(Float(motion.gravity.x), Float(motion.gravity.y), Float(motion.gravity.z))
+            if motion.hasGravityAndUserAcceleration {
+                let g = SIMD3(Float(motion.gravity.x), Float(motion.gravity.y), Float(motion.gravity.z))
+                raw = g; source = "\(controller.vendorName ?? "controller") gravity"
+                if simd_length(g) > 0.1 { return simd_normalize(g) }
+                continue
+            }
+            // Its total acceleration (gravity, and however your hands move it), smoothed down to gravity
+            let a = SIMD3(Float(motion.acceleration.x), Float(motion.acceleration.y), Float(motion.acceleration.z))
+            guard simd_length(a) > 0.1 else { continue } // (its sensors not on yet)
+            raw = a; source = "\(controller.vendorName ?? "controller") acceleration"
+            let g = smoothed.map { $0 + (a - $0) * Self.smoothing } ?? a
+            smoothed = g
             if simd_length(g) > 0.1 { return simd_normalize(g) }
         }
         return nil

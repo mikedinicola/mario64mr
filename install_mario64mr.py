@@ -495,10 +495,11 @@ class VisionOS:
         return name + ".dylib"
 
     def shared(self, name, strict=False):
-        # (Mach-O's linker already turns down undefined symbols)
+        # (Mach-O's linker already turns down undefined symbols.) The decomp's own atan2f (its arguments the other
+        # way round: math_util.c) is kept inside: exported, the app's Swift atan2 on Floats binds to it, not libm's
         framework = FRAMEWORKS[name]
         return ["-dynamiclib", f"-Wl,-install_name,@rpath/{framework}.framework/{framework}",
-                "-Wl,-headerpad_max_install_names"]
+                "-Wl,-headerpad_max_install_names", "-Wl,-unexported_symbol,_atan2f"]
 
 
 def framework_plist(name, sdk):

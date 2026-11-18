@@ -86,7 +86,8 @@ extern s16 object_step(void);
 #define STAGE_NPC_ROLL_ONE_IN 4
 /* Tilting: how far it leans at most, how quickly it turns, how hard things slide down it */
 #define STAGE_TILT_MOST 0x1000
-#define STAGE_TILT_RATE 0x80
+#define STAGE_TILT_FOLLOW 0.5f /* (each step the disc turns this much of the way to the lean wanted...) */
+#define STAGE_TILT_RATE 0x300 /* (...but no faster than this a step: 4.2 degrees) */
 #define STAGE_SLOPE_PULL 8.f
 
 static struct ObjectHitbox stage_box_hitbox = {
@@ -703,6 +704,16 @@ EXPORT void sm64unity_stage_tilt(float forward, float right) { stage_tilt_in[0] 
 /* Is tilting on? (the host can show it; tests) */
 EXPORT int sm64unity_stage_tilting(void) { return stage_tilting && stage_here(); }
 
+/* An angle of the disc's turned towards the one wanted: much of the way at once (it follows the controller closely),
+ * no faster than STAGE_TILT_RATE */
+static s16 stage_tilt_toward(s16 from, s16 to) {
+    int gap = (s16) (to - from), step = (int) (gap * STAGE_TILT_FOLLOW);
+    if (step == 0) step = gap; /* (the last bit) */
+    if (step > STAGE_TILT_RATE) step = STAGE_TILT_RATE;
+    if (step < -STAGE_TILT_RATE) step = -STAGE_TILT_RATE;
+    return (s16) (from + step);
+}
+
 /* Which way pitch and roll lean the disc's top (+1 or -1): its up turned a little by each */
 static void stage_tilt_ways(int *pitch, int *roll) {
     static int p, r;
@@ -749,8 +760,8 @@ void stage_disc_loop(void) {
         pitch = (s16) (pw * atan2s(sqrtf(1.f - nx * nx - nz * nz), nz)); /* (...and nz along z) */
     }
     s16 oldPitch = (s16) o->oFaceAnglePitch, oldRoll = (s16) o->oFaceAngleRoll;
-    o->oFaceAnglePitch = stage_turn_toward(oldPitch, pitch, STAGE_TILT_RATE);
-    o->oFaceAngleRoll = stage_turn_toward(oldRoll, roll, STAGE_TILT_RATE);
+    o->oFaceAnglePitch = stage_tilt_toward(oldPitch, pitch);
+    o->oFaceAngleRoll = stage_tilt_toward(oldRoll, roll);
     o->oFaceAngleYaw = 0;
     o->oAngleVelPitch = (s16) (o->oFaceAnglePitch - oldPitch);
     o->oAngleVelRoll = (s16) (o->oFaceAngleRoll - oldRoll);
