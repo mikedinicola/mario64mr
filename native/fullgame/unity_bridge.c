@@ -32,7 +32,8 @@ static struct ShaderProgram shaders[MAX_SHADERS], *current_shader;
 static int shader_count, batch_count, float_count, initialized, bridge_error;
 static int dropped_draws; /* (this frame's, past MAX_FLOATS or MAX_BATCHES: not drawn, the game goes on) */
 static struct UnityBatch state, batches[MAX_BATCHES];
-static float vertices[MAX_FLOATS];
+/* (two: a frame's batches joined up are written into the other, end_frame) */
+static float vertex_buffers[2][MAX_FLOATS], *vertices = vertex_buffers[0];
 static float projection[16], batch_projections[MAX_BATCHES][16];
 static int object_tag, batch_tags[MAX_BATCHES], game_stage;
 static float camera_matrix[16], camera_current[16], cursor_depth;
@@ -133,10 +134,69 @@ static void draw(float *data, size_t length, size_t count) {
     memcpy(vertices+float_count,data,length*sizeof(float)); float_count+=length;
 }
 static void start_frame(void) { batch_count=float_count=audio_count=dropped_draws=0; frame_count++; }
+
+/* Joining batches up, at the end of a frame. Opaque draws that test and write depth come out the same in any order, so
+ * in a run of them (between any other draws: blended, decals, no depth test or no depth write, which keep their places)
+ * all those with the same state (shader, textures, samplers, viewport, scissor, projection, tag) become one batch, in
+ * the order the first of each came. Many of one model (the disc stage's Marios) are then a batch a part they share,
+ * not a batch a part each: the host draws each batch for each eye. */
+static int batch_joins(const struct UnityBatch *b) { return b->depth_test && b->depth_write && !b->blend && !b->decal; }
+static int batch_same(int a, int b) {
+    struct UnityBatch x = batches[a], y = batches[b];
+    x.first_float = y.first_float = x.float_count = y.float_count = x.triangle_count = y.triangle_count = 0;
+    return batch_tags[a] == batch_tags[b] && !memcmp(&x, &y, sizeof(x))
+        && !memcmp(batch_projections[a], batch_projections[b], sizeof(batch_projections[a]));
+}
+static struct UnityBatch joined[MAX_BATCHES];
+static float joined_projections[MAX_BATCHES][16];
+static int joined_tags[MAX_BATCHES], run_groups[MAX_BATCHES], run_group_of[MAX_BATCHES];
+int unity_join_batches = 1; /* (0: not joined, for a test to compare) */
+static void end_frame(void) {
+    if (batch_count < 2 || !unity_join_batches) return;
+    float *out = vertices == vertex_buffers[0] ? vertex_buffers[1] : vertex_buffers[0];
+    int count = 0, floats = 0;
+    #define JOIN_EMIT(i) do { joined[count] = batches[i]; joined[count].first_float = floats; \
+        memcpy(joined_projections[count], batch_projections[i], sizeof(joined_projections[count])); \
+        joined_tags[count++] = batch_tags[i]; } while (0)
+    #define JOIN_COPY(i) do { memcpy(out + floats, vertices + batches[i].first_float, batches[i].float_count * sizeof(float)); \
+        floats += batches[i].float_count; } while (0)
+    for (int start = 0; start < batch_count;) {
+        if (!batch_joins(&batches[start])) { JOIN_EMIT(start); JOIN_COPY(start); start++; continue; }
+        /* A run: each batch's group (the first batch of its state) */
+        int end = start, groups = 0;
+        for (; end < batch_count && batch_joins(&batches[end]); end++) {
+            int g = 0;
+            while (g < groups && !batch_same(run_groups[g], end)) g++;
+            if (g == groups) run_groups[groups++] = end;
+            run_group_of[end] = g;
+        }
+        /* Each group's batches, one after another, as one */
+        for (int g = 0; g < groups; g++) {
+            int first = count;
+            JOIN_EMIT(run_groups[g]);
+            joined[first].float_count = joined[first].triangle_count = 0;
+            for (int i = run_groups[g]; i < end; i++) {
+                if (run_group_of[i] != g) continue;
+                JOIN_COPY(i);
+                joined[first].float_count += batches[i].float_count;
+                joined[first].triangle_count += batches[i].triangle_count;
+            }
+        }
+        start = end;
+    }
+    #undef JOIN_EMIT
+    #undef JOIN_COPY
+    memcpy(batches, joined, count * sizeof(batches[0]));
+    memcpy(batch_projections, joined_projections, count * sizeof(batch_projections[0]));
+    memcpy(batch_tags, joined_tags, count * sizeof(batch_tags[0]));
+    batch_count = count;
+    vertices = out;
+    float_count = floats;
+}
 struct GfxRenderingAPI gfx_unity_api = {
     no, unload, load, create, lookup, info, new_texture, select_texture, upload,
     sampler, depth_test, depth_write, decal, viewport, scissor, blend, draw,
-    noop, noop, start_frame, noop, noop, noop
+    noop, noop, start_frame, end_frame, noop, noop
 };
 static int buffered(void) { return queued_audio_frames; }
 static int desired_audio(void) { return 1100; }
@@ -159,6 +219,7 @@ void unity_read_menu_cursor(float *x, float *y) {
 float unity_cursor_depth(void) { return cursor_enabled ? cursor_depth : 0; }
 void unity_set_stage(int stage) { game_stage=stage; }
 void unity_set_tag(int tag) { object_tag=tag; }
+int unity_get_tag(void) { return object_tag; }
 /* With 60 fps interpolation the game frame is drawn between the previous camera and this one: the camera of
  * the frame last drawn is the one reported. */
 void unity_set_camera(const float *matrix) {

@@ -227,9 +227,9 @@ def prepare(root, rom, sixty=True, external_data=True):
     (root / "src/game/level_update.c").write_text(level)
     (root / "src/menu/star_select.c").write_text(acts)
     gfx = original("src/pc/gfx/gfx_pc.c")
-    gfx = 'extern void unity_set_projection(const float *);\nextern void unity_set_tag(int);\nextern int unity_is_mr(void);\n' + gfx
+    gfx = 'extern void unity_set_projection(const float *);\nextern void unity_set_tag(int);\nextern int unity_get_tag(void);\nextern int unity_is_mr(void);\n' + gfx
     gfx = replace_once(gfx, '            // RSP commands:',
-                       '            case 0xD2: /* Unity object identity; no change to original geometry. */\n                gfx_flush(); unity_set_tag(cmd->words.w1); break;\n            // RSP commands:')
+                       '            case 0xD2: /* Unity object identity; no change to original geometry. */\n                if ((int) cmd->words.w1 != unity_get_tag()) { gfx_flush(); unity_set_tag(cmd->words.w1); } break;\n            // RSP commands:')
     gfx = replace_once(gfx, '    if (parameters & G_MTX_PROJECTION) {',
                        '    if (parameters & G_MTX_PROJECTION) {\n        gfx_flush();')
     # Goddard multiplies its camera into the projection stack. Retain the
