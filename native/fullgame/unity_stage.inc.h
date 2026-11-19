@@ -13,8 +13,8 @@
  *   its own (unity_marios.inc.h) with a mind of its own (stage_npc_think): it stands about, wanders the disc, runs
  *   over to Mario, now and then jumps, and keeps away from the edge. While there's room for more, most of the time it
  *   goes for a box never picked up, lifts it (another Mario hops out), carries it a little way and throws it; once
- *   there are UNITY_NPC_MARIOS of them, or no such box is left, none does. They're gone as the extra Marios are, when
- *   Mario leaves the stage.
+ *   there are UNITY_MARIOS_MOST Marios (Mario too: 128), or no such box is left, none does. They're gone as the
+ *   extra Marios are, when Mario leaves the stage.
  * - Now and then (STAGE_NPC_EDGE_ONE_IN) an NPC means it over the edge: the box it picked up it carries out to near
  *   the rim and throws off, facing out (STAGE_NPC_THROW_FROM); the Mario it rolls it rolls out towards the rim, and
  *   lets go short of it (STAGE_NPC_SHOVE_AT), for it to tumble on over and off. They fall back from the sky.
@@ -974,7 +974,7 @@ static s16 stage_npc_outward(struct UnityMario *u) {
     return atan2s(m->pos[2], m->pos[0]);
 }
 /* Is there room for more Marios? (Till there isn't, most of them go for boxes never picked up) */
-static int stage_npc_room(void) { return unity_marios_npcs() < UNITY_NPC_MARIOS; }
+static int stage_npc_room(void) { return unity_marios_all() < UNITY_MARIOS_MOST; }
 static int stage_npcs_fetching = 1; /* (tests turn it off: they keep the Marios they made) */
 void stage_npcs_fetch(int on) { stage_npcs_fetching = on; }
 /* (tests) How many NPCs are going for a box or carrying one */
@@ -1314,12 +1314,12 @@ void stage_mosaic_lay(void) {
     }
 }
 
-/* At 128 Marios, a celebration: the star's fanfare, and every Mario waving at you; then the title theme, on till
- * Mario leaves (the stage has no music of its own before it, as Castle Grounds hasn't) */
+/* At 128 Marios (UNITY_MARIOS_MOST, Mario too), a celebration: the star's fanfare, and every Mario waving at you;
+ * then the title theme, on till Mario leaves (the stage has no music of its own before it, as Castle Grounds hasn't) */
 #define STAGE_TITLE_AFTER 150 /* (steps: the fanfare over) */
 static void stage_celebration_step(void) {
     if (!stage_celebration) {
-        if (unity_marios_npcs() < UNITY_NPC_MARIOS) return;
+        if (unity_marios_all() < UNITY_MARIOS_MOST) return;
         stage_celebration = 1;
         play_course_clear();
         play_sound(SOUND_MARIO_HERE_WE_GO, gMarioState->marioObj->header.gfx.cameraToObject);
@@ -1379,7 +1379,7 @@ int stage_hud_count(void) { return stage_hud_shown; }
 void stage_hud(void) {
     stage_hud_shown = 0;
     if (!stage_here() || !gMarioObject) return;
-    int count = 1 + unity_marios_count(0) + unity_marios_count(1);
+    int count = unity_marios_all();
     int digits = count >= 100 ? 3 : count >= 10 ? 2 : 1;
     int x = SCREEN_WIDTH / 2 - (32 + 12 * digits) / 2; /* (the head and the X 16 each, a digit 12, as the lives) */
     print_text(x, STAGE_HUD_Y, ",");      /* 'Mario Head' glyph */

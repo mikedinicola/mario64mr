@@ -38,9 +38,11 @@ static void unity_marios_let_go_taken(struct MarioState *m) {
     else set_mario_action(m, ACT_IDLE, 0);
 }
 
-/* Out of the treasure chest at once, and of their own (NPCs) */
+/* Out of the treasure chest at once, and of their own (NPCs); and of all of them, Mario too, at once (Mario 128's
+ * 128: never more) */
 #define UNITY_CHEST_MARIOS 3
-#define UNITY_NPC_MARIOS 128
+#define UNITY_NPC_MARIOS 127
+#define UNITY_MARIOS_MOST 128
 #define UNITY_EXTRA_MARIOS (UNITY_CHEST_MARIOS + UNITY_NPC_MARIOS)
 /* What an extra Mario touches (the rest it passes through) */
 #define UNITY_EXTRA_INTERACTIONS (INTERACT_DAMAGE | INTERACT_COIN | INTERACT_CAP | INTERACT_BREAKABLE | INTERACT_BOUNCE_TOP \
@@ -90,13 +92,18 @@ static int unity_marios_count(int npc) {
     }
     return n;
 }
+/* How many Marios there are, Mario too */
+static int unity_marios_all(void) { return 1 + unity_marios_count(0) + unity_marios_count(1); }
 static int unity_marios_ready(void) { return gMarioObject && gMarioState && gMarioState->action && !unity_room_depth; }
-int unity_marios_can_spawn(void) { return unity_marios_ready() && unity_marios_count(0) < UNITY_CHEST_MARIOS; }
+int unity_marios_can_spawn(void) {
+    return unity_marios_ready() && unity_marios_count(0) < UNITY_CHEST_MARIOS && unity_marios_all() < UNITY_MARIOS_MOST;
+}
 int unity_marios_npcs(void) { return unity_marios_count(1); }
 
 /* Another Mario at (x, y, z) in the level, facing yaw: standing on the floor there, or falling to it. NULL if none */
 static struct UnityMario *unity_marios_make(float x, float y, float z, s16 yaw, int npc) {
-    if (unity_marios_count(npc) >= (npc ? UNITY_NPC_MARIOS : UNITY_CHEST_MARIOS)) return NULL;
+    if (unity_marios_count(npc) >= (npc ? UNITY_NPC_MARIOS : UNITY_CHEST_MARIOS)
+        || unity_marios_all() >= UNITY_MARIOS_MOST) return NULL;
     struct Surface *floor;
     float floorHeight = find_floor(x, y + 100.f, z, &floor);
     if (!floor) return NULL;

@@ -690,13 +690,15 @@ int main(int argc, char **argv) {
     CHECK(boxing > all / 2 && held_by_npc, "most of them go for boxes, and lift them (%.0f%% of the time)", 100 * boxing / all);
     CHECK(stage_npcs() > npcs_before + 3, "and more Marios hop out of them (%d, from %d)", stage_npcs(), npcs_before);
     int grown = stage_npcs(), thrown_off = stage_npcs_thrown_off(), falls = stage_falls();
-    for (int i = 0; i < 9000 && stage_npcs() < 128 && stage_npcs() < stage_mosaic_boxes(); i++) tick(0);
+    /* (128 Marios at most, Mario too: 127 others) */
+    for (int i = 0; i < 9000 && stage_npcs() < 127 && stage_npcs() < stage_mosaic_boxes(); i++) tick(0);
     printf("  %d Marios\n", stage_npcs());
     CHECK(stage_npcs_thrown_off() > thrown_off && stage_falls() - falls >= (stage_npcs_thrown_off() - thrown_off) / 2,
           "now and then one carries its box out to the rim and throws it off (%d thrown, %d falls)",
           stage_npcs_thrown_off() - thrown_off, stage_falls() - falls);
-    if (stage_npcs() == 128) {
+    if (stage_npcs() == 127) {
         tick(0); /* (the 128th's step done: the stage notices it on the next) */
+        CHECK(stage_hud_count() == 128, "128 Marios counted, Mario too (%d)", stage_hud_count());
         CHECK(stage_celebrated() > 0 && stage_celebrated() < 60, "at 128, a celebration (%d steps ago)", stage_celebrated());
         while (stage_celebrated() && stage_celebrated() < 45) tick(0);
         CHECK(stage_npcs_waving() > 64, "everyone waving at you (%d)", stage_npcs_waving());
@@ -714,8 +716,8 @@ int main(int argc, char **argv) {
          b != (struct Object *) &gObjectLists[OBJ_LIST_DESTRUCTIVE]; b = (struct Object *) b->header.next)
         if (b->behavior == segmented_to_virtual(bhvStageBox) && !b->oAction) untaken++;
     ticks(300);
-    if (stage_mosaic_boxes() > 128)
-        CHECK(stage_npcs() == 128 && untaken > 0 && stage_npcs_boxing() == 0,
+    if (stage_mosaic_boxes() > 127)
+        CHECK(stage_npcs() == 127 && stage_hud_count() == 128 && untaken > 0 && stage_npcs_boxing() == 0,
               "at 128, no more go for boxes, though %d lie untaken (%d going for one or holding one)", untaken, stage_npcs_boxing());
 
     /* Every box: as many Marios as there can be */
@@ -724,8 +726,9 @@ int main(int argc, char **argv) {
          b != (struct Object *) &gObjectLists[OBJ_LIST_DESTRUCTIVE]; b = (struct Object *) b->header.next)
         if (b->behavior == boxes && !b->oAction) { b->oAction = 1; stage_box_mario(b); }
     int most = stage_npcs();
-    CHECK(most == (stage_mosaic_boxes() < 128 ? stage_mosaic_boxes() : 128), "%d Marios at most (%d boxes)", most,
+    CHECK(most == (stage_mosaic_boxes() < 127 ? stage_mosaic_boxes() : 127), "%d other Marios at most (%d boxes)", most,
           stage_mosaic_boxes());
+    CHECK(stage_hud_count() <= 128, "never more than 128 counted (%d)", stage_hud_count());
     clock_t start = clock();
     ticks(300);
     double ms = 1000.0 * (clock() - start) / CLOCKS_PER_SEC / 300;

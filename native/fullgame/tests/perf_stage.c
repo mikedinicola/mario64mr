@@ -1,4 +1,4 @@
-/* How long the disc stage takes with all its Marios (one out of every box, 128 at most): the game's step and a frame's
+/* How long the disc stage takes with all its Marios (one out of every box, 128 at most, Mario too): the game's step and a frame's
  * drawing, timed apart, and how many batches and vertex floats the host gets. With STAGE_SNAPSHOTS=<dir>, the same
  * frame drawn with its batches joined and not (unity_bridge.c, end_frame), as pictures to compare. Run by
  * run_room_objects_test.sh (TEST=perf_stage <scratch> [work] [base.zip], or with a number of Marios after them). */
@@ -109,7 +109,7 @@ int main(int argc, char **argv) {
     ticks(60);
     measure("the stage, Mario alone", 300);
     const BehaviorScript *boxes = segmented_to_virtual(bhvStageBox);
-    int want = argc > 2 ? atoi(argv[2]) : 128;
+    int want = argc > 2 ? atoi(argv[2]) : 127;
     for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_DESTRUCTIVE].next;
          b != (struct Object *) &gObjectLists[OBJ_LIST_DESTRUCTIVE] && stage_npcs() < want; b = (struct Object *) b->header.next)
         if (b->behavior == boxes && !b->oAction) { b->oAction = 1; stage_box_mario(b); }
