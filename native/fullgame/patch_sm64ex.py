@@ -215,6 +215,14 @@ def prepare(root, rom, sixty=True, external_data=True):
                        '        if (configHUD) stage_hud();\n')
     hud = replace_once(hud, 'void render_hud(void) {\n', 'extern void stage_hud(void);\nvoid render_hud(void) {\n')
     (root / "src/game/hud.c").write_text(hud)
+    # On the disc stage, the Marios' voices (sound bank 2, Mario's) higher, as Mario 128's were (unity_stage.inc.h,
+    # stage_voice_pitch)
+    audio = original("src/audio/external.c")
+    audio = replace_once(audio, '    return f2 / US_FLOAT(15.0) + US_FLOAT(1.0);\n',
+                         '    return (f2 / US_FLOAT(15.0) + US_FLOAT(1.0)) * (bankIndex == 2 ? stage_voice_pitch() : 1.0f);\n')
+    audio = replace_once(audio, 'f32 get_sound_freq_scale(u8 bankIndex, u8 item) {\n',
+                         'extern f32 stage_voice_pitch(void);\nf32 get_sound_freq_scale(u8 bankIndex, u8 item) {\n')
+    (root / "src/audio/external.c").write_text(audio)
     acts = original("src/menu/star_select.c")
     if sixty:
         # (for MarioFace) The act select (the stars of a course) is a menu of its own, stage 4; the level is

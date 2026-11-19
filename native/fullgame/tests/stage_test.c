@@ -58,6 +58,7 @@ int stage_disc_shape(void);
 int stage_disc_changing(void);
 int stage_disc_pizza(void);
 extern const BehaviorScript bhvStageDisc[];
+extern f32 get_sound_freq_scale(u8 bankIndex, u8 item); /* (audio/external.c) */
 #define ACT_STAGE_ROLL 0x0000047E
 #define ACT_STAGE_TUMBLE 0x0002047F
 int stage_box_mario(struct Object *o);
@@ -222,6 +223,18 @@ int main(int argc, char **argv) {
     ticks(200);
     printf("Castle Grounds, area %d, Mario at %.0f %.0f %.0f\n", gCurrAreaIndex, gMarioState->pos[0], gMarioState->pos[1],
            gMarioState->pos[2]);
+
+    /* Mario's voice (sound bank 2) is higher on the disc stage, as Mario 128's was, and nothing else is */
+    {
+        s16 area = gCurrAreaIndex;
+        float voice = get_sound_freq_scale(2, 0), other = get_sound_freq_scale(3, 0);
+        gCurrAreaIndex = 2;
+        float voice_stage = get_sound_freq_scale(2, 0), other_stage = get_sound_freq_scale(3, 0);
+        gCurrAreaIndex = area;
+        CHECK(fabsf(voice_stage / voice - 1.5f) < 0.001f && other_stage == other,
+              "on the stage Mario's voice is pitched up (x%.2f), other sounds aren't (x%.2f)", voice_stage / voice,
+              other_stage / other);
+    }
 
     stage_npcs_fetch(0); /* (the Marios fetching boxes on their own: tested after the rest, with as many as there are) */
     CHECK(through_pipe(-2400, 260, 4400, 2), "the pipe by the start takes Mario to the disc stage (area %d)", gCurrAreaIndex);

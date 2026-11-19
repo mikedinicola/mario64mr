@@ -151,6 +151,10 @@ int stage_box_mario(struct Object *o) {
 
 /* Is Mario on the stage? */
 static int stage_here(void) { return gCurrLevelNum == LEVEL_CASTLE_GROUNDS && gCurrAreaIndex == 2; }
+/* The Marios' voices here, how much higher (as Mario 128's were: 1.5, a fifth up), for the sound bank of Mario's
+ * voice (patch_sm64ex.py: external.c's get_sound_freq_scale) */
+#define STAGE_VOICE_PITCH 1.5f
+f32 stage_voice_pitch(void) { return stage_here() ? STAGE_VOICE_PITCH : 1.0f; }
 
 /* Rolling: who's rolling it, and who it is */
 #define ACT_STAGE_ROLL 0x0000047E /* (0x07E | ACT_FLAG_MOVING) rolling another Mario along: stage_act_roll */
