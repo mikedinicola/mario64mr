@@ -4,6 +4,8 @@
  *
  * - Touch to collect: a coin, star, key, cap or 1-up your hand touches is collected as if Mario had touched it (it is
  *   put on his list of things he collided with this frame, which the game's own interactions then handle).
+ * - Touch to switch: a water-level switch (Wet-Dry World's diamonds) your hand touches is pressed as if Mario had
+ *   touched it, and the water moves to it. It only checks whether Mario touched it, so the same list does it.
  * - Carry on your palm: an enemy or NPC standing on your hand moves with it (and turns with it), as the game moves
  *   things on its platforms. Tip your hand and it falls off; its own physics do the rest.
  * - Squash with your palm: a hand slapped down onto a Goomba (or anything Mario can stomp) from above squashes it, as
@@ -182,6 +184,12 @@ static int unity_collectable(struct Object *o) {
     return unity_is_1up(o);
 }
 
+/* ---- Touch to switch ---- */
+
+static int unity_switchable(struct Object *o) {
+    return o->behavior == segmented_to_virtual(bhvWaterLevelDiamond);
+}
+
 static int unity_hand_touches(struct Object *o) {
     float radius = o->hitboxRadius > 40.f ? o->hitboxRadius : 40.f;
     float height = o->hitboxHeight > 40.f ? o->hitboxHeight : 40.f;
@@ -303,18 +311,20 @@ void unity_hands_squash(void) {
 }
 
 /* After detect_object_collisions: what your hand touches, Mario touches, so his interactions (or a 1-up's own
- * check for him) collect it this frame */
+ * check for him) collect it this frame, and a water-level switch (a surface object, run before the next
+ * detect_object_collisions clears the list) finds him on it next frame, as it would have found him */
 void unity_hands_touch(void) {
     unity_hands_squash();
     if (!UNITY_HANDS_TOUCH || !gMarioObject || unity_mario_carried() || unity_room_depth) return;
     if ((gTimeStopState & TIME_STOP_ACTIVE) || !unity_hand_bounds()) return;
-    static const int lists[] = { OBJ_LIST_LEVEL, OBJ_LIST_GENACTOR, OBJ_LIST_DEFAULT };
+    static const int lists[] = { OBJ_LIST_LEVEL, OBJ_LIST_GENACTOR, OBJ_LIST_DEFAULT, OBJ_LIST_SURFACE };
     for (int l = 0; l < (int) (sizeof(lists) / sizeof(lists[0])); l++) {
         struct ObjectNode *head = &gObjectLists[lists[l]];
         for (struct ObjectNode *node = head->next; node != head; node = node->next) {
             struct Object *o = (struct Object *) node;
             if (gMarioObject->numCollidedObjs >= 4) return;
-            if (!unity_object_usable(o) || !unity_collectable(o) || !unity_near_hands(o, 80.f + unity_game_hand_point_radius)) continue;
+            if (!unity_object_usable(o) || !(unity_collectable(o) || unity_switchable(o))
+                || !unity_near_hands(o, 80.f + unity_game_hand_point_radius)) continue;
             if (obj_check_if_collided_with_object(o, gMarioObject) || o->numCollidedObjs >= 4) continue;
             if (!unity_hand_touches(o)) continue;
             gMarioObject->collidedObjs[gMarioObject->numCollidedObjs++] = o;
