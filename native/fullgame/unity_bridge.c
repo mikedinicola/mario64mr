@@ -13,8 +13,9 @@
 #include "goddard/objects.h"
 
 #define EXPORT __attribute__((visibility("default")))
-#define MAX_FLOATS (2 * 1024 * 1024)
-#define MAX_BATCHES 8192
+/* A frame's drawing, at most: vertex floats (128 Marios on the disc stage take about 2M), and batches */
+#define MAX_FLOATS (8 * 1024 * 1024)
+#define MAX_BATCHES 16384
 #define MAX_SHADERS 256
 
 struct ShaderProgram { uint32_t id; struct CCFeatures features; };
@@ -29,6 +30,7 @@ struct UnityBatch {
 struct UnityTexture { uint8_t *pixels; int width, height, version, filter, wraps, wrapt; };
 static struct ShaderProgram shaders[MAX_SHADERS], *current_shader;
 static int shader_count, batch_count, float_count, initialized, bridge_error;
+static int dropped_draws; /* (this frame's, past MAX_FLOATS or MAX_BATCHES: not drawn, the game goes on) */
 static struct UnityBatch state, batches[MAX_BATCHES];
 static float vertices[MAX_FLOATS];
 static float projection[16], batch_projections[MAX_BATCHES][16];
@@ -123,14 +125,14 @@ static void blend(bool v) { state.blend=v; }
 static void viewport(int x,int y,int w,int h) { int v[]={x,y,w,h}; memcpy(state.viewport,v,sizeof(v)); }
 static void scissor(int x,int y,int w,int h) { int v[]={x,y,w,h}; memcpy(state.scissor,v,sizeof(v)); }
 static void draw(float *data, size_t length, size_t count) {
-    if (batch_count == MAX_BATCHES || float_count + length > MAX_FLOATS) { bridge_error=4; return; }
+    if (batch_count == MAX_BATCHES || float_count + length > MAX_FLOATS) { dropped_draws++; return; }
     state.first_float=float_count; state.float_count=length; state.triangle_count=count;
     memcpy(batch_projections[batch_count],projection,sizeof(projection));
     batch_tags[batch_count]=object_tag;
     batches[batch_count++]=state;
     memcpy(vertices+float_count,data,length*sizeof(float)); float_count+=length;
 }
-static void start_frame(void) { batch_count=float_count=audio_count=0; frame_count++; }
+static void start_frame(void) { batch_count=float_count=audio_count=dropped_draws=0; frame_count++; }
 struct GfxRenderingAPI gfx_unity_api = {
     no, unload, load, create, lookup, info, new_texture, select_texture, upload,
     sampler, depth_test, depth_write, decal, viewport, scissor, blend, draw,
@@ -224,4 +226,6 @@ EXPORT const uint8_t *sm64unity_texture(int id,int *w,int *h,int *version) {
 EXPORT const int16_t *sm64unity_audio(int *count) { *count=audio_count; return audio_samples; }
 EXPORT void sm64unity_audio_buffered(int frames) { queued_audio_frames=frames; }
 EXPORT int sm64unity_error(void) { return bridge_error; }
+/* How many draws the last frame had no room for (none, but for more on screen than MAX_FLOATS or MAX_BATCHES) */
+EXPORT int sm64unity_dropped_draws(void) { return dropped_draws; }
 EXPORT int sm64unity_batch_size(void) { return sizeof(struct UnityBatch); }

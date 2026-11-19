@@ -9,8 +9,10 @@
  *   from the stage's pipe.
  * - The first time Mario picks one up, another Mario hops out of where it lay (stage_box_mario): an NPC, a Mario of
  *   its own (unity_marios.inc.h) with a mind of its own (stage_npc_think): it stands about, wanders the disc, runs
- *   over to Mario, now and then jumps, and keeps away from the edge. Up to UNITY_NPC_MARIOS of them; they're gone as
- *   the extra Marios are, when Mario leaves the stage.
+ *   over to Mario, now and then jumps, and keeps away from the edge. While there's room for more, most of the time it
+ *   goes for a box never picked up, lifts it (another Mario hops out), carries it a little way and throws it; once
+ *   there are UNITY_NPC_MARIOS of them, or no such box is left, none does. They're gone as the extra Marios are, when
+ *   Mario leaves the stage.
  * - How many Marios there are (Mario too) is counted at the bottom of the screen, in the HUD's own letters
  *   (stage_hud, after the rest of the HUD).
  * - Marios roll each other. B with another Mario just in front, standing (Mario, or an NPC that means to): he leans
@@ -84,6 +86,8 @@ extern s16 object_step(void);
 /* What the NPCs are for rolling each other: how near they look for one, how long they roll it */
 #define STAGE_NPC_ROLL_LOOK 1200.f
 #define STAGE_NPC_ROLL_ONE_IN 4
+#define STAGE_NPC_BOX_IN_FOUR 3 /* (while there's room for more Marios: how many in four go for a box) */
+#define STAGE_NPC_GRAB_REACH 110.f
 /* Tilting: how far it leans at most, how quickly it turns, how hard things slide down it */
 #define STAGE_TILT_MOST 0x1000
 #define STAGE_TILT_FOLLOW 0.5f /* (each step the disc turns this much of the way to the lean wanted...) */
@@ -127,7 +131,8 @@ static void stage_box_attack(struct Object *o) {
 int stage_box_mario(struct Object *o) {
     if (!unity_marios_ready()) return 0;
     float x = o->oHomeX, z = o->oHomeZ;
-    s16 yaw = atan2s(gMarioState->pos[2] - z, gMarioState->pos[0] - x); /* (facing Mario) */
+    struct Object *by = o->oHeldState == HELD_HELD && o->parentObj ? o->parentObj : gMarioObject; /* (who picked it up) */
+    s16 yaw = by ? atan2s(by->oPosZ - z, by->oPosX - x) : 0; /* (facing him) */
     struct Surface *floor;
     float y = find_floor(x, 4000.f, z, &floor); /* (the disc there, however it leans) */
     if (!floor) return 0;
@@ -148,6 +153,9 @@ static int stage_here(void) { return gCurrLevelNum == LEVEL_CASTLE_GROUNDS && gC
 #define ACT_STAGE_ROLL 0x0000047E /* (0x07E | ACT_FLAG_MOVING) rolling another Mario along: stage_act_roll */
 #define ACT_STAGE_TUMBLE 0x0002047F /* (0x07F | ACT_FLAG_MOVING | ACT_FLAG_INVULNERABLE) rolled, tumbling: the extra
                                        Marios' only (stage_tumble_step, in place of the Mario code) */
+#define ACT_STAGE_SIT 0x0C00021E /* (0x01E | ACT_FLAG_STATIONARY | ACT_FLAG_ALLOW_FIRST_PERSON | ACT_FLAG_PAUSE_EXIT) sat
+                                    down a while: stage_act_sit */
+#define ACT_STAGE_WAVE 0x0C00021F /* (0x01F | the same) waving at you: stage_act_wave */
 static int stage_rolls_started, stage_tumbles_knocked;
 static int stage_tumble_way(void);
 static struct UnityMario *stage_rolled_by(struct MarioState *m) {
@@ -164,7 +172,7 @@ static s16 stage_turn_toward(s16 from, s16 to, s16 most) {
 }
 /* Can it be rolled (on its feet, not tumbling, nor rolling one), or roll one (and its hands free)? */
 static int stage_rollable(struct UnityMario *t) {
-    return t->obj && !t->tumbling && !t->lost && !(t->m.action & ACT_FLAG_AIR) && t->m.action != ACT_STAGE_ROLL
+    return t->obj && !t->tumbling && !t->lost && !t->m.heldObj && !(t->m.action & ACT_FLAG_AIR) && t->m.action != ACT_STAGE_ROLL
         && !(t->m.action & ACT_FLAG_INTANGIBLE) && t->m.floor;
 }
 static int stage_can_roll(struct MarioState *m) {
@@ -287,6 +295,32 @@ s32 stage_act_roll(struct MarioState *m) {
 }
 /* (never Mario's own: ACT_STAGE_TUMBLE is the extra Marios', who run no Mario code while in it) */
 s32 stage_act_tumble(struct MarioState *m) { return set_mario_action(m, ACT_IDLE, 0); }
+
+/* Sitting a while, or waving at you (an NPC's, now and then: mario_execute_stationary_action). Either is left for
+ * whatever its controller does next: sitting, it gets up first */
+s32 check_common_idle_cancels(struct MarioState *m); /* (mario_actions_stationary.c) */
+#define STAGE_STAND_INPUTS (INPUT_NONZERO_ANALOG | INPUT_A_PRESSED | INPUT_B_PRESSED | INPUT_Z_PRESSED | INPUT_FIRST_PERSON)
+#define STAGE_WAVE_TURN 0x400
+void unity_viewer(Vec3f out); /* (unity_mr.c) */
+s32 stage_act_sit(struct MarioState *m) {
+    if (m->input & INPUT_OFF_FLOOR) return set_mario_action(m, ACT_FREEFALL, 0);
+    if (m->input & INPUT_ABOVE_SLIDE) return set_mario_action(m, ACT_BEGIN_SLIDING, 0);
+    if (m->input & STAGE_STAND_INPUTS) return set_mario_action(m, ACT_WAKING_UP, 0);
+    stationary_ground_step(m);
+    set_mario_animation(m, MARIO_ANIM_START_SLEEP_SITTING); /* (sitting down, then sat: it holds its last frame) */
+    if (m->actionTimer++ == 15) play_sound(m->terrainSoundAddend + SOUND_ACTION_TERRAIN_BODY_HIT_GROUND, m->marioObj->header.gfx.cameraToObject);
+    return FALSE;
+}
+s32 stage_act_wave(struct MarioState *m) {
+    if (m->input & (STAGE_STAND_INPUTS | INPUT_OFF_FLOOR | INPUT_ABOVE_SLIDE)) return check_common_idle_cancels(m);
+    Vec3f you;
+    unity_viewer(you);
+    m->faceAngle[1] = stage_turn_toward(m->faceAngle[1], atan2s(you[2] - m->pos[2], you[0] - m->pos[0]), STAGE_WAVE_TURN);
+    stationary_ground_step(m);
+    set_mario_animation(m, MARIO_ANIM_CREDITS_WAVING);
+    m->marioBodyState->handState = MARIO_HAND_RIGHT_OPEN;
+    return FALSE;
+}
 
 /* A rolled Mario's step: rolled along, or tumbling on, or getting up */
 static void stage_tumble_step(struct UnityMario *u) {
@@ -808,6 +842,7 @@ void stage_disc_loop(void) {
  * rather than punching; D-pad up turns tilting on or off; the rest of the D-pad changes the disc's shape */
 void stage_watch(void) {
     if (!stage_here() || !gMarioState || !gMarioState->controller) return;
+    unity_marios_let_go_taken(gMarioState); /* (yours, if another Mario took it the same step) */
     u16 pressed = gMarioState->controller->buttonPressed;
     if (pressed & B_BUTTON) stage_roll_start(gMarioState);
     if (pressed & U_JPAD) {
@@ -822,7 +857,8 @@ void stage_watch(void) {
 }
 
 /* An NPC Mario's mind: what its controller does this step */
-enum { STAGE_NPC_IDLE, STAGE_NPC_WANDER, STAGE_NPC_FOLLOW, STAGE_NPC_GO_ROLL, STAGE_NPC_ROLLING };
+enum { STAGE_NPC_IDLE, STAGE_NPC_WANDER, STAGE_NPC_FOLLOW, STAGE_NPC_GO_ROLL, STAGE_NPC_ROLLING, STAGE_NPC_GO_BOX,
+       STAGE_NPC_CARRY, STAGE_NPC_SIT, STAGE_NPC_WAVE };
 static u32 stage_npc_random(struct UnityMario *u) {
     u32 x = u->brain.seed ? u->brain.seed : 1;
     x ^= x << 13; x ^= x >> 17; x ^= x << 5;
@@ -831,14 +867,67 @@ static u32 stage_npc_random(struct UnityMario *u) {
 static int stage_npc_between(struct UnityMario *u, int lo, int hi) { return lo + (int) (stage_npc_random(u) % (u32) (hi - lo + 1)); }
 
 static int stage_npcs_paused; /* (for tests: they stand still) */
+/* Is there room for more Marios? (Till there isn't, most of them go for boxes never picked up) */
+static int stage_npc_room(void) { return unity_marios_npcs() < UNITY_NPC_MARIOS; }
+static int stage_npcs_fetching = 1; /* (tests turn it off: they keep the Marios they made) */
+void stage_npcs_fetch(int on) { stage_npcs_fetching = on; }
+/* (tests) How many NPCs are going for a box or carrying one */
+int stage_npcs_boxing(void) {
+    int n = 0;
+    for (int i = 0; i < UNITY_EXTRA_MARIOS; i++)
+        if (unity_marios[i].obj && unity_marios[i].npc
+            && (unity_marios[i].brain.mode == STAGE_NPC_GO_BOX || unity_marios[i].m.heldObj)) n++;
+    return n;
+}
+/* A box another Mario could come out of: never picked up, lying free, on the disc, not one another NPC is after */
+static int stage_npc_box_free(struct UnityMario *u, struct Object *b) {
+    if (!b || !(b->activeFlags & ACTIVE_FLAG_ACTIVE) || b->behavior != segmented_to_virtual(bhvStageBox) || b->oAction
+        || b->oHeldState != HELD_FREE || !stage_npc_room()
+        || stage_distance(b->oPosX, b->oPosZ, 0.f, 0.f) > STAGE_NPC_SAFE) return 0;
+    for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) {
+        struct UnityMario *t = &unity_marios[i];
+        if (t != u && t->obj && t->brain.mode == STAGE_NPC_GO_BOX && t->brain.box == b) return 0;
+    }
+    return 1;
+}
+/* The nearest such box, if any */
+static struct Object *stage_npc_box_for(struct UnityMario *u) {
+    if (!stage_npc_room() || !stage_npcs_fetching) return NULL;
+    struct Object *best = NULL;
+    float nearest = 1e9f;
+    const BehaviorScript *box = segmented_to_virtual(bhvStageBox);
+    for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_DESTRUCTIVE].next;
+         b != (struct Object *) &gObjectLists[OBJ_LIST_DESTRUCTIVE]; b = (struct Object *) b->header.next) {
+        if (b->behavior != box || !stage_npc_box_free(u, b)) continue;
+        float d = stage_distance(b->oPosX, b->oPosZ, u->m.pos[0], u->m.pos[2]);
+        if (d < nearest) { nearest = d; best = b; }
+    }
+    return best;
+}
 static void stage_npc_think(struct UnityMario *u) {
     struct MarioState *m = &u->m;
     struct Controller *pad = &u->pad;
     if (stage_npcs_paused) { memset(pad, 0, sizeof(*pad)); u->brain.mode = STAGE_NPC_IDLE; u->brain.timer = 30; return; }
-    /* What next, its time up for this */
-    if (--u->brain.timer <= 0) {
+    /* Holding a box (whatever it meant to do as it got it): on with it a while, then thrown */
+    if (m->heldObj && u->brain.mode != STAGE_NPC_CARRY) {
+        u->brain.mode = STAGE_NPC_CARRY;
+        u->brain.box = NULL;
+        float a = stage_npc_between(u, 0, 0xFFFF), r = STAGE_NPC_ROAM * sqrtf(stage_npc_between(u, 0, 1000) / 1000.f);
+        u->brain.x = r * sins((s16) a);
+        u->brain.z = r * coss((s16) a);
+        u->brain.timer = stage_npc_between(u, 40, 120);
+    }
+    /* What next, its time up for this (carrying, when it's thrown) */
+    if (--u->brain.timer <= 0 && u->brain.mode != STAGE_NPC_CARRY) {
         struct UnityMario *other = NULL;
-        if (u->brain.mode == STAGE_NPC_IDLE && stage_npc_between(u, 1, STAGE_NPC_ROLL_ONE_IN) == 1) {
+        struct Object *box = NULL;
+        if (u->brain.mode == STAGE_NPC_IDLE && stage_npc_between(u, 1, 4) <= STAGE_NPC_BOX_IN_FOUR)
+            box = stage_npc_box_for(u);
+        if (box) {
+            u->brain.mode = STAGE_NPC_GO_BOX;
+            u->brain.box = box;
+            u->brain.timer = 450;
+        } else if (u->brain.mode == STAGE_NPC_IDLE && stage_npc_between(u, 1, STAGE_NPC_ROLL_ONE_IN) == 1) {
             float nearest = STAGE_NPC_ROLL_LOOK; /* (another to roll: the nearest) */
             for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) {
                 struct UnityMario *t = &unity_marios[i];
@@ -847,12 +936,20 @@ static void stage_npc_think(struct UnityMario *u) {
                 if (d < nearest) { nearest = d; other = t; }
             }
         }
-        if (other) {
+        if (box) {
+        } else if (other) {
             u->brain.mode = STAGE_NPC_GO_ROLL;
             u->brain.target = other;
             u->brain.timer = 300;
         } else if (u->brain.mode == STAGE_NPC_IDLE) {
-            if (stage_npc_between(u, 0, 9) < 7) {
+            int pick = stage_npc_between(u, 0, 11);
+            if (pick >= 10) { /* (now and then, a sit, or a wave at you) */
+                u->brain.mode = STAGE_NPC_WAVE;
+                u->brain.timer = stage_npc_between(u, 60, 150);
+            } else if (pick >= 8) {
+                u->brain.mode = STAGE_NPC_SIT;
+                u->brain.timer = stage_npc_between(u, 150, 450);
+            } else if (pick < 6) {
                 u->brain.mode = STAGE_NPC_WANDER;
                 float a = stage_npc_between(u, 0, 0xFFFF), r = STAGE_NPC_ROAM * sqrtf(stage_npc_between(u, 0, 1000) / 1000.f);
                 u->brain.x = r * sins((s16) a);
@@ -873,6 +970,11 @@ static void stage_npc_think(struct UnityMario *u) {
     }
     float speed = 0.f;
     u16 down = 0;
+    /* Sitting, or waving at you: once it's stopped, where it stands; and when that's over, up again, or done */
+    if (u->brain.mode == STAGE_NPC_SIT && m->action == ACT_IDLE) set_mario_action(m, ACT_STAGE_SIT, 0);
+    if (u->brain.mode == STAGE_NPC_WAVE && m->action == ACT_IDLE) set_mario_action(m, ACT_STAGE_WAVE, 0);
+    if (u->brain.mode != STAGE_NPC_SIT && m->action == ACT_STAGE_SIT) set_mario_action(m, ACT_WAKING_UP, 0);
+    if (u->brain.mode != STAGE_NPC_WAVE && m->action == ACT_STAGE_WAVE) set_mario_action(m, ACT_IDLE, 0);
     /* Rolling one: B held, and on ahead, turning a little, till its time's up */
     if (u->brain.mode == STAGE_NPC_ROLLING) {
         if (m->action != ACT_STAGE_ROLL) {
@@ -904,6 +1006,40 @@ static void stage_npc_think(struct UnityMario *u) {
                     down = B_BUTTON;
                 }
             } else speed = sqrtf(dx * dx + dz * dz) < 300.f ? 24.f : STAGE_NPC_WALK;
+        }
+    }
+    /* Going for a box: up to it, facing it, then B (it picks it up, and another Mario hops out where it lay) */
+    if (u->brain.mode == STAGE_NPC_GO_BOX) {
+        struct Object *b = u->brain.box;
+        if (!stage_npc_box_free(u, b) || u->brain.timer <= 1) {
+            u->brain.mode = STAGE_NPC_IDLE; /* (another got it, or there's no room for more Marios: as before) */
+            u->brain.box = NULL;
+            u->brain.timer = stage_npc_between(u, 10, 40);
+        } else if (m->action & (ACT_FLAG_ATTACKING | ACT_FLAG_AIR)) {
+            /* (punching, picking up: let it) */
+        } else {
+            float dx = b->oPosX - m->pos[0], dz = b->oPosZ - m->pos[2], d = sqrtf(dx * dx + dz * dz);
+            u->brain.yaw = atan2s(dz, dx);
+            s16 off = (s16) (u->brain.yaw - m->faceAngle[1]);
+            if (d < STAGE_NPC_GRAB_REACH && off < 0x1000 && off > -0x1000) {
+                if (m->forwardVel < 4.f && !(pad->buttonDown & B_BUTTON)) down = B_BUTTON; /* (pressed, let up, pressed...) */
+            } else if (d < STAGE_NPC_GRAB_REACH) {
+                speed = 6.f; /* (turning to it) */
+            } else speed = d < 300.f ? 16.f : STAGE_NPC_WALK;
+        }
+    }
+    /* Carrying one: on towards somewhere, then thrown */
+    if (u->brain.mode == STAGE_NPC_CARRY) {
+        if (!m->heldObj) {
+            u->brain.mode = STAGE_NPC_IDLE;
+            u->brain.timer = stage_npc_between(u, 20, 60);
+        } else if (u->brain.timer <= 1 || stage_distance(u->brain.x, u->brain.z, m->pos[0], m->pos[2]) < 150.f) {
+            if (!(m->action & ACT_FLAG_THROWING) && !(pad->buttonDown & B_BUTTON)) down = B_BUTTON;
+            u->brain.timer = 2; /* (till it's gone) */
+        } else {
+            u->brain.yaw = atan2s(u->brain.z - m->pos[2], u->brain.x - m->pos[0]);
+            if (stage_distance(m->pos[0], m->pos[2], 0.f, 0.f) > STAGE_NPC_ROAM) u->brain.yaw = atan2s(-m->pos[2], -m->pos[0]);
+            speed = 24.f;
         }
     }
     if (u->brain.mode < STAGE_NPC_GO_ROLL && sqrtf(m->pos[0] * m->pos[0] + m->pos[2] * m->pos[2]) > STAGE_NPC_SAFE) {
@@ -960,7 +1096,7 @@ void stage_box_loop(void) {
             stage_box_move(o);
             break;
         case HELD_HELD:
-            if (!o->oAction && gMarioState && gMarioState->heldObj == o) { /* (its first time) */
+            if (!o->oAction) { /* (its first time: whichever Mario holds it, yours or another) */
                 o->oAction = 1;
                 stage_box_mario(o);
             }
@@ -987,11 +1123,18 @@ void stage_box_loop(void) {
 }
 
 /* Its colour: the box's display list in its environment colour (in Mario's hands too: the held object's) */
+/* (tests) How many times a box is drawn, from when it's watched */
+static struct Object *stage_box_watched;
+static int stage_box_draws;
+void stage_box_watch(struct Object *o) { stage_box_watched = o; stage_box_draws = 0; }
+int stage_box_drawn(void) { return stage_box_draws; }
+
 Gfx *geo_stage_box(s32 callContext, struct GraphNode *node, UNUSED void *context) {
     if (callContext != GEO_CONTEXT_RENDER) return NULL;
     struct Object *o = gCurGraphNodeHeldObject ? gCurGraphNodeHeldObject->objNode : (struct Object *) gCurGraphNodeObject;
     struct GraphNodeGenerated *generated = (struct GraphNodeGenerated *) node;
     generated->fnNode.node.flags = (LAYER_OPAQUE << 8) | (generated->fnNode.node.flags & 0xFF);
+    if (o && o == stage_box_watched) stage_box_draws++;
     Gfx *list = alloc_display_list(3 * sizeof(Gfx));
     if (!list) return NULL;
     u32 rgb = o ? (u32) o->oBehParams : 0xFFFFFF;
@@ -1026,6 +1169,23 @@ static struct UnityMario *stage_nth(int n) {
 int stage_tumbling(int n) { struct UnityMario *u = stage_nth(n); return u ? u->tumbling + (u->tumble.by != NULL) : -1; }
 struct MarioState *stage_npc_state(int n) { struct UnityMario *u = stage_nth(n); return u ? &u->m : NULL; }
 void stage_npcs_pause(int paused) { stage_npcs_paused = paused; }
+/* (tests) The nth NPC sits (or waves, wave) a while, from now; and how many are sitting, and waving */
+void stage_npc_pose(int n, int wave) {
+    struct UnityMario *u = stage_nth(n);
+    if (!u) return;
+    u->brain.mode = wave ? STAGE_NPC_WAVE : STAGE_NPC_SIT;
+    u->brain.timer = 200;
+}
+int stage_npcs_sitting(void) {
+    int n = 0;
+    for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) if (unity_marios[i].obj && unity_marios[i].m.action == ACT_STAGE_SIT) n++;
+    return n;
+}
+int stage_npcs_waving(void) {
+    int n = 0;
+    for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) if (unity_marios[i].obj && unity_marios[i].m.action == ACT_STAGE_WAVE) n++;
+    return n;
+}
 void stage_tumble_test(int n, float speed, s16 dir) { struct UnityMario *u = stage_nth(n); if (u) stage_tumble_start(u, NULL, speed, dir); }
 
 /* How many NPC Marios there are (for tests) */

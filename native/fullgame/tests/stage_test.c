@@ -29,6 +29,9 @@ int sm64unity_stage(void);
 void sm64unity_cursor(int, float, float);
 void sm64unity_mr_geometry(int);
 int sm64unity_render_current(void);
+
+
+int sm64unity_dropped_draws(void);
 int stage_boxes(void);
 int stage_mosaic_boxes(void);
 int stage_npcs(void);
@@ -38,6 +41,13 @@ int stage_knocks(void);
 int stage_tumbling(int n);
 struct MarioState *stage_npc_state(int n);
 void stage_npcs_pause(int paused);
+void stage_npcs_fetch(int on);
+int stage_npcs_boxing(void);
+void stage_npc_pose(int n, int wave);
+int stage_npcs_sitting(void);
+int stage_npcs_waving(void);
+void unity_viewer(Vec3f out);
+void sm64unity_billboards(int on, float x, float y, float z, float ux, float uy, float uz);
 void stage_tumble_test(int n, float speed, s16 dir);
 void sm64unity_stage_tilt(float forward, float right);
 int sm64unity_stage_tilting(void);
@@ -48,6 +58,8 @@ extern const BehaviorScript bhvStageDisc[];
 #define ACT_STAGE_ROLL 0x0000047E
 #define ACT_STAGE_TUMBLE 0x0002047F
 int stage_box_mario(struct Object *o);
+void stage_box_watch(struct Object *o);
+int stage_box_drawn(void);
 int sm64unity_marios(float *out, int max);
 extern const BehaviorScript bhvStageBox[];
 
@@ -207,6 +219,7 @@ int main(int argc, char **argv) {
     printf("Castle Grounds, area %d, Mario at %.0f %.0f %.0f\n", gCurrAreaIndex, gMarioState->pos[0], gMarioState->pos[1],
            gMarioState->pos[2]);
 
+    stage_npcs_fetch(0); /* (the Marios fetching boxes on their own: tested after the rest, with as many as there are) */
     CHECK(through_pipe(-2400, 260, 4400, 2), "the pipe by the start takes Mario to the disc stage (area %d)", gCurrAreaIndex);
     ticks(60);
     printf("  Mario at %.0f %.0f %.0f, floor at %.0f\n", gMarioState->pos[0], gMarioState->pos[1], gMarioState->pos[2],
@@ -279,6 +292,22 @@ int main(int argc, char **argv) {
     CHECK(stage_npcs() == 3, "a Mario for each (%d)", stage_npcs());
     tick(0);
     CHECK(stage_hud_count() == 4, "four counted (%d)", stage_hud_count());
+    /* Only the Mario holding a box has it in his hands, not every Mario */
+    stage_npcs_pause(1);
+    struct Object *held = rightmost_box(0);
+    for (int i = 0; i < 3; i++) stand(stage_npc_state(i), held->oPosX + 100 + 120 * (i + 1), held->oPosZ, -0x4000);
+    CHECK(pick_up(held), "Mario picks a box up, the others beside him");
+    ticks(20);
+    stage_box_watch(held);
+    tick(0);
+    CHECK(stage_box_drawn() == 1 && !stage_npc_state(0)->heldObj, "it's drawn once, in his hands only (%d)", stage_box_drawn());
+    shot_near("7-holding", gMarioState, stage_npc_state(1), 1);
+    CHECK(throw_held(), "and thrown");
+    stage_box_watch(held);
+    tick(0);
+    CHECK(stage_box_drawn() == 1, "then drawn where it is, once (%d)", stage_box_drawn());
+    stage_box_watch(NULL);
+    stage_npcs_pause(0);
     /* On their own: about the disc, never off it */
     float from[4 * 3];
     sm64unity_marios(from, 3);
@@ -495,6 +524,89 @@ int main(int argc, char **argv) {
     CHECK(fabsf(gMarioState->pos[1] - gMarioState->floorHeight) < 5.f && stage_npcs() == 3, "everyone still on it");
     stage_npcs_pause(0);
 
+    /* Now and then, one sits a while, or waves at you */
+    printf("Sitting and waving:\n");
+    {
+        stand(gMarioState, 0, 1500, 0);
+        struct MarioState *sitter = stage_npc_state(0), *waver = stage_npc_state(1);
+        stand(sitter, -250, 2000, 0x4000);
+        stand(waver, 250, 2000, 0x4000);
+        stand(stage_npc_state(2), 900, -900, 0);
+        stage_npc_pose(0, 0);
+        stage_npc_pose(1, 1);
+        ticks(45);
+        Vec3f you;
+        unity_viewer(you);
+        s16 to_you = atan2s(you[2] - waver->pos[2], you[0] - waver->pos[0]), off = (s16) (waver->faceAngle[1] - to_you);
+        CHECK(sitter->action == 0x0C00021E && fabsf(sitter->pos[1] - sitter->floorHeight) < 2.f, "one sits down");
+        CHECK(waver->action == 0x0C00021F && abs(off) < 0x200, "and one waves, turned to the camera (%d off)", off);
+        CHECK(fabsf(sitter->pos[0] + 250) < 5 && fabsf(waver->pos[0] - 250) < 5 && fabsf(waver->pos[2] - 2000) < 5, "both where they stood");
+        shot("9-sitting-waving");
+        shot_near("9-waving-near", waver, waver, 0);
+        shot_near("9-sitting-near", sitter, sitter, 1);
+        /* In MR, at your head: straight ahead of the game camera, then off to its right */
+        Vec3f eye, ahead, right;
+        vec3f_copy(eye, you);
+        sm64unity_billboards(1, 0, 0, -1000, 0, 1, 0);
+        unity_viewer(ahead);
+        sm64unity_billboards(1, 1000, 0, 0, 0, 1, 0);
+        unity_viewer(right);
+        float fx = gLakituState.focus[0] - eye[0], fy = gLakituState.focus[1] - eye[1], fz = gLakituState.focus[2] - eye[2];
+        float fn = sqrtf(fx * fx + fy * fy + fz * fz);
+        fx /= fn; fy /= fn; fz /= fn;
+        float hn = hypotf(fx, fz);
+        CHECK(fabsf(ahead[0] - (eye[0] + 1000 * fx)) < 2 && fabsf(ahead[1] - (eye[1] + 1000 * fy)) < 2
+              && fabsf(ahead[2] - (eye[2] + 1000 * fz)) < 2, "in MR, your head is found in the level: ahead");
+        CHECK(fabsf(right[0] - (eye[0] - 1000 * fz / hn)) < 2 && fabsf(right[2] - (eye[2] + 1000 * fx / hn)) < 2
+              && fabsf(right[1] - eye[1]) < 2, "and to the right");
+        ticks(40);
+        to_you = atan2s(right[2] - waver->pos[2], right[0] - waver->pos[0]);
+        off = (s16) (waver->faceAngle[1] - to_you);
+        CHECK(waver->action == 0x0C00021F && abs(off) < 0x200, "and he waves at it (%d off)", off);
+        sm64unity_billboards(0, 0, 0, 0, 0, 1, 0);
+        int got_up = 0, stopped = 0;
+        for (int i = 0; i < 260; i++) {
+            tick(0);
+            if (sitter->action == ACT_WAKING_UP) got_up = 1;
+            if (waver->action != 0x0C00021F) stopped = 1;
+        }
+        CHECK(got_up && stopped, "then the one gets up, and the other stops");
+        int sat = 0, waved = 0;
+        for (int i = 0; i < 2400 && !(sat && waved); i++) {
+            tick(0);
+            if (stage_npcs_sitting()) sat = 1;
+            if (stage_npcs_waving()) waved = 1;
+        }
+        CHECK(sat && waved, "and on their own, now and then, they sit, and wave");
+    }
+
+    /* On their own, most go for boxes no one has picked up yet, till there are as many Marios as there can be */
+    printf("Fetching boxes:\n");
+    stage_npcs_fetch(1);
+    int npcs_before = stage_npcs(), held_by_npc = 0;
+    float boxing = 0, all = 0;
+    for (int i = 0; i < 600; i++) {
+        tick(0);
+        if (i >= 100) { boxing += stage_npcs_boxing(); all += stage_npcs(); }
+        for (int k = 0; k < stage_npcs(); k++) if (stage_npc_state(k) && stage_npc_state(k)->heldObj) held_by_npc = 1;
+        if (i == 300) overview("8-fetching");
+    }
+    CHECK(boxing > all / 2 && held_by_npc, "most of them go for boxes, and lift them (%.0f%% of the time)", 100 * boxing / all);
+    CHECK(stage_npcs() > npcs_before + 3, "and more Marios hop out of them (%d, from %d)", stage_npcs(), npcs_before);
+    int grown = stage_npcs();
+    for (int i = 0; i < 9000 && stage_npcs() < 128 && stage_npcs() < stage_mosaic_boxes(); i++) tick(0);
+    printf("  %d Marios\n", stage_npcs());
+    overview("8-many");
+    ticks(60);
+    CHECK(stage_npcs() > grown, "on till there are many more (%d)", stage_npcs());
+    int untaken = 0;
+    for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_DESTRUCTIVE].next;
+         b != (struct Object *) &gObjectLists[OBJ_LIST_DESTRUCTIVE]; b = (struct Object *) b->header.next)
+        if (b->behavior == segmented_to_virtual(bhvStageBox) && !b->oAction) untaken++;
+    ticks(300);
+    CHECK(stage_npcs() == 128 && untaken > 0 && stage_npcs_boxing() == 0,
+          "at 128, no more go for boxes, though %d lie untaken (%d going for one or holding one)", untaken, stage_npcs_boxing());
+
     /* Every box: as many Marios as there can be */
     const BehaviorScript *boxes = segmented_to_virtual(bhvStageBox);
     for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_DESTRUCTIVE].next;
@@ -507,6 +619,9 @@ int main(int argc, char **argv) {
     ticks(300);
     double ms = 1000.0 * (clock() - start) / CLOCKS_PER_SEC / 300;
     printf("  %d Marios: %.2f ms a step (with drawing)\n", stage_npcs(), ms);
+    { int nb, nf; sm64unity_batches(&nb); sm64unity_vertices(&nf);
+      CHECK(sm64unity_dropped_draws() == 0, "all of them drawn (%d batches, %d floats; %d draws with no room)", nb, nf,
+            sm64unity_dropped_draws()); }
     CHECK(stage_npcs() >= most - 2, "they get along (%d of %d left)", stage_npcs(), most);
     CHECK(stage_hud_count() == 1 + stage_npcs(), "all counted (%d)", stage_hud_count());
 

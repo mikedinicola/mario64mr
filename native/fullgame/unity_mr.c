@@ -66,6 +66,21 @@ int unity_billboard(Mat4 dest, Mat4 mtx, Vec3f position, s16 angle) {
     dest[3][3] = 1;
     return 1;
 }
+/* Where you are, in the level (for a Mario to wave at): your head, out of the camera's view space as the game draws
+ * it (geo_process_camera's), in MR; else the game camera */
+void unity_camera_further(float *pos, const float *focus);
+void unity_viewer(Vec3f out) {
+    Vec3f eye;
+    vec3f_copy(eye, gLakituState.pos);
+    unity_camera_further(eye, gLakituState.focus);
+    if (!billboard_eye) { vec3f_copy(out, eye); return; }
+    Mat4 view;
+    mtxf_lookat(view, eye, gLakituState.focus, 0);
+    for (int j = 0; j < 3; j++) {
+        out[j] = 0;
+        for (int i = 0; i < 3; i++) out[j] += (billboard_at[i] - view[3][i]) * view[j][i];
+    }
+}
 
 /* A sky's tile at a place in its panorama (row * 10 + column, skybox.c's): with the game's data outside it, the
  * tile's path in the resource pack ("textures/skybox_tiles/water.0.rgba16"); identical tiles are stored once */

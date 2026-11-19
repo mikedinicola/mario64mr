@@ -15,7 +15,8 @@
  * stage_npc_think works: it goes where it means to whichever way the camera faces (unity_marios_steer).
  * Rolled along by another Mario, or tumbling on after (the stage's too), it runs none of the game's Mario code:
  * stage_tumble_step moves and turns it.
- * Its model reads its body state: it's swapped into gBodyStates[0] while its object is drawn (geo_process_object).
+ * Its model reads its body state: it's swapped into gBodyStates[0] while its object is drawn (geo_process_object);
+ * and what it holds is its own (unity_marios_drawn: the model's held object node).
  * Tilted to the floor (crawling, sliding: align_with_floor), it's drawn by a matrix of its own: the game keeps one a
  * player (sFloorAlignMatrix[m->unk00]), so each extra one's step uses player 2's, then copies it out. */
 
@@ -26,6 +27,16 @@
 #include "game/obj_behaviors.h"
 #include "sm64.h"
 #include "engine/math_util.h"
+
+/* Holding what another Mario has taken? (Two grabbed it in one step: it's the last one's, its parentObj.) Then empty
+ * handed, as he was (m, with gMarioState and gMarioObject his) */
+static void unity_marios_let_go_taken(struct MarioState *m) {
+    struct Object *held = m->heldObj;
+    if (!held || (held->oHeldState == HELD_HELD && held->parentObj == m->marioObj)) return;
+    m->heldObj = NULL;
+    if (m->action & ACT_FLAG_AIR) set_mario_action(m, ACT_FREEFALL, 0);
+    else set_mario_action(m, ACT_IDLE, 0);
+}
 
 /* Out of the treasure chest at once, and of their own (NPCs) */
 #define UNITY_CHEST_MARIOS 3
@@ -47,7 +58,7 @@ struct UnityMario {
     Mat4 floorAlign;    /* tilted to the floor: how it's drawn (its object's throwMatrix) */
     int npc;            /* steered by its own controller, not yours */
     struct Controller pad;
-    struct { int mode, timer, hold; float x, z; s16 yaw; u32 seed; struct UnityMario *target; } brain; /* (stage_npc_think's) */
+    struct { int mode, timer, hold; float x, z; s16 yaw; u32 seed; struct UnityMario *target; struct Object *box; } brain; /* (stage_npc_think's) */
     int tumbling;       /* rolled along, or tumbling on (stage_tumble_step's) */
     struct { struct MarioState *by; float speed; s16 dir, spin; } tumble;
 };
@@ -180,14 +191,15 @@ void unity_marios_update(void) {
     if (!u || !gMarioState || !gMarioObject) { obj_mark_for_deletion(o); return; }
     o->activeFlags &= ~(ACTIVE_FLAG_FAR_AWAY | ACTIVE_FLAG_IN_DIFFERENT_ROOM);
     struct MarioState *m = &u->m;
-    /* (only what an extra one touches: update_mario_inputs reads them from its object) */
-    o->collidedObjInteractTypes &= UNITY_EXTRA_INTERACTIONS;
+    /* (only what an extra one touches: update_mario_inputs reads them from its object; an NPC picks boxes up too) */
+    o->collidedObjInteractTypes &= UNITY_EXTRA_INTERACTIONS | (u->npc ? INTERACT_GRABBABLE : 0);
     s16 coins = m->numCoins, lives = m->numLives;
     struct MarioState *first = gMarioState;
     struct Object *firstObj = gMarioObject;
     m->area = gCurrentArea;
     if (u->npc && !u->tumbling) stage_npc_think(u); /* (gMarioState still the first Mario) */
     gMarioState = m; gMarioObject = o;
+    unity_marios_let_go_taken(m);
     if (u->tumbling) stage_tumble_step(u);
     else execute_mario_action(o);
     gMarioState = first; gMarioObject = firstObj;
@@ -211,6 +223,7 @@ void unity_marios_update(void) {
     if (m->numLives != lives) first->numLives += m->numLives - lives;
     m->numLives = 0;
     if (u->lost || !m->floor || m->health < 0x100) {
+        if (m->heldObj) { m->heldObj->oHeldState = HELD_DROPPED; m->heldObj = NULL; } /* (what it held, let fall) */
         spawn_mist_particles_variable(0, 0, 46.f);
         obj_mark_for_deletion(o);
         u->obj = NULL;
@@ -233,6 +246,9 @@ void unity_marios_body(struct Object *o, int begin) {
         unity_marios_drawing = NULL;
     }
 }
+
+/* The extra Mario being drawn, if one is (its model's held object node draws what it holds, not the first Mario's) */
+struct MarioState *unity_marios_drawn(void) { return unity_marios_drawing ? &unity_marios_drawing->m : NULL; }
 
 /* Where they are (for the host): 4 floats each, x y z and yaw (the level's coordinates). How many */
 EXPORT int sm64unity_marios(float *out, int max) {

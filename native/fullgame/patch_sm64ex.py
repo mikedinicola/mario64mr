@@ -186,10 +186,27 @@ def prepare(root, rom, sixty=True, external_data=True):
                           '        case 0x0000047E /* ACT_STAGE_ROLL */: cancel = stage_act_roll(m);        break;\n'
                           '        case 0x0002047F /* ACT_STAGE_TUMBLE */: cancel = stage_act_tumble(m);    break;\n')
     (root / "src/game/mario_actions_moving.c").write_text(moving)
+    # ...and an NPC Mario sitting a while, or waving at you (stage_act_sit, stage_act_wave)
+    stationary = original("src/game/mario_actions_stationary.c")
+    stationary = replace_once(stationary, 's32 mario_execute_stationary_action(struct MarioState *m) {\n',
+                              'extern s32 stage_act_sit(struct MarioState *m);\nextern s32 stage_act_wave(struct MarioState *m);\n'
+                              's32 mario_execute_stationary_action(struct MarioState *m) {\n')
+    stationary = replace_once(stationary, '        case ACT_IDLE:                    sp24 = act_idle(m);                             break;\n',
+                              '        case ACT_IDLE:                    sp24 = act_idle(m);                             break;\n'
+                              '        case 0x0C00021E /* ACT_STAGE_SIT */:  sp24 = stage_act_sit(m);                    break;\n'
+                              '        case 0x0C00021F /* ACT_STAGE_WAVE */: sp24 = stage_act_wave(m);                   break;\n')
+    (root / "src/game/mario_actions_stationary.c").write_text(stationary)
     misc = original("src/game/mario_misc.c")
     misc = replace_once(misc, '        if (action != ACT_BUTT_SLIDE && action != ACT_HOLD_BUTT_SLIDE && action != ACT_WALKING\n',
                         '        if (action != ACT_BUTT_SLIDE && action != ACT_HOLD_BUTT_SLIDE && action != ACT_WALKING\n'
                         '            && action != 0x0000047E /* ACT_STAGE_ROLL */\n')
+    # What a Mario holds, drawn in his hands: the one being drawn's (an extra Mario's, unity_marios_drawn), not
+    # always the first Mario's (every Mario shares the model, and so its held object node)
+    misc = replace_once(misc, '    struct MarioState *marioState = &gMarioStates[asHeldObj->playerIndex];\n',
+                        '    struct MarioState *marioState = unity_marios_drawn() ? unity_marios_drawn()\n'
+                        '                                                         : &gMarioStates[asHeldObj->playerIndex];\n')
+    misc = replace_once(misc, 'Gfx *geo_switch_mario_hand_grab_pos(', 'extern struct MarioState *unity_marios_drawn(void);\n'
+                        'Gfx *geo_switch_mario_hand_grab_pos(')
     (root / "src/game/mario_misc.c").write_text(misc)
     # On the disc stage, how many Marios there are, with the rest of the HUD (unity_stage.inc.h, stage_hud)
     hud = original("src/game/hud.c")
