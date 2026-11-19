@@ -167,13 +167,6 @@ final class RoomProps {
 
     // ---------------------------------------------------------------- The treasure chest
 
-    /// Its meshes (wood, inside, gold; the lid's wood and gold), made the first time it's drawn
-    private lazy var chestMeshes: [(buffer: MTLBuffer, count: Int)] = {
-        [TreasureChest.bodyWood, TreasureChest.bodyInside, TreasureChest.bodyGold, TreasureChest.lidWood,
-         TreasureChest.lidGold].compactMap { v in
-            device.makeBuffer(bytes: v, length: v.count * 4).map { ($0, v.count / 8) }
-        }
-    }()
     /// Each kind's pictures from the game, loaded the first time it's drawn (none: a plain tile)
     private var tilePictures: [SpawnKind: [MTLTexture]] = [:]
     private func pictures(_ kind: SpawnKind) -> [MTLTexture] {
@@ -184,24 +177,10 @@ final class RoomProps {
         tilePictures[kind] = p
         return p
     }
-    private let wood = SIMD4<Float>(0.19, 0.075, 0.028, 1), gold = SIMD4<Float>(0.78, 0.5, 0.1, 1)
-    private let chestInside = SIMD4<Float>(0.03, 0.014, 0.007, 1)
-
-    /// The chest, its lid open as far as it is, and (open) what it holds above it: dimmed where the level can't
-    /// spawn it, lit up where a hand's on it
+    /// Open, what the chest holds above it: dimmed where the level can't spawn it, lit up where a hand's on it (the
+    /// chest itself is the game's, drawn by the game in the room: TreasureChest.gamePose)
     func encodeChest(_ chest: TreasureChest, into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
-        guard chest.visible, chestMeshes.count == 5 else { return }
-        let lit = SIMD4<UInt32>(1, 0, 0, 0)
-        for (i, color) in [(0, wood), (1, chestInside), (2, gold)] {
-            draw(chestMeshes[i].buffer, count: chestMeshes[i].count, model: chest.pose, color: color, texture: white,
-                 flags: lit, blend: false, into: encoder, eye: eye)
-        }
-        let lid = chest.lidModel
-        draw(chestMeshes[3].buffer, count: chestMeshes[3].count, model: lid, color: wood, texture: white, flags: lit,
-             blend: false, into: encoder, eye: eye)
-        draw(chestMeshes[4].buffer, count: chestMeshes[4].count, model: lid, color: gold, texture: white, flags: lit,
-             blend: false, into: encoder, eye: eye)
-        guard chest.openness > 0.05 else { return }
+        guard chest.visible, chest.openness > 0.05 else { return }
         // A warm glow out of it as it opens
         let s = TreasureChest.size
         let up = simd_float4x4(SIMD4(1, 0, 0, 0), SIMD4(0, 0, -1, 0), SIMD4(0, 1, 0, 0), SIMD4(0, s.y - 0.006, 0, 1))

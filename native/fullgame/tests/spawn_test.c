@@ -1,6 +1,7 @@
 /* Headless test of the treasure chest (unity_spawn.inc.h): enemies and power-up boxes taken out with a pinch in the
  * room or the level, or with a look near Mario; boxes floating at a jump's height and broken by one; and more Marios
- * (unity_marios.inc.h) running with the same stick. In Castle Grounds. Run by run_room_objects_test.sh
+ * (unity_marios.inc.h) running with the same stick; and the chest itself, the game's own (unity_chest.inc.h). In
+ * Castle Grounds. Run by run_room_objects_test.sh
  * (TEST=spawn_test), against the game library built with no host. */
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +46,9 @@ int sm64unity_carry(int, float, float, float, float, float, float);
 int sm64unity_marios(float *out, int max);
 void unity_mario_warped(void);
 extern const BehaviorScript bhvUnityMario[];
+void sm64unity_chest(int show, float x, float y, float z, float yaw, float lid, float scale);
+int unity_chest_part(struct Object *o);
+int unity_graph_tag(struct GraphNodeObject *node, int shadow);
 
 enum { GOOMBA, BOBOMB, KOOPA, CHUCKYA, BULLY, WING_BOX, METAL_BOX, VANISH_BOX, COIN_BOX, ONE_UP_BOX, MARIO, SHELL, KINDS };
 static const char *names[] = { "Goomba", "Bob-omb", "Koopa", "Chuckya", "Bully", "wing cap box", "metal cap box",
@@ -369,6 +373,42 @@ int main(int argc, char **argv) {
     unity_mario_warped();
     tick(0);
     CHECK(sm64unity_marios(at1, 3) == 0 && count(bhvUnityMario) == 0, "a warp: gone");
+
+    printf("The chest, the game's own, in the room:\n");
+    {
+        struct Object *parts[3] = { 0 };
+        int n = 0;
+        sm64unity_chest(1, 1000, 2000, -500, (float) M_PI / 2, 1.0f, 0.5f);
+        ticks(2);
+#define CHEST_PARTS() do { n = 0; parts[0] = parts[1] = NULL; for (int l = 0; l < NUM_OBJ_LISTS; l++) { \
+            struct ObjectNode *head = &gObjectLists[l]; \
+            for (struct ObjectNode *node = head->next; node != head; node = node->next) \
+                if (unity_chest_part((struct Object *) node) && n < 3) parts[n++] = (struct Object *) node; } } while (0)
+        CHEST_PARTS();
+        CHECK(n == 2, "its base and its lid (%d parts)", n);
+        if (n == 2) {
+            struct Object *base = parts[0]->oPosY < parts[1]->oPosY ? parts[0] : parts[1], *lid = base == parts[0] ? parts[1] : parts[0];
+            CHECK(base->header.gfx.sharedChild && lid->header.gfx.sharedChild && base->header.gfx.sharedChild != lid->header.gfx.sharedChild,
+                  "each with its model");
+            CHECK(fabsf(base->oPosX - 1000) < 0.5f && fabsf(base->oPosY - 2000) < 0.5f && fabsf(base->oPosZ + 500) < 0.5f
+                  && (u16) base->oFaceAngleYaw == 0x4000 && fabsf(base->header.gfx.scale[0] - 0.5f) < 1e-4f,
+                  "the base where the host says, turned and scaled (%.0f %.0f %.0f, yaw %04x)", base->oPosX, base->oPosY,
+                  base->oPosZ, (u16) base->oFaceAngleYaw);
+            CHECK(fabsf(lid->oPosX - (1000 - 38.5f)) < 1 && fabsf(lid->oPosY - 2051) < 1 && fabsf(lid->oPosZ + 500) < 1
+                  && abs(lid->oFaceAnglePitch + 10430) < 4, "the lid on its hinge, open (%.0f %.0f %.0f, pitch %d)",
+                  lid->oPosX, lid->oPosY, lid->oPosZ, lid->oFaceAnglePitch);
+            CHECK(unity_graph_tag(&base->header.gfx, 0) == 4 && unity_graph_tag(&lid->header.gfx, 0) == 4, "drawn in the room (tag 4)");
+            obj_mark_for_deletion(lid);
+            ticks(2);
+            CHEST_PARTS();
+            CHECK(n == 2, "unloaded, made again (%d parts)", n);
+        }
+        sm64unity_chest(0, 0, 0, 0, 0, 0, 1);
+        ticks(2);
+        CHEST_PARTS();
+        CHECK(n == 0, "hidden, gone (%d parts)", n);
+#undef CHEST_PARTS
+    }
 
     printf("Leaving the room:\n");
     sm64unity_room_objects_return();

@@ -59,6 +59,8 @@ void sm64unity_room_objects_return(void);
 unsigned int sm64unity_spawn_available(void);
 int sm64unity_spawn_held(int kind, int in_room, float x, float y, float z);
 int sm64unity_spawn_near_mario(int kind);
+// (unity_chest.inc.h: the chest itself, the game's own, drawn in the room; room game units, radians)
+void sm64unity_chest(int show, float x, float y, float z, float yaw, float lid, float scale);
 // (unity_stage.inc.h: the disc stage's tilt, from the controller's lean, as the stick is; is it on (D-pad up))
 void sm64unity_stage_tilt(float forward, float right);
 int sm64unity_stage_tilting(void);

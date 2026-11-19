@@ -198,10 +198,11 @@ static int unity_graph_room_object(struct GraphNodeObject *node) {
     if (o < gObjectPool || o >= gObjectPool + OBJECT_POOL_CAPACITY) return 0;
     return unity_room_slot(o) || unity_room_slot(o->parentObj);
 }
+int unity_chest_part(struct Object *o); /* (unity_chest.inc.h: the treasure chest, drawn in the room) */
 int unity_graph_tag(struct GraphNodeObject *node, int shadow) {
     if (!node) return 0;
     if (gMarioObject && node == &gMarioObject->header.gfx) return shadow ? 2 : 1;
-    if (unity_graph_room_object(node)) return shadow ? 5 : 4;
+    if (unity_graph_room_object(node) || unity_chest_part((struct Object *) node)) return shadow ? 5 : 4;
     return 0;
 }
 /* Its shadow falls on the room's surfaces (Mario's out in the room, or an object's) */

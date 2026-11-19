@@ -122,6 +122,12 @@ final class GameHost {
                 continue
             }
             sm64unity_mr_geometry(room.on ? 1 : 0)
+            // The treasure chest by the window: the game's own, drawn by the game where the room has it
+            if room.on, let c = room.chest {
+                sm64unity_chest(1, c.at.x, c.at.y, c.at.z, c.yaw, c.lid, c.scale)
+            } else {
+                sm64unity_chest(0, 0, 0, 0, 0, 0, 1)
+            }
             // (a diorama is seen whole: nothing left out for being far from Mario)
             sm64unity_draw_far(room.on && room.geometry?.diorama == true ? 1 : 0)
             if let triangles = room.roomTriangles {  // (the room, for Mario out in it)

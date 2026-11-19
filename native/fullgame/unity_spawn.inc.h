@@ -246,7 +246,9 @@ static void unity_spawned_adopt(void) {
 }
 
 /* At the start of the objects' frame: forget what's gone; boxes not held float to their height over the floor */
+static void unity_chest_frame(void); /* (unity_chest.inc.h: the chest itself) */
 static void unity_spawned_frame(void) {
+    unity_chest_frame();
     unity_spawned_adopt();
     for (int i = 0; i < UNITY_SPAWNED; i++) {
         struct UnitySpawned *s = &unity_spawned_objects[i];

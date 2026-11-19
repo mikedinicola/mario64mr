@@ -28,6 +28,14 @@ enum SpawnKind: Int32, CaseIterable, Sendable {
     }
 }
 
+/// The chest for the game to draw: room game units, radians
+struct ChestPose: Sendable {
+    var at: SIMD3<Float>
+    var yaw: Float
+    var lid: Float
+    var scale: Float
+}
+
 /// Something taken out of the chest: by a pinch on its tile (held by that hand, at the pinch, room metres), or by a
 /// look and a pinch (into the level, near Mario)
 struct ChestPick: Sendable {
@@ -36,14 +44,22 @@ struct ChestPick: Sendable {
     var at: SIMD3<Float>
 }
 
-/// A treasure chest floating just past the window's lower right corner. A fingertip touching it, or a look at it and
+/// A treasure chest floating just past the window's lower right corner: the game's own (Jolly Roger Bay's), drawn by
+/// the game in the room where this puts it (native/fullgame/unity_chest.inc.h, sm64unity_chest). A fingertip touching it, or a look at it and
 /// a pinch, opens it (and closes it again); open, what it holds floats above it as tiles: enemies, power-up boxes and
 /// another Mario. A pinch on a tile takes one out held in that hand (MarioCarrier carries it on, into the room or
 /// through the window into the level); a look at one and a pinch puts it in the level near Mario.
 final class TreasureChest {
-    /// Its body (metres): width, the body's height (to the lid's hinge), depth; the lid a half round on top
-    static let size = SIMD3<Float>(0.15, 0.065, 0.09)
-    static var lidRadius: Float { size.z / 2 }
+    /// The game's chest, in its units: its base's width, height (to the lid's hinge, along the back of its top) and
+    /// depth, and how high the lid rises over it
+    static let gameSize = SIMD3<Float>(184, 102, 153), gameLidHeight: Float = 46
+    /// Metres to its game units: 15 cm wide
+    static let metresPerUnit: Float = 0.15 / gameSize.x
+    /// Its base (metres): width, height, depth; and its lid's height over it
+    static let size = gameSize * metresPerUnit
+    static let lidHeight = gameLidHeight * metresPerUnit
+    /// Its scale in the room's game units (RoomPlacement.unitsPerMetre), for the game to draw it at
+    static let gameScale = metresPerUnit * RoomPlacement.unitsPerMetre
     /// How far the lid opens, radians
     static let lidOpen: Float = 1.95
 
@@ -156,7 +172,7 @@ final class TreasureChest {
     /// A point in the chest's space inside it (with a little margin to touch)
     private static func inChest(_ p: SIMD3<Float>) -> Bool {
         let m: Float = 0.012
-        return abs(p.x) <= size.x / 2 + m && abs(p.z) <= size.z / 2 + m && p.y >= -m && p.y <= size.y + lidRadius + m
+        return abs(p.x) <= size.x / 2 + m && abs(p.z) <= size.z / 2 + m && p.y >= -m && p.y <= size.y + lidHeight + m
     }
 
     /// Each tile's middle (room), facing the same way as the chest
@@ -166,7 +182,7 @@ final class TreasureChest {
             let step = Self.tileSize + Self.tileGap
             let x = -Self.size.x / 2 + Self.tileSize / 2 + Float(c) * step
             // (rising out of the chest as it opens)
-            let y = Self.size.y + Self.lidRadius + 0.04 + Float(r) * step
+            let y = Self.size.y + Self.lidHeight + 0.04 + Float(r) * step
             let rise = Self.ease(openness)
             return pose.transform(SIMD3(x * rise, Self.size.y + (y - Self.size.y) * rise, 0))
         }
@@ -199,8 +215,8 @@ final class TreasureChest {
         // (its front, as a plane through its middle; and its top, seen from above)
         let front = pose * TreasureChest.translation(0, 0, Self.size.z / 2)
         if let hit = gaze.hit(front.inverse), abs(hit.x) <= Self.size.x / 2 + 0.02,
-           hit.y >= -0.02, hit.y <= Self.size.y + Self.lidRadius + 0.02 { return true }
-        let top = pose * TreasureChest.translation(0, Self.size.y + Self.lidRadius, 0)
+           hit.y >= -0.02, hit.y <= Self.size.y + Self.lidHeight + 0.02 { return true }
+        let top = pose * TreasureChest.translation(0, Self.size.y + Self.lidHeight, 0)
             * simd_float4x4(SIMD4(1, 0, 0, 0), SIMD4(0, 0, -1, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, 0, 1))
         if let hit = gaze.hit(top.inverse), abs(hit.x) <= Self.size.x / 2 + 0.02, abs(hit.y) <= Self.size.z / 2 + 0.02 {
             return true
@@ -208,12 +224,16 @@ final class TreasureChest {
         return false
     }
 
-    /// The lid, turned open about its hinge (along the back of the body's top)
-    var lidModel: simd_float4x4 {
-        let angle = Self.lidOpen * Self.ease(openness)
-        let c = cos(angle), s = sin(angle)
-        let turn = simd_float4x4(SIMD4(1, 0, 0, 0), SIMD4(0, c, -s, 0), SIMD4(0, s, c, 0), SIMD4(0, 0, 0, 1))
-        return pose * Self.translation(0, Self.size.y, -Self.size.z / 2) * turn
+    /// How far the lid's turned open about its hinge, radians
+    var lidAngle: Float { Self.lidOpen * Self.ease(openness) }
+
+    /// For the game to draw it (sm64unity_chest): where, in the room's game units; which way its front faces (the
+    /// game's yaw, radians); its lid's angle; nil when it isn't shown
+    var gamePose: ChestPose? {
+        guard visible else { return nil }
+        let front = SIMD3<Float>(pose.columns.2.x, pose.columns.2.y, pose.columns.2.z)
+        let at = SIMD3<Float>(pose.columns.3.x, pose.columns.3.y, pose.columns.3.z) * RoomPlacement.unitsPerMetre
+        return ChestPose(at: at, yaw: atan2(front.x, front.z), lid: lidAngle, scale: Self.gameScale)
     }
 
     private static func ease(_ t: Float) -> Float { t * t * (3 - 2 * t) }
@@ -221,108 +241,5 @@ final class TreasureChest {
         var m = matrix_identity_float4x4
         m.columns.3 = SIMD4(x, y, z, 1)
         return m
-    }
-
-    // ---------------------------------------------------------------- Its meshes (PropVertex: position, normal, uv)
-
-    /// The body's wood (its own space: bottom middle at the origin), open at the top; and its dark inside
-    static let bodyWood: [Float] = {
-        var out: [Float] = []
-        let s = size
-        box(&out, center: SIMD3(0, s.y / 2, 0), size: SIMD3(s.x, s.y, s.z), skipTop: true)
-        return out
-    }()
-    static let bodyInside: [Float] = {
-        var out: [Float] = []
-        let s = size, t: Float = 0.006
-        // (the inside walls and floor, facing in: a box a wall's thickness smaller, seen from inside)
-        box(&out, center: SIMD3(0, s.y / 2 + t / 2, 0), size: SIMD3(s.x - 2 * t, s.y - t, s.z - 2 * t), skipTop: true,
-            inward: true)
-        // (the rim round the top, between the outside and the inside)
-        let y = s.y
-        quad(&out, SIMD3(-s.x / 2, y, s.z / 2), SIMD3(s.x / 2, y, s.z / 2), SIMD3(s.x / 2 - t, y, s.z / 2 - t),
-             SIMD3(-s.x / 2 + t, y, s.z / 2 - t), n: SIMD3(0, 1, 0))
-        quad(&out, SIMD3(s.x / 2, y, -s.z / 2), SIMD3(-s.x / 2, y, -s.z / 2), SIMD3(-s.x / 2 + t, y, -s.z / 2 + t),
-             SIMD3(s.x / 2 - t, y, -s.z / 2 + t), n: SIMD3(0, 1, 0))
-        quad(&out, SIMD3(-s.x / 2, y, -s.z / 2), SIMD3(-s.x / 2, y, s.z / 2), SIMD3(-s.x / 2 + t, y, s.z / 2 - t),
-             SIMD3(-s.x / 2 + t, y, -s.z / 2 + t), n: SIMD3(0, 1, 0))
-        quad(&out, SIMD3(s.x / 2, y, s.z / 2), SIMD3(s.x / 2, y, -s.z / 2), SIMD3(s.x / 2 - t, y, -s.z / 2 + t),
-             SIMD3(s.x / 2 - t, y, s.z / 2 - t), n: SIMD3(0, 1, 0))
-        return out
-    }()
-    /// The gold: bands round the body near each end, its corners' edges, and the latch on its front
-    static let bodyGold: [Float] = {
-        var out: [Float] = []
-        let s = size, b: Float = 0.012, o: Float = 0.0015
-        for x in [-s.x / 2 + b * 1.6, s.x / 2 - b * 1.6] {
-            box(&out, center: SIMD3(x, s.y / 2, 0), size: SIMD3(b, s.y + o, s.z + 2 * o))
-        }
-        box(&out, center: SIMD3(0, s.y / 2, 0), size: SIMD3(s.x + 2 * o, b * 0.5, s.z + 2 * o))
-        box(&out, center: SIMD3(0, s.y - 0.012, s.z / 2 + o), size: SIMD3(0.022, 0.026, 0.006))
-        return out
-    }()
-    /// The lid (its hinge's space: the hinge along x at the origin, the lid reaching out along +z), a half round
-    /// of wood with gold bands over it
-    static let lidWood: [Float] = lid(radius: lidRadius, width: size.x, gold: false)
-    static let lidGold: [Float] = {
-        var out: [Float] = []
-        let b: Float = 0.012
-        for x in [-size.x / 2 + b * 1.6, size.x / 2 - b * 1.6] {
-            out += lid(radius: lidRadius + 0.0015, width: b, gold: true, at: x)
-        }
-        // (the latch's top half, at the front edge)
-        box(&out, center: SIMD3(0, 0.006, size.z + 0.0015), size: SIMD3(0.022, 0.014, 0.006))
-        return out
-    }()
-
-    private static func lid(radius r: Float, width: Float, gold: Bool, at x0: Float = 0) -> [Float] {
-        var out: [Float] = []
-        let steps = 14, half = width / 2, cz = size.z / 2
-        func p(_ k: Int) -> (SIMD3<Float>, SIMD3<Float>) {
-            let a = Float.pi * Float(k) / Float(steps)  // (0 at the back, π at the front)
-            let n = SIMD3<Float>(0, sin(a), -cos(a))
-            return (SIMD3(0, r * sin(a), cz - r * cos(a)), n)
-        }
-        for k in 0..<steps {
-            let (a, na) = p(k), (b, nb) = p(k + 1)
-            let v = [(a + SIMD3(x0 - half, 0, 0), na), (b + SIMD3(x0 - half, 0, 0), nb),
-                     (b + SIMD3(x0 + half, 0, 0), nb), (a + SIMD3(x0 + half, 0, 0), na)]
-            for i in [0, 2, 1, 0, 3, 2] { vertex(&out, v[i].0, v[i].1) }
-        }
-        // (its ends, half discs; and its underside, flat, dark inside, for the wood)
-        for side: Float in [-1, 1] {
-            let x = x0 + side * half
-            for k in 0..<steps {
-                let a = p(k).0, b = p(k + 1).0
-                for q in [SIMD3(x, 0, cz), SIMD3(x, a.y, a.z), SIMD3(x, b.y, b.z)] { vertex(&out, q, SIMD3(side, 0, 0)) }
-            }
-        }
-        if !gold {
-            quad(&out, SIMD3(x0 - half, 0, 0), SIMD3(x0 + half, 0, 0), SIMD3(x0 + half, 0, size.z),
-                 SIMD3(x0 - half, 0, size.z), n: SIMD3(0, -1, 0))
-        }
-        return out
-    }
-
-    private static func vertex(_ out: inout [Float], _ p: SIMD3<Float>, _ n: SIMD3<Float>) {
-        out += [p.x, p.y, p.z, n.x, n.y, n.z, 0.5, 0.5]
-    }
-    private static func quad(_ out: inout [Float], _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>,
-                             _ d: SIMD3<Float>, n: SIMD3<Float>) {
-        for p in [a, b, c, a, c, d] { vertex(&out, p, n) }
-    }
-    private static func box(_ out: inout [Float], center: SIMD3<Float>, size s: SIMD3<Float>, skipTop: Bool = false,
-                            inward: Bool = false) {
-        let h = s / 2, k: Float = inward ? -1 : 1
-        let faces: [(SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)] = [  // (normal, and the face's two edges)
-            (SIMD3(1, 0, 0), SIMD3(0, 0, -1), SIMD3(0, 1, 0)), (SIMD3(-1, 0, 0), SIMD3(0, 0, 1), SIMD3(0, 1, 0)),
-            (SIMD3(0, 1, 0), SIMD3(1, 0, 0), SIMD3(0, 0, -1)), (SIMD3(0, -1, 0), SIMD3(1, 0, 0), SIMD3(0, 0, 1)),
-            (SIMD3(0, 0, 1), SIMD3(1, 0, 0), SIMD3(0, 1, 0)), (SIMD3(0, 0, -1), SIMD3(-1, 0, 0), SIMD3(0, 1, 0)),
-        ]
-        for (n, u, v) in faces {
-            if skipTop, n.y > 0.5 { continue }
-            let c = center + n * h, du = u * h, dv = v * h
-            quad(&out, c - du - dv, c + du - dv, c + du + dv, c - du + dv, n: n * k)
-        }
     }
 }

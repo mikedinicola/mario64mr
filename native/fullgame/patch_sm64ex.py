@@ -597,7 +597,7 @@ Gfx *geo_offset_klepto_held_object(""")
                        "    unity_note_sky(background, colorIndex);\n    return init_skybox_display_list(player, background, colorIndex);\n}")
     sky = sky.replace('extern int unity_is_mr(void);\n', 'extern int unity_is_mr(void);\nextern void unity_note_sky(int background, int color);\n', 1)
     (root / "src/game/skybox.c").write_text(sky)
-    surface = original("src/engine/surface_load.c") + '\n#include "pc/unity_room.inc.h"\n#include "pc/unity_hands.inc.h"\n#include "pc/unity_room_objects.inc.h"\n#include "pc/unity_spawn.inc.h"\n#include "pc/unity_marios.inc.h"\n#include "pc/unity_stage.inc.h"\n'
+    surface = original("src/engine/surface_load.c") + '\n#include "pc/unity_room.inc.h"\n#include "pc/unity_hands.inc.h"\n#include "pc/unity_room_objects.inc.h"\n#include "pc/unity_spawn.inc.h"\n#include "pc/unity_chest.inc.h"\n#include "pc/unity_marios.inc.h"\n#include "pc/unity_stage.inc.h"\n'
     surface = 'extern int unity_draw_far(void);\n' + replace_once(surface, "#ifndef NODRAWINGDISTANCE\n    if (marioDist < gCurrentObject->oDrawingDistance) {",
                                                                "#ifndef NODRAWINGDISTANCE\n    if (unity_draw_far() || marioDist < gCurrentObject->oDrawingDistance) {")
     (root / "src/engine/surface_load.c").write_text(surface)
@@ -671,7 +671,7 @@ Gfx *geo_offset_klepto_held_object(""")
     (root / "src/pc/stage_mosaic.inc.h").write_text(stage_gen.mosaic_c())
     for name in ("stage_disc.inc.c", "stage_disc_geo.inc.c"):
         shutil.copy2(HERE / name, root / grounds / "areas/2" / name)
-    for name in ("unity_bridge.h", "unity_bridge.c", "unity_mr.c", "unity_room.inc.h", "unity_hands.inc.h", "unity_room_objects.inc.h", "unity_spawn.inc.h", "unity_marios.inc.h", "unity_stage.inc.h", "unity_options.h", "unity_options.inc.h"):
+    for name in ("unity_bridge.h", "unity_bridge.c", "unity_mr.c", "unity_room.inc.h", "unity_hands.inc.h", "unity_room_objects.inc.h", "unity_spawn.inc.h", "unity_chest.inc.h", "unity_marios.inc.h", "unity_stage.inc.h", "unity_options.h", "unity_options.inc.h"):
         shutil.copy2(HERE / name, root / "src/pc" / name)
     (root / "baserom.us.z64").write_bytes(rom)
     # Sequence zero is authored as data-only assembly upstream. Read its exact

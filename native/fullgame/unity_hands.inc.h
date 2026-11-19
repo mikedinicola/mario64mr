@@ -134,10 +134,12 @@ static void unity_closest_on_triangle(const float p[3], const float a[3], const 
 #undef UDOT
 }
 
+int unity_chest_part(struct Object *o);
 static int unity_object_usable(struct Object *o) {
     /* (far from Mario is fine: it's out of sight unless a diorama draws it, and moves all the same. Out in the room it
-     * isn't the level's: nothing in the game touches, squashes, carries or picks it up there) */
-    return o != gMarioObject && !unity_object_in_room(o) && (o->activeFlags & ACTIVE_FLAG_ACTIVE)
+     * isn't the level's: nothing in the game touches, squashes, carries or picks it up there; nor the treasure chest,
+     * unity_chest.inc.h) */
+    return o != gMarioObject && !unity_object_in_room(o) && !unity_chest_part(o) && (o->activeFlags & ACTIVE_FLAG_ACTIVE)
         && (o->header.gfx.node.flags & GRAPH_RENDER_ACTIVE) && !(o->header.gfx.node.flags & GRAPH_RENDER_INVISIBLE);
 }
 

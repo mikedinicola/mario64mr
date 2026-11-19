@@ -157,7 +157,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
             // The Digital Crown in a diorama: back to the window (the room opens again), not out of the room
             let width = diorama != nil ? cartridge.map { $0.window.halfSize.x * 2 } : nil
             link.update { $0.reopenWidth = width }
-            link.update { $0.on = false; $0.head = nil; $0.facing = nil; $0.debugRelease = nil; $0.geometry = nil; $0.hands = []; $0.picks = [] }
+            link.update { $0.on = false; $0.head = nil; $0.facing = nil; $0.debugRelease = nil; $0.geometry = nil; $0.hands = []; $0.picks = []; $0.chest = nil }
             link.onClose?()
             tracking.cancel()
             session.stop()
@@ -284,6 +284,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
                                  eye: eyePosition, time: time, dt: dt)
         gazes.removeAll { taken.usedGazes.contains($0.id) }
         let picks = taken.picks
+        let chestPose = chest.gamePose
         // Held by its lower part over a table (or the floor): the circle shows where it would go down
         let low = cartridge.heldLow
         let circle = low.flatMap { Self.circle(under: $0.bottom, planes: planes) }
@@ -353,7 +354,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
             $0.head = SIMD3(headInView.x, headInView.y, headInView.z); $0.up = up
             $0.facing = SIMD2(levelBack.x, levelBack.z)
             $0.geometry = geometry; $0.hands = hands; $0.dioramaForward = dioramaForward; $0.busy = busy
-            $0.picks += picks
+            $0.picks += picks; $0.chest = chestPose
         }
 
         let actorFromClip = { (draw: GameFrame.Draw) -> simd_float4x4 in
@@ -808,6 +809,8 @@ final class RoomLink: @unchecked Sendable {
         /// which kinds it can spawn now, bits by SpawnKind
         var picks: [ChestPick] = []
         var spawnable: UInt32 = 0
+        /// The chest for the game to draw in the room (the game's own), when it's shown
+        var chest: ChestPose?
     }
     private let state = OSAllocatedUnfairLock(initialState: State())
     /// Called (on the room's thread) when the room closes
