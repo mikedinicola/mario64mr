@@ -42,6 +42,9 @@ int stage_rolls(void);
 int stage_knocks(void);
 int stage_tumbling(int n);
 int stage_falls(void);
+void stage_npcs_edge_test(int on);
+int stage_npcs_thrown_off(void);
+int stage_npcs_rolled_off(void);
 struct MarioState *stage_npc_state(int n);
 void stage_npcs_pause(int paused);
 void stage_npcs_fetch(int on);
@@ -483,7 +486,26 @@ int main(int argc, char **argv) {
     }
     CHECK(stage_rolls() - rolls >= 2 && most_tumbling > 0, "on their own, they roll each other (%d rolls)", stage_rolls() - rolls);
     ticks(600);
-    CHECK(stage_npcs() == 3, "and none of them falls off (%d)", stage_npcs());
+    CHECK(stage_npcs() == 3, "and none of them is lost (%d)", stage_npcs());
+    /* Rolling one over the edge, on purpose (made always, for the test: it's now and then) */
+    {
+        stage_npcs_edge_test(1);
+        int shoves = stage_npcs_rolled_off(), falls = stage_falls(), fell_after = 0;
+        for (int t = 0; t < 6000 && !fell_after; t++) {
+            tick(0);
+            if (stage_npcs_rolled_off() > shoves && stage_falls() > falls) fell_after = 1;
+        }
+        CHECK(fell_after, "now and then they roll one out to the rim and let go, and it tumbles off (%d let go)",
+              stage_npcs_rolled_off() - shoves);
+        ticks(300);
+        int on = 0;
+        for (int i = 0; i < 3; i++) {
+            struct MarioState *s = stage_npc_state(i);
+            if (s && s->pos[1] > -1.f && hypotf(s->pos[0], s->pos[2]) < 3000.f) on++;
+        }
+        CHECK(stage_npcs() == 3, "and it's back from the sky (%d Marios, %d on the disc)", stage_npcs(), on);
+        stage_npcs_edge_test(-1);
+    }
     /* Tilting: D-pad up, then the controller's lean */
     printf("Tilting:\n");
     stage_npcs_pause(1);
@@ -667,9 +689,12 @@ int main(int argc, char **argv) {
     }
     CHECK(boxing > all / 2 && held_by_npc, "most of them go for boxes, and lift them (%.0f%% of the time)", 100 * boxing / all);
     CHECK(stage_npcs() > npcs_before + 3, "and more Marios hop out of them (%d, from %d)", stage_npcs(), npcs_before);
-    int grown = stage_npcs();
+    int grown = stage_npcs(), thrown_off = stage_npcs_thrown_off(), falls = stage_falls();
     for (int i = 0; i < 9000 && stage_npcs() < 128 && stage_npcs() < stage_mosaic_boxes(); i++) tick(0);
     printf("  %d Marios\n", stage_npcs());
+    CHECK(stage_npcs_thrown_off() > thrown_off && stage_falls() - falls >= (stage_npcs_thrown_off() - thrown_off) / 2,
+          "now and then one carries its box out to the rim and throws it off (%d thrown, %d falls)",
+          stage_npcs_thrown_off() - thrown_off, stage_falls() - falls);
     if (stage_npcs() == 128) {
         tick(0); /* (the 128th's step done: the stage notices it on the next) */
         CHECK(stage_celebrated() > 0 && stage_celebrated() < 60, "at 128, a celebration (%d steps ago)", stage_celebrated());

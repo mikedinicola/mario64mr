@@ -15,6 +15,9 @@
  *   goes for a box never picked up, lifts it (another Mario hops out), carries it a little way and throws it; once
  *   there are UNITY_NPC_MARIOS of them, or no such box is left, none does. They're gone as the extra Marios are, when
  *   Mario leaves the stage.
+ * - Now and then (STAGE_NPC_EDGE_ONE_IN) an NPC means it over the edge: the box it picked up it carries out to near
+ *   the rim and throws off, facing out (STAGE_NPC_THROW_FROM); the Mario it rolls it rolls out towards the rim, and
+ *   lets go short of it (STAGE_NPC_SHOVE_AT), for it to tumble on over and off. They fall back from the sky.
  * - How many Marios there are (Mario too) is counted at the bottom of the screen, in the HUD's own letters
  *   (stage_hud, after the rest of the HUD).
  * - Marios roll each other. B with another Mario just in front, standing (Mario, or an NPC that means to): he leans
@@ -93,6 +96,12 @@ extern s16 object_step(void);
 #define STAGE_NPC_ROLL_ONE_IN 4
 #define STAGE_NPC_BOX_IN_FOUR 3 /* (while there's room for more Marios: how many in four go for a box) */
 #define STAGE_NPC_GRAB_REACH 95.f /* (touching it: its radius and a Mario's) */
+/* On purpose over the edge: how often (one in), how far out it throws a box from (it flies ~700 on), how far out it
+ * lets go of the one it rolls (it tumbles ~450 on), how near facing out it must be to throw */
+#define STAGE_NPC_EDGE_ONE_IN 3
+#define STAGE_NPC_THROW_FROM 2450.f
+#define STAGE_NPC_SHOVE_AT 2650.f
+#define STAGE_NPC_THROW_FACING 0x800
 /* Tilting: how far it leans at most, how quickly it turns, how hard things slide down it */
 #define STAGE_TILT_MOST 0x1000
 #define STAGE_TILT_FOLLOW 0.5f /* (each step the disc turns this much of the way to the lean wanted...) */
@@ -949,6 +958,21 @@ static u32 stage_npc_random(struct UnityMario *u) {
 static int stage_npc_between(struct UnityMario *u, int lo, int hi) { return lo + (int) (stage_npc_random(u) % (u32) (hi - lo + 1)); }
 
 static int stage_npcs_paused; /* (for tests: they stand still) */
+static int stage_npcs_edge = -1; /* (for tests: 1, always over the edge on purpose; 0, never; -1, now and then) */
+void stage_npcs_edge_test(int on) { stage_npcs_edge = on; }
+static int stage_npc_edge_throws, stage_npc_edge_shoves; /* (for tests: how many on purpose) */
+int stage_npcs_thrown_off(void) { return stage_npc_edge_throws; }
+int stage_npcs_rolled_off(void) { return stage_npc_edge_shoves; }
+static int stage_npc_means_edge(struct UnityMario *u) {
+    int chance = stage_npc_between(u, 1, STAGE_NPC_EDGE_ONE_IN) == 1; /* (drawn always: the same choices after, either way) */
+    return stage_npcs_edge >= 0 ? stage_npcs_edge : chance;
+}
+/* The way out from the disc's middle, from where it is (near the middle, any way) */
+static s16 stage_npc_outward(struct UnityMario *u) {
+    struct MarioState *m = &u->m;
+    if (stage_distance(m->pos[0], m->pos[2], 0.f, 0.f) < 200.f) return (s16) stage_npc_between(u, 0, 0xFFFF);
+    return atan2s(m->pos[2], m->pos[0]);
+}
 /* Is there room for more Marios? (Till there isn't, most of them go for boxes never picked up) */
 static int stage_npc_room(void) { return unity_marios_npcs() < UNITY_NPC_MARIOS; }
 static int stage_npcs_fetching = 1; /* (tests turn it off: they keep the Marios they made) */
@@ -998,6 +1022,13 @@ static void stage_npc_think(struct UnityMario *u) {
         u->brain.x = r * sins((s16) a);
         u->brain.z = r * coss((s16) a);
         u->brain.timer = stage_npc_between(u, 40, 120);
+        u->brain.edge = stage_npc_means_edge(u);
+        if (u->brain.edge) { /* (out to near the rim, the nearest way, to throw it off) */
+            s16 out = stage_npc_outward(u);
+            u->brain.x = STAGE_NPC_THROW_FROM * sins(out);
+            u->brain.z = STAGE_NPC_THROW_FROM * coss(out);
+            u->brain.timer = 450;
+        }
     }
     /* What next, its time up for this (carrying, when it's thrown) */
     if (--u->brain.timer <= 0 && u->brain.mode != STAGE_NPC_CARRY) {
@@ -1023,6 +1054,7 @@ static void stage_npc_think(struct UnityMario *u) {
             u->brain.mode = STAGE_NPC_GO_ROLL;
             u->brain.target = other;
             u->brain.timer = 300;
+            u->brain.edge = stage_npc_means_edge(u);
         } else if (u->brain.mode == STAGE_NPC_IDLE) {
             int pick = stage_npc_between(u, 0, 11);
             if (pick >= 10) { /* (now and then, a sit, or a wave at you) */
@@ -1065,10 +1097,18 @@ static void stage_npc_think(struct UnityMario *u) {
         } else {
             down = B_BUTTON;
             u->brain.yaw = (s16) (m->faceAngle[1] + stage_npc_between(u, -0x200, 0x200));
-            if (stage_distance(m->pos[0], m->pos[2], 0.f, 0.f) > STAGE_NPC_ROAM) /* (not towards the rim) */
-                u->brain.yaw = atan2s(-m->pos[2], -m->pos[0]);
             speed = STAGE_NPC_WALK;
-            if (u->brain.timer <= 1) down = 0; /* (let go: it tumbles on) */
+            if (u->brain.edge) { /* (out to the rim, and let go short of it: it tumbles on, off the edge) */
+                u->brain.yaw = stage_npc_outward(u);
+                if (stage_distance(m->pos[0], m->pos[2], 0.f, 0.f) > STAGE_NPC_SHOVE_AT) {
+                    down = 0;
+                    stage_npc_edge_shoves++;
+                }
+            } else {
+                if (stage_distance(m->pos[0], m->pos[2], 0.f, 0.f) > STAGE_NPC_ROAM) /* (not towards the rim) */
+                    u->brain.yaw = atan2s(-m->pos[2], -m->pos[0]);
+                if (u->brain.timer <= 1) down = 0; /* (let go: it tumbles on) */
+            }
         }
     }
     /* Going to roll one: up to it, then B, facing it */
@@ -1084,7 +1124,7 @@ static void stage_npc_think(struct UnityMario *u) {
             if (sqrtf(dx * dx + dz * dz) < STAGE_ROLL_REACH - 30.f && off < 0x1800 && off > -0x1800) {
                 if (stage_roll_start(m)) {
                     u->brain.mode = STAGE_NPC_ROLLING;
-                    u->brain.timer = stage_npc_between(u, 45, 150);
+                    u->brain.timer = u->brain.edge ? 900 : stage_npc_between(u, 45, 150); /* (over the edge: till it's there) */
                     down = B_BUTTON;
                 }
             } else speed = sqrtf(dx * dx + dz * dz) < 300.f ? 24.f : STAGE_NPC_WALK;
@@ -1115,13 +1155,25 @@ static void stage_npc_think(struct UnityMario *u) {
         if (!m->heldObj) {
             u->brain.mode = STAGE_NPC_IDLE;
             u->brain.timer = stage_npc_between(u, 20, 60);
+        } else if (u->brain.edge && stage_distance(u->brain.x, u->brain.z, m->pos[0], m->pos[2]) < 150.f) {
+            /* (near the rim: facing out, then thrown, off the edge) */
+            u->brain.yaw = atan2s(m->pos[2], m->pos[0]);
+            s16 off = (s16) (u->brain.yaw - m->faceAngle[1]);
+            if (off < STAGE_NPC_THROW_FACING && off > -STAGE_NPC_THROW_FACING) {
+                if (!(m->action & ACT_FLAG_THROWING) && !(pad->buttonDown & B_BUTTON)) {
+                    down = B_BUTTON;
+                    if (u->brain.timer > 2) stage_npc_edge_throws++;
+                }
+                u->brain.timer = 2; /* (till it's gone) */
+            } else speed = 6.f; /* (turning out) */
         } else if (u->brain.timer <= 1 || stage_distance(u->brain.x, u->brain.z, m->pos[0], m->pos[2]) < 150.f) {
             if (!(m->action & ACT_FLAG_THROWING) && !(pad->buttonDown & B_BUTTON)) down = B_BUTTON;
             u->brain.timer = 2; /* (till it's gone) */
         } else {
             u->brain.yaw = atan2s(u->brain.z - m->pos[2], u->brain.x - m->pos[0]);
-            if (stage_distance(m->pos[0], m->pos[2], 0.f, 0.f) > STAGE_NPC_ROAM) u->brain.yaw = atan2s(-m->pos[2], -m->pos[0]);
-            speed = 24.f;
+            if (!u->brain.edge && stage_distance(m->pos[0], m->pos[2], 0.f, 0.f) > STAGE_NPC_ROAM)
+                u->brain.yaw = atan2s(-m->pos[2], -m->pos[0]);
+            speed = u->brain.edge ? 64.f : 24.f; /* (out to the rim, a purpose: holding a box he's slow) */
         }
     }
     if (u->brain.mode < STAGE_NPC_GO_ROLL && sqrtf(m->pos[0] * m->pos[0] + m->pos[2] * m->pos[2]) > STAGE_NPC_SAFE) {

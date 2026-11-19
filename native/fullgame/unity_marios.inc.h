@@ -58,7 +58,7 @@ struct UnityMario {
     Mat4 floorAlign;    /* tilted to the floor: how it's drawn (its object's throwMatrix) */
     int npc;            /* steered by its own controller, not yours */
     struct Controller pad;
-    struct { int mode, timer, hold; float x, z; s16 yaw; u32 seed; struct UnityMario *target; struct Object *box; } brain; /* (stage_npc_think's) */
+    struct { int mode, timer, hold, edge; float x, z; s16 yaw; u32 seed; struct UnityMario *target; struct Object *box; } brain; /* (stage_npc_think's) */
     int tumbling;       /* rolled along, or tumbling on (stage_tumble_step's) */
     struct { struct MarioState *by; float speed; s16 dir, spin; } tumble;
     int sky;            /* fallen off the disc stage, back from the sky, not yet landed (stage_fall_back's) */
