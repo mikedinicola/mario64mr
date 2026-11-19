@@ -1148,10 +1148,9 @@ static int stage_box_draws;
 void stage_box_watch(struct Object *o) { stage_box_watched = o; stage_box_draws = 0; }
 int stage_box_drawn(void) { return stage_box_draws; }
 
-/* Each face's shade, lit from above (of 255), as the box's colour is made darker for it: the sides' a little lighter,
- * for the relief on them (stage_gen.py's emboss) is a little darker than white where it's flat */
-static const u8 stage_box_side_shades[4] = { 0xff, 0xd4, 0xe8, 0xe8 }; /* (+z, -z, +x, -x) */
-#define STAGE_BOX_TOP_SHADE 0xff
+/* Each face's shade, lit from above (of 255), as the box's colour is made darker for it: the embossed ones' a little
+ * lighter, for the relief on them (stage_gen.py's emboss) is a little darker than white where it's flat */
+static const u8 stage_box_face_shades[5] = { 0xff, 0xd4, 0xe8, 0xe8, 0xff }; /* (+z, -z, +x, -x, top) */
 #define STAGE_BOX_BOTTOM_SHADE 0x80
 static void stage_box_shade(Gfx **g, u32 rgb, int shade) {
     gDPSetEnvColor((*g)++, ((rgb >> 16) & 0xFF) * shade / 255, ((rgb >> 8) & 0xFF) * shade / 255, (rgb & 0xFF) * shade / 255, 255);
@@ -1166,13 +1165,11 @@ Gfx *geo_stage_box(s32 callContext, struct GraphNode *node, UNUSED void *context
     if (!list) return NULL;
     u32 rgb = o ? (u32) o->oBehParams : 0xFFFFFF;
     gSPDisplayList(g++, stage_disc_dl_box_begin);
-    for (int side = 0; side < 4; side++) {
-        stage_box_shade(&g, rgb, stage_box_side_shades[side]);
-        gSPDisplayList(g++, stage_disc_dl_box_sides[side]);
+    for (int face = 0; face < 5; face++) {
+        stage_box_shade(&g, rgb, stage_box_face_shades[face]);
+        gSPDisplayList(g++, stage_disc_dl_box_faces[face]);
     }
     gSPDisplayList(g++, stage_disc_dl_box_plain);
-    stage_box_shade(&g, rgb, STAGE_BOX_TOP_SHADE);
-    gSPDisplayList(g++, stage_disc_dl_box_top);
     stage_box_shade(&g, rgb, STAGE_BOX_BOTTOM_SHADE);
     gSPDisplayList(g++, stage_disc_dl_box_bottom);
     gSPDisplayList(g++, stage_disc_dl_box_end);

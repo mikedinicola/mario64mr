@@ -15,8 +15,8 @@ const Collision stage_disc_no_collision[] = {
 
 /* A box: a cube 2 * STAGE_BOX_HALF across standing on its origin, in the colour the object gives it, each face shaded
  * (lit from above) by that colour made darker, face by face (the environment colour: geo_stage_box draws a face at a
- * time). Its four sides are embossed, monochrome, as the side of a coin is: a grey relief the colour is multiplied
- * by (stage_gen.py's box_side: your picture, else the game's own Mario head, made at build time) */
+ * time). Its four sides and its top are embossed, monochrome, as the side of a coin is: a grey relief the colour is
+ * multiplied by (stage_gen.py's box_side: your picture, else the game's own Mario head, made at build time) */
 #define STAGE_BOX_HALF 55 /* (laid out touching: unity_stage.inc.h's STAGE_MOSAIC_SPACING) */
 #define STAGE_BOX_TEXELS 64 /* (as the texture's declared: any size of picture is drawn across a side) */
 static const u8 stage_box_side_texture[] = "levels/castle_grounds/stage_box_side.rgba32";
@@ -27,18 +27,19 @@ static const u8 stage_box_side_texture[] = "levels/castle_grounds/stage_box_side
     {{{ x3, y3, z3 }, 0, { 0, 0 }, { 0xff, 0xff, 0xff, 0xff }}}
 #define H STAGE_BOX_HALF
 #define T (2 * STAGE_BOX_HALF)
-static const Vtx stage_box_vertices[] = { /* (each side from its bottom left, as seen from outside it) */
+static const Vtx stage_box_vertices[] = { /* (each face from its picture's bottom left, as seen from outside it) */
     STAGE_BOX_SIDE(-H, 0,  H,   H, 0,  H,   H, T,  H,  -H, T,  H), /* +z */
     STAGE_BOX_SIDE( H, 0, -H,  -H, 0, -H,  -H, T, -H,   H, T, -H), /* -z */
     STAGE_BOX_SIDE( H, 0,  H,   H, 0, -H,   H, T, -H,   H, T,  H), /* +x */
     STAGE_BOX_SIDE(-H, 0, -H,  -H, 0,  H,  -H, T,  H,  -H, T, -H), /* -x */
-    STAGE_BOX_SIDE(-H, T, -H,  -H, T,  H,   H, T,  H,   H, T, -H), /* top */
+    STAGE_BOX_SIDE(-H, T,  H,   H, T,  H,   H, T, -H,  -H, T, -H), /* top (its picture's top furthest from the pipe, as the mosaic's) */
     STAGE_BOX_SIDE(-H, 0, -H,   H, 0, -H,   H, 0,  H,  -H, 0,  H), /* bottom */
 };
 #undef H
 #undef T
 
-/* Begun: the embossed picture, and the box's corners; then each side, in its own shade (geo_stage_box sets it) */
+/* Begun: the embossed picture, and the box's corners; then each side and the top, in its own shade (geo_stage_box
+ * sets it) */
 const Gfx stage_disc_dl_box_begin[] = {
     gsDPPipeSync(),
     gsDPSetCombineLERP(TEXEL0, 0, ENVIRONMENT, 0, 0, 0, 0, ENVIRONMENT, TEXEL0, 0, ENVIRONMENT, 0, 0, 0, 0, ENVIRONMENT),
@@ -49,20 +50,20 @@ const Gfx stage_disc_dl_box_begin[] = {
     gsSPVertex(stage_box_vertices, 24, 0),
     gsSPEndDisplayList(),
 };
-const Gfx stage_disc_dl_box_sides[4][2] = {
+const Gfx stage_disc_dl_box_faces[5][2] = { /* (+z, -z, +x, -x, top) */
     { gsSP2Triangles( 0,  1,  2, 0x0,  0,  2,  3, 0x0), gsSPEndDisplayList() },
     { gsSP2Triangles( 4,  5,  6, 0x0,  4,  6,  7, 0x0), gsSPEndDisplayList() },
     { gsSP2Triangles( 8,  9, 10, 0x0,  8, 10, 11, 0x0), gsSPEndDisplayList() },
     { gsSP2Triangles(12, 13, 14, 0x0, 12, 14, 15, 0x0), gsSPEndDisplayList() },
+    { gsSP2Triangles(16, 17, 18, 0x0, 16, 18, 19, 0x0), gsSPEndDisplayList() },
 };
-/* The top and the bottom, plain: the colour alone */
+/* The bottom, plain: the colour alone */
 const Gfx stage_disc_dl_box_plain[] = {
     gsDPPipeSync(),
     gsSPTexture(0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_OFF),
     gsDPSetCombineLERP(0, 0, 0, ENVIRONMENT, 0, 0, 0, ENVIRONMENT, 0, 0, 0, ENVIRONMENT, 0, 0, 0, ENVIRONMENT),
     gsSPEndDisplayList(),
 };
-const Gfx stage_disc_dl_box_top[] = { gsSP2Triangles(16, 17, 18, 0x0, 16, 18, 19, 0x0), gsSPEndDisplayList() };
 const Gfx stage_disc_dl_box_bottom[] = { gsSP2Triangles(20, 21, 22, 0x0, 20, 22, 23, 0x0), gsSPEndDisplayList() };
 const Gfx stage_disc_dl_box_end[] = {
     gsDPPipeSync(),

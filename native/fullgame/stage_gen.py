@@ -10,7 +10,7 @@ where a file isn't there, the placeholder of the same name in stage/ (committed,
   stage's pipe;
 - disc.png: the disc's top, the picture spanning it (its top row furthest from the pipe, as the mosaic's);
 - pizza.png: the disc's top when it's a pizza, the same way;
-- box_side.png: embossed on the boxes' sides, monochrome, as on a coin (its opaque part raised). It has no
+- box_side.png: embossed on the boxes' sides and tops, monochrome, as on a coin (its opaque part raised). It has no
   placeholder: without it, the game's own Mario head is used, from your ROM (box_side).
 Python's own libraries only (no Pillow): 8-bit RGB or RGBA PNGs, or palette ones (1, 2, 4 or 8 bits, with
 transparency).
@@ -206,7 +206,7 @@ def mosaic_c(path=None):
     return "".join(out)
 
 
-# ---- The boxes' sides: a picture embossed on them, monochrome, as on the side of a coin ----
+# ---- The boxes' sides and tops: a picture embossed on them, monochrome, as on the side of a coin ----
 # The picture: yours, box_side.png in stage/local/ (any size, its opaque part raised), else the game's own Mario head
 # (the HUD's, from the ROM: extracted with the rest of its textures, so never committed). Made at build time into a
 # grey relief the game multiplies the box's colour by (unity_stage.inc.h, geo_stage_box).
