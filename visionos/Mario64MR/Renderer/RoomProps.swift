@@ -35,7 +35,8 @@ final class RoomProps {
     private let quad: MTLBuffer
     /// Mario's gloves (left, right), if they loaded
     private let gloves: [GloveMesh]?
-    private let cartridge: MTLBuffer
+    /// The cartridge's shell, if it loaded
+    private let cartridge: CartridgeShell?
     private let white: MTLTexture
     private let label: MTLTexture
     private let pressStart: MTLTexture
@@ -61,8 +62,7 @@ final class RoomProps {
         }
         guard let depthWrite = depth(test: true, write: true), let depthTestOnly = depth(test: true, write: false),
               let depthOff = depth(test: false, write: false),
-              let quad = device.makeBuffer(bytes: Self.quadVertices, length: Self.quadVertices.count * 4),
-              let cartridge = device.makeBuffer(bytes: Self.cartridgeVertices, length: Self.cartridgeVertices.count * 4)
+              let quad = device.makeBuffer(bytes: Self.quadVertices, length: Self.quadVertices.count * 4)
         else { print("Mario 64 MR: the room's props didn't build"); return nil }
         (self.depthWrite, self.depthTestOnly, self.depthOff, self.quad) = (depthWrite, depthTestOnly, depthOff, quad)
         let gloves = ["LeftGlove", "RightGlove"].compactMap { name in
@@ -70,7 +70,9 @@ final class RoomProps {
         }
         if gloves.count < 2 { print("Mario 64 MR: Mario's gloves didn't load") }
         self.gloves = gloves.count == 2 ? gloves : nil
-        self.cartridge = cartridge
+        cartridge = Bundle.main.url(forResource: "Cartridge", withExtension: "shell")
+            .flatMap { CartridgeShell(device: device, url: $0) }
+        if cartridge == nil { print("Mario 64 MR: the cartridge's shell didn't load") }
 
         let loader = MTKTextureLoader(device: device)
         let options: [MTKTextureLoader.Option: Any] = [.SRGB: true, .generateMipmaps: true]
@@ -103,16 +105,16 @@ final class RoomProps {
     // ---------------------------------------------------------------- The cartridge and the window
 
     func encodeCartridge(_ pose: simd_float4x4, into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
-        let size = Cartridge.size
-        draw(cartridge, count: Self.cartridgeVertices.count / 8, model: pose, color: plastic, texture: white,
-             flags: SIMD4(1, 0, 0, 0), blend: false, into: encoder, eye: eye)
-        // The label on its front, as tall as the front allows (a little plastic round it) and as wide as its
-        // picture is for that, no wider than the wide part above where it narrows; its corners cut out where the
+        guard let cartridge else { return }
+        draw(cartridge.vertices, count: cartridge.indexCount, indices: cartridge.indices, model: pose, color: plastic,
+             texture: white, flags: SIMD4(1, 0, 0, 0), blend: false, into: encoder, eye: eye)
+        // The label in its recess on the front, as big as its picture fits there; its corners cut out where the
         // picture is clear (a real label's are round)
         let aspect = Float(label.width) / Float(max(label.height, 1))
-        var labelSize = SIMD2(size.y * 0.8 * aspect, size.y * 0.8)
-        if labelSize.x > size.x * 0.8 { labelSize *= size.x * 0.8 / labelSize.x }
-        let face = pose * Self.translate(0, size.y * 0.04, size.z / 2 + 0.0004) * Self.scale(SIMD3(labelSize, 1))
+        let room = cartridge.labelHalf * 2
+        let labelSize = aspect > room.x / room.y ? SIMD2(room.x, room.x / aspect) : SIMD2(room.y * aspect, room.y)
+        let face = pose * Self.translate(cartridge.labelCenter.x, cartridge.labelCenter.y, cartridge.labelZ + 0.0003)
+            * Self.scale(SIMD3(labelSize, 1))
         drawQuad(face, color: SIMD4(1, 1, 1, 1), texture: label, flags: SIMD4(1, 0, 1, 0), into: encoder, eye: eye)
     }
 
@@ -372,7 +374,8 @@ final class RoomProps {
              into: encoder, eye: eye)
     }
 
-    private func draw(_ mesh: MTLBuffer, count: Int, model: simd_float4x4, color: SIMD4<Float>, texture: MTLTexture,
+    /// `count` vertices of `mesh`, or with `indices` (UInt16) that many of them
+    private func draw(_ mesh: MTLBuffer, count: Int, indices: MTLBuffer? = nil, model: simd_float4x4, color: SIMD4<Float>, texture: MTLTexture,
                       flags: SIMD4<UInt32>, blend: Bool, depth: MTLDepthStencilState? = nil,
                       uvTransform: SIMD4<Float> = SIMD4(1, 1, 0, 0), repeating: Bool = false,
                       into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
@@ -388,7 +391,12 @@ final class RoomProps {
         encoder.setFragmentBytes(&e, length: MemoryLayout<GameRenderer.RoomEye>.stride, index: 2)
         encoder.setFragmentTexture(texture, index: 0)
         encoder.setFragmentSamplerState(sampler(clamp: (!repeating, !repeating), mirror: (false, false)), index: 0)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: count)
+        if let indices {
+            encoder.drawIndexedPrimitives(type: .triangle, indexCount: count, indexType: .uint16, indexBuffer: indices,
+                                          indexBufferOffset: 0)
+        } else {
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: count)
+        }
     }
 
     /// This sample count's pipelines, made the first time it's drawn with
@@ -452,72 +460,6 @@ final class RoomProps {
         simd_float4x4(SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(x, y, z, 1))
     }
     static func scale(_ s: SIMD3<Float>) -> simd_float4x4 { simd_float4x4(diagonal: SIMD4(s, 1)) }
-
-    /// The cartridge's shell (PropVertex; its own space, metres, Cartridge.size): its outline from the front a
-    /// gently arched top, straight sides, and below them stepped in narrower to its bottom edge, every corner
-    /// rounded; pushed back through its thickness, its edges bevelled round
-    static let cartridgeVertices: [Float] = {
-        let size = Cartridge.size
-        // The outline (fractions of the width and height), clockwise from the bottom of the left side, and how
-        // round each corner is (metres): cut off that far along both its edges, the cuts then rounded (Chaikin's
-        // corner cutting), so the edges between stay straight
-        let corners: [(SIMD2<Float>, Float)] = [
-            (SIMD2(-0.5, -0.16), 0.004), (SIMD2(-0.5, 0.43), 0.014), (SIMD2(0, 0.5), 0.06),
-            (SIMD2(0.5, 0.43), 0.014), (SIMD2(0.5, -0.16), 0.004),
-            (SIMD2(0.445, -0.24), 0.004), (SIMD2(0.445, -0.5), 0.004), (SIMD2(-0.445, -0.5), 0.004),
-            (SIMD2(-0.445, -0.24), 0.004),
-        ].map { ($0.0 * SIMD2(size.x, size.y), $0.1) }
-        var points: [SIMD2<Float>] = corners.indices.flatMap { i -> [SIMD2<Float>] in
-            let (p, r) = corners[i]
-            let before = corners[(i + corners.count - 1) % corners.count].0, after = corners[(i + 1) % corners.count].0
-            let toBefore = before - p, toAfter = after - p
-            return [p + toBefore * min(r / simd_length(toBefore), 0.45), p,
-                    p + toAfter * min(r / simd_length(toAfter), 0.45)]
-        }
-        for _ in 0..<3 {
-            points = points.indices.flatMap { i -> [SIMD2<Float>] in
-                let a = points[i], b = points[(i + 1) % points.count]
-                return [a * 0.75 + b * 0.25, a * 0.25 + b * 0.75]
-            }
-        }
-        // Outward, each point's (clockwise, so the tangent turned to the left)
-        let normals = points.indices.map { i -> SIMD2<Float> in
-            let t = points[(i + 1) % points.count] - points[(i + points.count - 1) % points.count]
-            return simd_normalize(SIMD2(-t.y, t.x))
-        }
-        let bevel: Float = 0.003, half = size.z / 2, steps = 4
-        // Rings round the edge from the front face (0) over the bevel, down the side, over the back's bevel
-        var rings: [[(p: SIMD3<Float>, n: SIMD3<Float>)]] = []
-        for side: Float in [1, -1] {
-            let angles = (0...steps).map { Float.pi / 2 * Float($0) / Float(steps) }  // (0: facing out of the face)
-            for angle in side > 0 ? angles : angles.reversed() {
-                rings.append(points.indices.map { i in
-                    let out = normals[i] * sin(angle), center = points[i] - normals[i] * bevel
-                    let p = SIMD3(center + out * bevel, side * (half - bevel + cos(angle) * bevel))
-                    return (p, simd_normalize(SIMD3(out.x, out.y, side * cos(angle))))
-                })
-            }
-        }
-        var out: [Float] = []
-        func vertex(_ p: SIMD3<Float>, _ n: SIMD3<Float>) {
-            out += [p.x, p.y, p.z, n.x, n.y, n.z, p.x / size.x + 0.5, 0.5 - p.y / size.y]
-        }
-        for r in 0..<rings.count - 1 {
-            for i in points.indices {
-                let j = (i + 1) % points.count
-                let a = rings[r][i], b = rings[r][j], c = rings[r + 1][j], d = rings[r + 1][i]
-                for v in [a, b, c, a, c, d] { vertex(v.p, v.n) }
-            }
-        }
-        // The front and back faces: fans from the middle (the outline is all in sight from there)
-        for (ring, z) in [(rings[0], half), (rings[rings.count - 1], -half)] {
-            for i in points.indices {
-                let j = (i + 1) % points.count
-                for p in [SIMD3<Float>(0, 0, z), ring[i].p, ring[j].p] { vertex(p, SIMD3(0, 0, z > 0 ? 1 : -1)) }
-            }
-        }
-        return out
-    }()
 
     /// A unit square in x and y, facing +z, uv's origin at its top left
     private static let quadVertices: [Float] = {

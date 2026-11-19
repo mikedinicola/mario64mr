@@ -18,8 +18,9 @@ final class Cartridge {
     /// Starting as the cartridge, not the window (closing into it works either way)
     static let enabled = ["-cartridge", "-cart"].contains(where: ProcessInfo.processInfo.arguments.contains)
 
-    /// The cartridge's size, metres: width, height, thickness
-    static let size = SIMD3<Float>(0.124, 0.084, 0.022)
+    /// The cartridge's size, metres: width, height, thickness (its shell's, CartridgeShell: a real one's
+    /// proportions, 11.6 × 7.66 × 1.85 cm, a little bigger)
+    static let size = SIMD3<Float>(0.124, 0.0805, 0.0198)
     /// The window when it first opens, metres wide; and at most four times that
     static let openWidth: Float = 0.6
     static let maxWidth: Float = openWidth * 4

@@ -537,8 +537,11 @@ It is not affiliated with, endorsed or sponsored by Nintendo.
 - It is free and always will be: it isn't sold, and there are no donations or ads.
 
 The code written for Mario 64 MR in this repository is under the MIT license (`LICENSE`); the sources the tool
-downloads keep their own terms. Mario's gloves on Vision Pro are the shape of the gloves in Apple's sample code
-project "Animating hand models in visionOS", under Apple's MIT license (`visionos/Mario64MR/Gloves/LICENSE.txt`).
+downloads keep their own terms. On Vision Pro, Mario's gloves are the shape of the gloves in Apple's sample code
+project "Animating hand models in visionOS", under Apple's MIT license (`visionos/Mario64MR/Gloves/Gloves-LICENSE.txt`),
+and the cartridge is the shape of [c4m5ron](https://sketchfab.com/c4m5ron)'s
+["N64 Donkey Kong Cartridge"](https://sketchfab.com/3d-models/n64-donkey-kong-cartridge-f7ec965bce414bdd82c52c140b85ed5b),
+under CC BY 4.0 (`visionos/Mario64MR/Cartridge/Cartridge-LICENSE.txt`).
 
 If you hold rights in something here and want it changed or removed, open an issue or contact
 [@lucas_martinic](https://x.com/lucas_martinic), and it will be dealt with promptly.

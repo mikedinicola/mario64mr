@@ -1,0 +1,7 @@
+Cartridge.shell is the shape of "N64 Donkey Kong Cartridge" by c4m5ron
+(https://sketchfab.com/3d-models/n64-donkey-kong-cartridge-f7ec965bce414bdd82c52c140b85ed5b), licensed under
+Creative Commons Attribution 4.0 International (CC BY 4.0, https://creativecommons.org/licenses/by/4.0/).
+
+Changes: only the mesh's shape is kept (none of its textures or label art), turned into the app's cartridge space,
+scaled to a 12.4 cm width, and made thicker, to a real cartridge's proportions (11.6 × 7.66 × 1.85 cm), by
+visionos/tools/convert_cartridge.swift.

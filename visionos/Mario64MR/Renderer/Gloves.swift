@@ -2,9 +2,9 @@ import Foundation
 import Metal
 import simd
 
-/// Mario's gloves: the gloves of Apple's "Animating hand models in visionOS" sample (MIT, see Gloves/LICENSE.txt),
-/// only their shape and bones (Gloves/*.glove, made by tools/convert_gloves.swift), drawn white by glove_fragment.
-/// Their 27 joints are the ARKit hand skeleton's, in its order, and rest as it does: as in the sample, each joint
+/// Mario's gloves: the gloves of Apple's "Animating hand models in visionOS" sample (MIT, see
+/// Gloves/Gloves-LICENSE.txt), only their shape and bones (Gloves/*.glove, made by tools/convert_gloves.swift),
+/// drawn white by glove_fragment. Their 27 joints are the ARKit hand skeleton's, in its order, and rest as it does: as in the sample, each joint
 /// keeps the glove's own length and takes the tracked joint's turn (`parentFromJointTransform`), the whole glove
 /// placed at the hand's anchor (its wrist).
 final class GloveMesh {
