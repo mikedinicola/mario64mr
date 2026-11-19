@@ -58,6 +58,7 @@ extern s16 object_step(void);
 #define STAGE_BOX_THROW_SPEED 40.f
 #define STAGE_BOX_THROW_RISE 20.f
 #define STAGE_BOX_GROUND_FRICTION 0.85f
+#define STAGE_BOX_SLIDE_GHOST 3.f
 /* An NPC Mario: where on the disc it wanders to (within this of its middle), past where it turns back to the
  * middle, how near it runs up to Mario, how fast it walks (the stick's tilt, of 64), how often it jumps */
 #define STAGE_NPC_ROAM 2300.f
@@ -1092,6 +1093,15 @@ static void stage_box_move(struct Object *o) {
         if (o->oForwardVel > 0.f) o->oMoveAngleYaw = atan2s(vz, vx);
         if (o->oForwardVel < 1.f) o->oForwardVel = 0.f;
     }
+    /* Sliding along the floor, it goes by Marios rather than pushing them (an object pushing Mario minds no walls: the
+     * boxes, touching, slid down a lean as one and pushed him into the stage's pipe). Thrown, in the air, it's solid,
+     * to knock things over; settled, it's solid again, and can be picked up (the behaviour's loop makes it tangible
+     * each step) */
+    if (o->oForwardVel > STAGE_BOX_SLIDE_GHOST) {
+        struct Surface *under;
+        float floor_y = find_floor(o->oPosX, o->oPosY + 50.f, o->oPosZ, &under);
+        if (under && o->oPosY - floor_y < 30.f) o->oIntangibleTimer = -1;
+    }
 }
 
 void stage_box_loop(void) {
@@ -1134,18 +1144,35 @@ static int stage_box_draws;
 void stage_box_watch(struct Object *o) { stage_box_watched = o; stage_box_draws = 0; }
 int stage_box_drawn(void) { return stage_box_draws; }
 
+/* Each face's shade, lit from above (of 255), as the box's colour is made darker for it: the sides' a little lighter,
+ * for the relief on them (stage_gen.py's emboss) is a little darker than white where it's flat */
+static const u8 stage_box_side_shades[4] = { 0xff, 0xd4, 0xe8, 0xe8 }; /* (+z, -z, +x, -x) */
+#define STAGE_BOX_TOP_SHADE 0xff
+#define STAGE_BOX_BOTTOM_SHADE 0x80
+static void stage_box_shade(Gfx **g, u32 rgb, int shade) {
+    gDPSetEnvColor((*g)++, ((rgb >> 16) & 0xFF) * shade / 255, ((rgb >> 8) & 0xFF) * shade / 255, (rgb & 0xFF) * shade / 255, 255);
+}
 Gfx *geo_stage_box(s32 callContext, struct GraphNode *node, UNUSED void *context) {
     if (callContext != GEO_CONTEXT_RENDER) return NULL;
     struct Object *o = gCurGraphNodeHeldObject ? gCurGraphNodeHeldObject->objNode : (struct Object *) gCurGraphNodeObject;
     struct GraphNodeGenerated *generated = (struct GraphNodeGenerated *) node;
     generated->fnNode.node.flags = (LAYER_OPAQUE << 8) | (generated->fnNode.node.flags & 0xFF);
     if (o && o == stage_box_watched) stage_box_draws++;
-    Gfx *list = alloc_display_list(3 * sizeof(Gfx));
+    Gfx *list = alloc_display_list(16 * sizeof(Gfx)), *g = list;
     if (!list) return NULL;
     u32 rgb = o ? (u32) o->oBehParams : 0xFFFFFF;
-    gDPSetEnvColor(&list[0], (rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, 255);
-    gSPDisplayList(&list[1], stage_disc_dl_box);
-    gSPEndDisplayList(&list[2]);
+    gSPDisplayList(g++, stage_disc_dl_box_begin);
+    for (int side = 0; side < 4; side++) {
+        stage_box_shade(&g, rgb, stage_box_side_shades[side]);
+        gSPDisplayList(g++, stage_disc_dl_box_sides[side]);
+    }
+    gSPDisplayList(g++, stage_disc_dl_box_plain);
+    stage_box_shade(&g, rgb, STAGE_BOX_TOP_SHADE);
+    gSPDisplayList(g++, stage_disc_dl_box_top);
+    stage_box_shade(&g, rgb, STAGE_BOX_BOTTOM_SHADE);
+    gSPDisplayList(g++, stage_disc_dl_box_bottom);
+    gSPDisplayList(g++, stage_disc_dl_box_end);
+    gSPEndDisplayList(g++);
     return list;
 }
 

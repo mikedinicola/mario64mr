@@ -9,7 +9,9 @@ where a file isn't there, the placeholder of the same name in stage/ (committed,
 - mosaic.png: every pixel more than half opaque is a box of its colour, the picture's top row furthest from the
   stage's pipe;
 - disc.png: the disc's top, the picture spanning it (its top row furthest from the pipe, as the mosaic's);
-- pizza.png: the disc's top when it's a pizza, the same way.
+- pizza.png: the disc's top when it's a pizza, the same way;
+- box_side.png: embossed on the boxes' sides, monochrome, as on a coin (its opaque part raised). It has no
+  placeholder: without it, the game's own Mario head is used, from your ROM (box_side).
 Python's own libraries only (no Pillow): 8-bit RGB or RGBA PNGs, or palette ones (1, 2, 4 or 8 bits, with
 transparency).
 """
@@ -39,9 +41,16 @@ PICTURES = {
 }
 
 
-def pictures():
-    """[(the picture's file, its name in base.zip)]"""
-    return [(art(name), "gfx/" + texture + ".png") for name, texture in PICTURES.items()]
+def pictures(work=None):
+    """[(the picture's file, its name in base.zip)]: the disc's, and with the extracted sm64ex checkout (work), the
+    boxes' embossed side, made into it (box_side)"""
+    files = [(art(name), "gfx/" + texture + ".png") for name, texture in PICTURES.items()]
+    if work is not None:
+        side = box_side(work, Path(work) / "build" / "stage_gen")
+        if side is None:
+            raise FileNotFoundError("no picture for the boxes' sides: stage/local/box_side.png, or the ROM's " + ROM_HEAD)
+        files.append((side, "gfx/" + BOX_SIDE + ".png"))
+    return files
 
 
 def _mix(a, b, t):
@@ -195,3 +204,89 @@ def mosaic_c(path=None):
         out.append("    { %d, %d, 0x%02x, 0x%02x, 0x%02x },\n" % (x, y, r, g, b))
     out.append("};\n")
     return "".join(out)
+
+
+# ---- The boxes' sides: a picture embossed on them, monochrome, as on the side of a coin ----
+# The picture: yours, box_side.png in stage/local/ (any size, its opaque part raised), else the game's own Mario head
+# (the HUD's, from the ROM: extracted with the rest of its textures, so never committed). Made at build time into a
+# grey relief the game multiplies the box's colour by (unity_stage.inc.h, geo_stage_box).
+BOX_SIDE = "levels/castle_grounds/stage_box_side.rgba32"
+BOX_SIDE_SIZE = 128
+ROM_HEAD = "textures/segment2/segment2.05A00.rgba16.png"  # (texture_hud_char_mario_head)
+
+
+def box_side_source(work=None):
+    """The picture to emboss: yours, else the ROM's Mario head (in the extracted sm64ex checkout, work)"""
+    local = LOCAL_ART / "box_side.png"
+    if local.exists():
+        return local
+    if work is not None and (Path(work) / ROM_HEAD).exists():
+        return Path(work) / ROM_HEAD
+    return None
+
+
+def _sample(rows, w, h, x, y):
+    """Bilinear, of a grid of floats, (x, y) in its pixels' centres' frame, clamped at its edges"""
+    x = min(max(x, 0.0), w - 1.0)
+    y = min(max(y, 0.0), h - 1.0)
+    x0, y0 = int(x), int(y)
+    x1, y1 = min(x0 + 1, w - 1), min(y0 + 1, h - 1)
+    fx, fy = x - x0, y - y0
+    top = rows[y0][x0] * (1 - fx) + rows[y0][x1] * fx
+    bottom = rows[y1][x0] * (1 - fx) + rows[y1][x1] * fx
+    return top * (1 - fy) + bottom * fy
+
+
+def _blur(grid, n):
+    size = len(grid)
+    for _ in range(n):
+        grid = [[sum(grid[min(max(y + dy, 0), size - 1)][min(max(x + dx, 0), size - 1)]
+                     for dy in (-1, 0, 1) for dx in (-1, 0, 1)) / 9 for x in range(size)] for y in range(size)]
+    return grid
+
+
+def emboss(src, size=BOX_SIDE_SIZE, detail=0.8, light=3.5):
+    """Rows of grey (r, g, b, a): src's picture raised in the middle of a flat field, inside a raised rim, lit from the
+    top left. Its opaque part stands up, the lighter parts of it higher"""
+    w, h, rows = read_png(src)
+    heights = [[(p[3] / 255) * (1 - detail + detail * (0.3 * p[0] + 0.59 * p[1] + 0.11 * p[2]) / 255) for p in row]
+               for row in rows]
+    figure = 0.72  # (of the side, the picture's width)
+    scale = max(w, h) / (size * figure)
+    grid = []
+    for y in range(size):
+        line = []
+        for x in range(size):
+            u = (x - size / 2) * scale + w / 2 - 0.5
+            v = (y - size / 2) * scale + h / 2 - 0.5
+            line.append(_sample(heights, w, h, u, v) if -0.5 <= u <= w - 0.5 and -0.5 <= v <= h - 0.5 else 0.0)
+        grid.append(line)
+    grid = _blur(grid, 2)
+    rim = size * 0.07
+    for y in range(size):
+        for x in range(size):
+            edge = min(x, y, size - 1 - x, size - 1 - y)
+            if edge < rim:
+                grid[y][x] = max(grid[y][x], 0.8 * min(1.0, (edge + 1) / 2))  # (a raised rim, bevelled outside)
+    out = []
+    for y in range(size):
+        line = []
+        for x in range(size):
+            a = grid[max(y - 1, 0)][max(x - 1, 0)]
+            b = grid[min(y + 1, size - 1)][min(x + 1, size - 1)]
+            shade = 0.78 + light * (a - b) + 0.1 * grid[y][x]
+            g = round(255 * min(1.0, max(0.4, shade)))
+            line.append((g, g, g, 255))
+        out.append(line)
+    return out
+
+
+def box_side(work, out_dir):
+    """The embossed side, written into out_dir: its file (None if there's no picture to emboss)"""
+    src = box_side_source(work)
+    if src is None:
+        return None
+    path = Path(out_dir) / "stage_box_side.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_png(path, emboss(src))
+    return path
