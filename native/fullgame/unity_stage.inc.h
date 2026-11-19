@@ -36,6 +36,8 @@
 #include "game/memory.h"
 #include "game/rendering_graph_node.h"
 #include "audio/external.h"
+#include "game/sound_init.h"
+#include "seq_ids.h"
 #include "game/spawn_sound.h"
 #include "game/print.h"
 #include "game/level_update.h"
@@ -50,7 +52,7 @@ extern s16 object_step(void);
 #define STAGE_COL_HIT_WALL (1 << 1)
 
 /* The pixels' spacing on the disc, game units (a box is 100 across), and where the picture's middle is */
-#define STAGE_MOSAIC_SPACING 130.f
+#define STAGE_MOSAIC_SPACING 110.f /* (each a box across, touching: stage_disc.inc.c's STAGE_BOX_HALF twice) */
 #define STAGE_MOSAIC_Z -300.f
 /* Thrown: how fast it flies off, and how quickly it stops sliding on the disc */
 #define STAGE_BOX_THROW_SPEED 40.f
@@ -87,7 +89,7 @@ extern s16 object_step(void);
 #define STAGE_NPC_ROLL_LOOK 1200.f
 #define STAGE_NPC_ROLL_ONE_IN 4
 #define STAGE_NPC_BOX_IN_FOUR 3 /* (while there's room for more Marios: how many in four go for a box) */
-#define STAGE_NPC_GRAB_REACH 110.f
+#define STAGE_NPC_GRAB_REACH 95.f /* (touching it: its radius and a Mario's) */
 /* Tilting: how far it leans at most, how quickly it turns, how hard things slide down it */
 #define STAGE_TILT_MOST 0x1000
 #define STAGE_TILT_FOLLOW 0.5f /* (each step the disc turns this much of the way to the lean wanted...) */
@@ -100,10 +102,10 @@ static struct ObjectHitbox stage_box_hitbox = {
     /* damageOrCoinValue: */ 0,
     /* health:            */ 1,
     /* numLootCoins:      */ 0,
-    /* radius:            */ 80,
-    /* height:            */ 100,
-    /* hurtboxRadius:     */ 80,
-    /* hurtboxHeight:     */ 100,
+    /* radius:            */ 60, /* (the box's own size, 110 across: laid out touching, they still leave room) */
+    /* height:            */ 110,
+    /* hurtboxRadius:     */ 60,
+    /* hurtboxHeight:     */ 110,
 };
 
 void stage_box_init(void) {
@@ -142,7 +144,7 @@ int stage_box_mario(struct Object *o) {
     u->m.vel[1] = 42.f;
     u->brain.mode = 0;
     u->brain.timer = 30;
-    play_sound(SOUND_GENERAL_COLLECT_1UP, gDefaultSoundArgs);
+    play_sound(SOUND_GENERAL_COIN, gDefaultSoundArgs);
     return 1;
 }
 
@@ -840,8 +842,11 @@ void stage_disc_loop(void) {
 
 /* Each step, before the Marios' own (bhvStageMosaic, in the spawner list): your B with one in front rolls it,
  * rather than punching; D-pad up turns tilting on or off; the rest of the D-pad changes the disc's shape */
+static int stage_celebration; /* (at 128 Marios: 0, not yet; then steps since) */
+static void stage_celebration_step(void);
 void stage_watch(void) {
     if (!stage_here() || !gMarioState || !gMarioState->controller) return;
+    stage_celebration_step();
     unity_marios_let_go_taken(gMarioState); /* (yours, if another Mario took it the same step) */
     u16 pressed = gMarioState->controller->buttonPressed;
     if (pressed & B_BUTTON) stage_roll_start(gMarioState);
@@ -1147,6 +1152,7 @@ Gfx *geo_stage_box(s32 callContext, struct GraphNode *node, UNUSED void *context
 /* The picture's boxes on the disc (bhvStageMosaic's one step, where the stage's level script puts it) */
 void stage_mosaic_lay(void) {
     struct Object *o = gCurrentObject;
+    stage_celebration = 0; /* (a new visit: none yet) */
     for (int i = 0; i < STAGE_MOSAIC_BOXES; i++) {
         float x = (stage_mosaic[i].column - (STAGE_MOSAIC_WIDTH - 1) / 2.f) * STAGE_MOSAIC_SPACING;
         float z = STAGE_MOSAIC_Z + (stage_mosaic[i].row - (STAGE_MOSAIC_HEIGHT - 1) / 2.f) * STAGE_MOSAIC_SPACING;
@@ -1155,6 +1161,28 @@ void stage_mosaic_lay(void) {
         box->oBehParams = (stage_mosaic[i].r << 16) | (stage_mosaic[i].g << 8) | stage_mosaic[i].b;
     }
 }
+
+/* At 128 Marios, a celebration: the star's fanfare, and every Mario waving at you; then the title theme, on till
+ * Mario leaves (the stage has no music of its own before it, as Castle Grounds hasn't) */
+#define STAGE_TITLE_AFTER 150 /* (steps: the fanfare over) */
+static void stage_celebration_step(void) {
+    if (!stage_celebration) {
+        if (unity_marios_npcs() < UNITY_NPC_MARIOS) return;
+        stage_celebration = 1;
+        play_course_clear();
+        play_sound(SOUND_MARIO_HERE_WE_GO, gMarioState->marioObj->header.gfx.cameraToObject);
+        for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) {
+            struct UnityMario *u = &unity_marios[i];
+            if (!u->obj || !u->npc || u->m.heldObj) continue;
+            u->brain.mode = STAGE_NPC_WAVE;
+            u->brain.timer = STAGE_TITLE_AFTER + 30;
+        }
+        return;
+    }
+    if (++stage_celebration == STAGE_TITLE_AFTER) play_cutscene_music(SEQUENCE_ARGS(4, SEQ_MENU_TITLE_SCREEN));
+}
+/* (tests) Steps since the celebration began, 0 if it hasn't */
+int stage_celebrated(void) { return stage_celebration; }
 
 /* How many rolls there have been, and Marios knocked over by tumbling ones (for tests) */
 int stage_rolls(void) { return stage_rolls_started; }

@@ -21,6 +21,8 @@
 #include "engine/math_util.h"
 #include "engine/surface_collision.h"
 #include "snapshot.h"
+#include "audio/external.h"
+#include "seq_ids.h"
 #include <stdlib.h>
 
 int sm64unity_init(const char *);
@@ -46,6 +48,7 @@ int stage_npcs_boxing(void);
 void stage_npc_pose(int n, int wave);
 int stage_npcs_sitting(void);
 int stage_npcs_waving(void);
+int stage_celebrated(void);
 void unity_viewer(Vec3f out);
 void sm64unity_billboards(int on, float x, float y, float z, float ux, float uy, float uz);
 void stage_tumble_test(int n, float speed, s16 dir);
@@ -205,6 +208,7 @@ static int through_pipe(float x, float y, float z, int area) {
 }
 
 int main(int argc, char **argv) {
+    setvbuf(stdout, NULL, _IONBF, 0); /* (all of it, if it crashes) */
     gCLIOpts.SkipIntro = 1;
     if (!sm64unity_init(argc > 1 ? argv[1] : ".")) { printf("init failed\n"); return 1; }
     sm64unity_mr_geometry(1);
@@ -527,6 +531,8 @@ int main(int argc, char **argv) {
     /* Now and then, one sits a while, or waves at you */
     printf("Sitting and waving:\n");
     {
+        u16 music = get_current_background_music();
+        CHECK(music == 0xFFFF || (music & 0xFF) == 0, "(no music on the stage: %04x)", music);
         stand(gMarioState, 0, 1500, 0);
         struct MarioState *sitter = stage_npc_state(0), *waver = stage_npc_state(1);
         stand(sitter, -250, 2000, 0x4000);
@@ -596,7 +602,16 @@ int main(int argc, char **argv) {
     int grown = stage_npcs();
     for (int i = 0; i < 9000 && stage_npcs() < 128 && stage_npcs() < stage_mosaic_boxes(); i++) tick(0);
     printf("  %d Marios\n", stage_npcs());
+    tick(0); /* (the 128th's step done: the stage notices it on the next) */
+    CHECK(stage_celebrated() > 0 && stage_celebrated() < 60, "at 128, a celebration (%d steps ago)", stage_celebrated());
+    while (stage_celebrated() && stage_celebrated() < 45) tick(0);
+    CHECK(stage_npcs_waving() > 64, "everyone waving at you (%d)", stage_npcs_waving());
+    shot("8-celebration");
     overview("8-many");
+    CHECK(get_current_background_music() != (u16) SEQUENCE_ARGS(4, SEQ_MENU_TITLE_SCREEN), "the fanfare first");
+    ticks(120);
+    CHECK(get_current_background_music() == (u16) SEQUENCE_ARGS(4, SEQ_MENU_TITLE_SCREEN), "then the title theme (%04x)",
+          get_current_background_music());
     ticks(60);
     CHECK(stage_npcs() > grown, "on till there are many more (%d)", stage_npcs());
     int untaken = 0;
@@ -638,6 +653,19 @@ int main(int argc, char **argv) {
 
     CHECK(through_pipe(-2400, 260, 4400, 2), "and through it again");
     CHECK(stage_boxes() == stage_mosaic_boxes(), "the picture laid out again (%d boxes)", stage_boxes());
+    {
+        float nearest = 1e9f;
+        const BehaviorScript *bx = segmented_to_virtual(bhvStageBox);
+        for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_DESTRUCTIVE].next;
+             b != (struct Object *) &gObjectLists[OBJ_LIST_DESTRUCTIVE]; b = (struct Object *) b->header.next)
+            for (struct Object *c = (struct Object *) b->header.next;
+                 c != (struct Object *) &gObjectLists[OBJ_LIST_DESTRUCTIVE]; c = (struct Object *) c->header.next)
+                if (b->behavior == bx && c->behavior == bx) {
+                    float d = hypotf(b->oPosX - c->oPosX, b->oPosZ - c->oPosZ);
+                    if (d < nearest) nearest = d;
+                }
+        CHECK(fabsf(nearest - 110) < 1, "touching, side by side, 110 across (%.1f apart)", nearest);
+    }
     CHECK(stage_npcs() == 0, "and only Mario again");
     CHECK(stage_disc_shape() == 0 && !stage_disc_pizza() && fabsf(disc_height(2850, 0)) < 1, "and the disc flat, its own again");
 

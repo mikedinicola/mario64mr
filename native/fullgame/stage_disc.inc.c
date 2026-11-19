@@ -13,9 +13,9 @@ const Collision stage_disc_no_collision[] = {
     COL_END(),
 };
 
-/* A box: a cube STAGE_BOX_SIZE across standing on its origin, its faces lit from above, in the colour the object
+/* A box: a cube 2 * STAGE_BOX_HALF across standing on its origin, its faces lit from above, in the colour the object
  * gives it (the environment colour: geo_stage_box) */
-#define STAGE_BOX_HALF 50
+#define STAGE_BOX_HALF 55 /* (laid out touching: unity_stage.inc.h's STAGE_MOSAIC_SPACING) */
 #define STAGE_BOX_FACE(x0, y0, z0, x1, y1, z1, x2, y2, z2, x3, y3, z3, shade) \
     {{{ x0, y0, z0 }, 0, { 0, 0 }, { shade, shade, shade, 0xff }}}, \
     {{{ x1, y1, z1 }, 0, { 0, 0 }, { shade, shade, shade, 0xff }}}, \
