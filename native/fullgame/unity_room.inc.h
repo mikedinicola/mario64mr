@@ -118,8 +118,11 @@ EXPORT void sm64unity_displace(float dx,float dy,float dz) {
     vec3f_copy(gMarioObject->header.gfx.pos,gMarioState->pos);
 }
 
-EXPORT int sm64unity_room_mesh(const s16 *triangles,int count) {
-    if (unity_room_depth || count<0 || count>30000 || (count && !triangles)) return -1;
+/* Triangles (9 s16 each, x y z thrice) built as the game builds its static surfaces, in their own new pool, and added to
+ * gStaticSurfacePartition as it is: the room's (sm64unity_room_mesh), and the disc stage's out in your room
+ * (unity_stage.inc.h). The caller frees *out_surfaces and *out_nodes once nothing can stand on them. How many, or <0 */
+static int unity_build_static(const s16 *triangles,int count,struct Surface **out_surfaces,struct SurfaceNode **out_nodes) {
+    if (count<0 || count>30000 || (count && !triangles)) return -1;
     int node_count=0;
     for (int i=0;i<count;i++) {
         const s16 *v=triangles+i*9;
@@ -135,8 +138,6 @@ EXPORT int sm64unity_room_mesh(const s16 *triangles,int count) {
     struct SurfaceNode *saved_nodes=sSurfaceNodePool;
     int saved_surface_count=gSurfacesAllocated, saved_node_count=gSurfaceNodesAllocated;
     int saved_size=sSurfacePoolSize;
-    unity_room_begin();
-    memset(gStaticSurfacePartition,0,sizeof(gStaticSurfacePartition));
     sSurfacePool=surfaces; sSurfaceNodePool=nodes; sSurfacePoolSize=count;
     gSurfacesAllocated=gSurfaceNodesAllocated=0;
     for (int i=0;i<count;i++) {
@@ -144,11 +145,25 @@ EXPORT int sm64unity_room_mesh(const s16 *triangles,int count) {
         struct Surface *surface=read_surface_data((s16 *)(triangles+i*9),&index);
         if (surface)add_surface(surface,FALSE);
     }
-    memcpy(unity_room_partition,gStaticSurfacePartition,sizeof(gStaticSurfacePartition));
-    unity_room_count=gSurfacesAllocated;
+    int added=gSurfacesAllocated;
     sSurfacePool=saved_surfaces; sSurfaceNodePool=saved_nodes; sSurfacePoolSize=saved_size;
     gSurfacesAllocated=saved_surface_count; gSurfaceNodesAllocated=saved_node_count;
-    unity_room_end();
+    *out_surfaces=surfaces; *out_nodes=nodes;
+    return added;
+}
+
+EXPORT int sm64unity_room_mesh(const s16 *triangles,int count) {
+    if (unity_room_depth || count<0 || count>30000 || (count && !triangles)) return -1;
+    struct Surface *surfaces; struct SurfaceNode *nodes;
+    unity_room_begin();
+    memset(gStaticSurfacePartition,0,sizeof(gStaticSurfacePartition));
+    int added=unity_build_static(triangles,count,&surfaces,&nodes);
+    if (added>=0) {
+        memcpy(unity_room_partition,gStaticSurfacePartition,sizeof(gStaticSurfacePartition));
+        unity_room_count=added;
+    }
+    unity_room_end(); /* (the game's own static surfaces back: the room's kept, if it loaded) */
+    if (added<0) return added;
     /* The room can reload while Mario is out in it: the surfaces he last stood on stay valid until the next
      * reload, by when his next step has found his floor again */
     free(unity_old_room_surfaces); free(unity_old_room_nodes);

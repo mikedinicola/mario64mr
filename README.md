@@ -411,6 +411,23 @@ the window comes back in front of you (press it again for the flat window).
 With a DualSense: Cross = A, Square / Circle = B, L2 = Z, R2 (or R1) = R, L1 = L, right stick = C buttons, Options =
 Start.
 
+**Mario 128 in your room.** While you're playing a course, the flat window's **Mario 128** button (beside Texture
+packs) opens the room for the disc stage played on a real table:
+
+- Mario floats in front of you, about 2 cm tall. Pinch him and he hangs from your fingers.
+- Let go of him over a table, or the floor, at most 35 cm above it. The stage is put down there: the room's own
+  surfaces are its ground, out to about a metre around him. He drops onto it, and the box picture (about 18 cm across)
+  is laid out ahead of him, away from you, wherever there's table under it.
+- Let go of him anywhere else and he waits there to be picked up again.
+- Pick up a box and another Mario comes out, as on the disc, up to 128 Marios, with their count floating over the
+  picture.
+- A real edge, such as a table's, works as the disc's rim. Whatever goes over it, Marios or boxes, falls and comes
+  back from the sky onto the table. The other Marios keep to the table, except when they throw a box or roll another
+  Mario over its edge on purpose.
+- On the floor there's no edge, and none is made up. There's no tilting or reshaping either: the D-pad does nothing.
+- The stick moves Mario the way you look. Press the Digital Crown to end it and go back to the flat window, Mario at
+  the castle's pipe.
+
 PS VR2 Sense controllers work too (visionOS 26). The right one alone, your left hand free for Mario:
 
 | Sense (right) | N64 |

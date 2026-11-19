@@ -109,6 +109,7 @@ final class GameHost {
         var frame = 0
         let perf = PerfLog(name: "game")
         var joining = true
+        var mario128 = false  // (begun in the game: sm64unity_stage_room_begin)
         while !Thread.current.isCancelled {
             // (-perfab: the frame's batches joined, then not, 10 s each, to compare in the console's lines)
             if PerfLog.compare, frame % 300 == 0 {
@@ -143,8 +144,25 @@ final class GameHost {
                 if loaded < 0 { print("Mario 64 MR: the room didn't load (\(loaded))") }
                 carrier.roomHasSurfaces = loaded > 0
             }
+            // Mario 128 in your room: begun once the room's open for it, put down where the room says, ended with it
+            if room.on, room.mario128, !mario128 { mario128 = sm64unity_stage_room_begin() == 1 }
+            if mario128, !(room.on && room.mario128) {
+                sm64unity_stage_room_end()
+                mario128 = false
+            }
+            if let place = room.stagePlace, mario128, sm64unity_stage_room() == 1 {
+                self.room.update { $0.stagePlace = nil }
+                let loaded = place.triangles.withUnsafeBufferPointer {
+                    sm64unity_stage_room_place($0.baseAddress, Int32($0.count / 9), place.marioY)
+                }
+                if loaded < 0 { print("Mario 64 MR: Mario 128's room didn't load (\(loaded))") }
+            }
+            let (stageRoom, stageCount) = (sm64unity_stage_room(), sm64unity_stage_count())
+            self.room.update { $0.stageRoom = stageRoom; $0.stageCount = stageCount }
             // Your hands and Mario
-            if room.on, let geometry = room.geometry, !geometry.diorama {
+            if room.mario128 {
+                carrier.reset()  // (no window to take him through: the room holds him, Mario128Stage)
+            } else if room.on, let geometry = room.geometry, !geometry.diorama {
                 var hands = room.hands
                 #if DEBUG
                 if demo, carryDemo { hands = demoHand(frame, carrier: carrier, geometry: geometry, to: room.debugRelease) }

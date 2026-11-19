@@ -66,6 +66,14 @@ void sm64unity_chest(int show, float x, float y, float z, float yaw, float lid, 
 // (unity_stage.inc.h: the disc stage's tilt, from the controller's lean, as the stick is; is it on (D-pad up))
 void sm64unity_stage_tilt(float forward, float right);
 int sm64unity_stage_tilting(void);
+// (unity_stage.inc.h: Mario 128 in your room. Begun: to the stage, Mario held; put down: the room's triangles (game
+// units, 9 each, the ground at the origin) its ground, Mario let go of marioY above it; ended: back to Castle Grounds.
+// In it: 0 no, 1 held, 2 put down. The count: Marios on the stage, yours too)
+int sm64unity_stage_room_begin(void);
+int sm64unity_stage_room_place(const int16_t *triangles, int count, float marioY);
+int sm64unity_stage_room_end(void);
+int sm64unity_stage_room(void);
+int sm64unity_stage_count(void);
 float sm64unity_room_floor(float x, float y, float z);
 int sm64unity_carry(int mode, float x, float y, float z, float vx, float vy, float vz);
 int sm64unity_carry_mode(void);

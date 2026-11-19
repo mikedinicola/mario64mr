@@ -24,6 +24,7 @@
 #include "audio/external.h"
 #include "seq_ids.h"
 #include <stdlib.h>
+#include <string.h>
 
 int sm64unity_init(const char *);
 int sm64unity_tick(uint16_t, int8_t, int8_t);
@@ -69,6 +70,12 @@ int stage_box_mario(struct Object *o);
 void stage_box_watch(struct Object *o);
 int stage_box_drawn(void);
 int sm64unity_marios(float *out, int max);
+int sm64unity_stage_room_begin(void);
+int sm64unity_stage_room_place(const s16 *triangles, int count, float marioY);
+int sm64unity_stage_room_end(void);
+int sm64unity_stage_room(void);
+int sm64unity_stage_count(void);
+int sm64unity_carry_mode(void);
 extern const BehaviorScript bhvStageBox[];
 
 static int failures;
@@ -210,6 +217,76 @@ static int through_pipe(float x, float y, float z, int area) {
             && gMarioState->action != ACT_EMERGE_FROM_PIPE && (gMarioState->action & ACT_FLAG_STATIONARY)) return 1;
     }
     return 0;
+}
+
+/* ---- Mario 128 in your room: a room, in game units (8000 a metre, the table's top at 0 where Mario's put down) ---- */
+static s16 room_tris[64 * 9];
+static int room_quad(s16 *t, float x0, float z0, float x1, float z1, float y) { /* (two floors, wound up) */
+    s16 v[] = { x0, y, z0, x0, y, z1, x1, y, z1, x0, y, z0, x1, y, z1, x1, y, z0 };
+    memcpy(t, v, sizeof(v));
+    return 2;
+}
+static int room_wall(s16 *t, float x0, float z0, float x1, float z1, float y0, float y1) { /* (both windings) */
+    s16 v[] = { x0, y0, z0, x1, y0, z1, x1, y1, z1, x0, y0, z0, x1, y1, z1, x0, y1, z0,
+                x1, y1, z1, x1, y0, z1, x0, y0, z0, x0, y1, z0, x1, y1, z1, x0, y0, z0 };
+    memcpy(t, v, sizeof(v));
+    return 4;
+}
+/* A table 60 cm by 29 cm (x -2400..2400, z -1500..800: Mario put down 10 cm in from its near side), 3 cm thick, and
+ * the room's floor 75 cm below it */
+#define ROOM_TABLE_X 2400.f
+#define ROOM_TABLE_FAR -1500.f
+#define ROOM_TABLE_NEAR 800.f
+static int room_table(void) {
+    int n = 0;
+    n += room_quad(room_tris + n * 9, -ROOM_TABLE_X, ROOM_TABLE_FAR, ROOM_TABLE_X, ROOM_TABLE_NEAR, 0);
+    n += room_wall(room_tris + n * 9, -ROOM_TABLE_X, ROOM_TABLE_FAR, ROOM_TABLE_X, ROOM_TABLE_FAR, -240, 0);
+    n += room_wall(room_tris + n * 9, -ROOM_TABLE_X, ROOM_TABLE_NEAR, ROOM_TABLE_X, ROOM_TABLE_NEAR, -240, 0);
+    n += room_wall(room_tris + n * 9, -ROOM_TABLE_X, ROOM_TABLE_FAR, -ROOM_TABLE_X, ROOM_TABLE_NEAR, -240, 0);
+    n += room_wall(room_tris + n * 9, ROOM_TABLE_X, ROOM_TABLE_FAR, ROOM_TABLE_X, ROOM_TABLE_NEAR, -240, 0);
+    n += room_quad(room_tris + n * 9, -7900, -7900, 7900, 7900, -6000);
+    return n;
+}
+/* Or on the floor: a floor (the table's height, 0) 75 cm across, walls round it, no edge */
+static int room_floor_only(void) {
+    int n = 0;
+    n += room_quad(room_tris + n * 9, -3000, -3000, 3000, 3000, 0);
+    n += room_wall(room_tris + n * 9, -3000, -3000, 3000, -3000, 0, 4000);
+    n += room_wall(room_tris + n * 9, -3000, 3000, 3000, 3000, 0, 4000);
+    n += room_wall(room_tris + n * 9, -3000, -3000, -3000, 3000, 0, 4000);
+    n += room_wall(room_tris + n * 9, 3000, -3000, 3000, 3000, 0, 4000);
+    return n;
+}
+static int on_table(float x, float y, float z) {
+    return fabsf(y) < 5.f && x > -ROOM_TABLE_X && x < ROOM_TABLE_X && z > ROOM_TABLE_FAR && z < ROOM_TABLE_NEAR;
+}
+/* The boxes not on the table (of those free, on the ground) */
+static int boxes_off_table(void) {
+    int n = 0;
+    const BehaviorScript *bx = segmented_to_virtual(bhvStageBox);
+    for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_DESTRUCTIVE].next;
+         b != (struct Object *) &gObjectLists[OBJ_LIST_DESTRUCTIVE]; b = (struct Object *) b->header.next)
+        if (b->behavior == bx && b->oHeldState == HELD_FREE && !on_table(b->oPosX, b->oPosY, b->oPosZ)) n++;
+    return n;
+}
+/* Into your room, from Castle Grounds: 1 once he's held on the stage */
+static int room_begin(void) {
+    if (!sm64unity_stage_room_begin()) return 0;
+    for (int i = 0; i < 200; i++) {
+        tick(0);
+        if (gCurrAreaIndex == 2 && sm64unity_stage_room() == 1 && sm64unity_carry_mode() == 1) { ticks(10); return 1; }
+    }
+    return 0;
+}
+/* NPCs out of the n rightmost boxes never picked up (each picked up, then dropped: thrown, it could go off the edge) */
+static void room_npcs(int n) {
+    for (int i = 0; i < n; i++) {
+        struct Object *box = rightmost_box(1);
+        if (!box || !pick_up(box)) break;
+        ticks(20);
+        for (int j = 0; j < 20 && gMarioState->heldObj; j++) tick(j < 2 ? Z_TRIG : 0);
+        ticks(10);
+    }
 }
 
 int main(int argc, char **argv) {
@@ -767,6 +844,134 @@ int main(int argc, char **argv) {
     }
     CHECK(stage_npcs() == 0, "and only Mario again");
     CHECK(stage_disc_shape() == 0 && !stage_disc_pizza() && fabsf(disc_height(2850, 0)) < 1, "and the disc flat, its own again");
+
+    /* Mario 128 in your room */
+    printf("Mario 128 in your room\n");
+    stage_npcs_fetch(0);
+    CHECK(through_pipe(0, 0, 2400, 1), "first, back to Castle Grounds");
+    ticks(30);
+    int tris = room_table();
+    CHECK(sm64unity_stage_room_place(room_tris, tris, 400) < 0, "he can't be put down before it's begun");
+    CHECK(room_begin(), "begun: on the stage, Mario held (area %d, carried %d)", gCurrAreaIndex, sm64unity_carry_mode());
+    ticks(5);
+    CHECK(!the_disc() && stage_boxes() == 0 && sm64unity_stage_room() == 1, "no disc, no boxes yet");
+    {
+        const BehaviorScript *pipe = segmented_to_virtual(bhvWarpPipe);
+        int pipes = 0;
+        for (struct Object *o = (struct Object *) gObjectLists[OBJ_LIST_SURFACE].next;
+             o != (struct Object *) &gObjectLists[OBJ_LIST_SURFACE]; o = (struct Object *) o->header.next)
+            if (o->behavior == pipe) pipes++;
+        CHECK(pipes == 0, "nor its pipe");
+    }
+    CHECK(!sm64unity_stage_room_begin(), "it can't begin twice");
+    CHECK(sm64unity_stage_room_place(room_tris, tris, 400) == tris, "put down on the table (%d surfaces)", tris);
+    ticks(60);
+    printf("  Mario at %.0f %.0f %.0f; %d of the picture's %d boxes\n", gMarioState->pos[0], gMarioState->pos[1],
+           gMarioState->pos[2], stage_boxes(), stage_mosaic_boxes());
+    CHECK(sm64unity_stage_room() == 2 && on_table(gMarioState->pos[0], gMarioState->pos[1], gMarioState->pos[2])
+          && fabsf(gMarioState->pos[0]) < 50 && fabsf(gMarioState->pos[2]) < 50, "he's dropped onto it, where he was let go of");
+    CHECK(stage_boxes() > 0 && stage_boxes() < stage_mosaic_boxes() && boxes_off_table() == 0,
+          "the picture laid out on it, none past its far edge (%d boxes, %d off it)", stage_boxes(), boxes_off_table());
+    CHECK(sm64unity_stage_count() == 1, "Mario alone (%d)", sm64unity_stage_count());
+    room_npcs(1);
+    CHECK(stage_npcs() == 1 && sm64unity_stage_count() == 2, "a box picked up: another Mario (%d)", sm64unity_stage_count());
+
+    /* Over the edge, and back from the sky onto the table */
+    int rfalls = stage_falls();
+    stage_npcs_pause(1);
+    gMarioState->pos[0] = ROOM_TABLE_X + 300; gMarioState->pos[1] = 50; gMarioState->pos[2] = -500;
+    vec3f_set(gMarioState->vel, 0, 0, 0); gMarioState->forwardVel = 0;
+    set_mario_action(gMarioState, ACT_FREEFALL, 0);
+    float lowest = 0;
+    for (int i = 0; i < 400 && !(stage_falls() > rfalls && !(gMarioState->action & ACT_FLAG_AIR)); i++) {
+        tick(0);
+        if (gMarioState->pos[1] < lowest) lowest = gMarioState->pos[1];
+    }
+    ticks(30);
+    CHECK(stage_falls() == rfalls + 1 && lowest < -2000 && on_table(gMarioState->pos[0], gMarioState->pos[1], gMarioState->pos[2]),
+          "Mario off the edge falls, and is back from the sky on the table (at %.0f %.0f %.0f, as low as %.0f)",
+          gMarioState->pos[0], gMarioState->pos[1], gMarioState->pos[2], lowest);
+    {
+        stand(stage_npc_state(0), -1500, 300, 0); /* (out of the way) */
+        struct Object *box = rightmost_box(1);
+        int got = box && pick_up(box);
+        ticks(20);
+        gMarioState->pos[0] = ROOM_TABLE_X - 150; gMarioState->pos[1] = 0; gMarioState->pos[2] = -500;
+        gMarioState->faceAngle[1] = 0x4000; /* (+x: out over the edge) */
+        got = got && gMarioState->heldObj == box;
+        printf("  holding the box: %d\n", got);
+        set_mario_action(gMarioState, got ? ACT_HOLD_IDLE : ACT_IDLE, 0);
+        ticks(3);
+        rfalls = stage_falls();
+        int thrown = got && throw_held();
+        for (int i = 0; i < 400 && stage_falls() == rfalls; i++) tick(0);
+        ticks(150);
+        CHECK(thrown && stage_falls() == rfalls + 1 && box->oHeldState == HELD_FREE && on_table(box->oPosX, box->oPosY, box->oPosZ),
+              "a box thrown off the edge is back from the sky on the table (at %.0f %.0f %.0f)", box->oPosX, box->oPosY, box->oPosZ);
+    }
+    gMarioState->pos[0] = 0; gMarioState->pos[1] = 0; gMarioState->pos[2] = 400;
+    set_mario_action(gMarioState, ACT_IDLE, 0);
+    stage_npcs_pause(0);
+    room_npcs(5);
+    gMarioState->pos[0] = 0; gMarioState->pos[1] = 0; gMarioState->pos[2] = 400;
+    set_mario_action(gMarioState, ACT_IDLE, 0);
+    int npcs = stage_npcs();
+    printf("  %d NPCs\n", npcs);
+    /* They keep to the table, but for going over its edge on purpose */
+    stage_npcs_edge_test(0);
+    rfalls = stage_falls();
+    int off = 0;
+    static u32 last_action[128]; static float last_pos[128][3]; static int told;
+    for (int i = 0; i < 3000; i++) {
+        tick(0);
+        for (int n = 0; n < stage_npcs(); n++) {
+            struct MarioState *m = stage_npc_state(n);
+            if (!m) continue;
+            if (m->pos[1] < -300) {
+                if (last_action[n] && told < 12) { told++; printf("  (NPC %d off the table: was %08x at %.0f %.0f %.0f, now %08x)\n", n, last_action[n], last_pos[n][0], last_pos[n][1], last_pos[n][2], m->action); }
+                last_action[n] = 0;
+                off++;
+            } else if (m->pos[1] > -1 && !(m->action & ACT_FLAG_AIR)) { last_action[n] = m->action; vec3f_copy(last_pos[n], m->pos); }
+        }
+    }
+    CHECK(stage_falls() == rfalls && off == 0, "the other Marios keep to the table over 3000 steps (%d falls, %d steps off it; %d Marios)",
+          stage_falls() - rfalls, off, sm64unity_stage_count());
+    stage_npcs_fetch(1);
+    stage_npcs_edge_test(1);
+    rfalls = stage_falls();
+    int throws = stage_npcs_thrown_off(), shoves = stage_npcs_rolled_off();
+    for (int i = 0; i < 2000; i++) tick(0);
+    CHECK(stage_npcs_thrown_off() + stage_npcs_rolled_off() > throws + shoves && stage_falls() > rfalls,
+          "on purpose, over its real edge (%d thrown off, %d rolled off; %d back from the sky)",
+          stage_npcs_thrown_off() - throws, stage_npcs_rolled_off() - shoves, stage_falls() - rfalls);
+    CHECK(sm64unity_stage_count() <= 128 && sm64unity_stage_count() == 1 + stage_npcs(), "counted (%d)", sm64unity_stage_count());
+
+    CHECK(sm64unity_stage_room_end(), "ended");
+    for (int i = 0; i < 200 && gCurrAreaIndex != 1; i++) tick(0);
+    ticks(30);
+    CHECK(gCurrAreaIndex == 1 && sm64unity_stage_room() == 0 && stage_npcs() == 0, "back in Castle Grounds (area %d), alone", gCurrAreaIndex);
+
+    /* On a floor: no edge, none made up */
+    CHECK(room_begin(), "begun again");
+    tris = room_floor_only();
+    CHECK(sm64unity_stage_room_place(room_tris, tris, 300) == tris, "put down on a floor");
+    ticks(60);
+    CHECK(stage_boxes() == stage_mosaic_boxes(), "all the picture's boxes on it (%d)", stage_boxes());
+    room_npcs(5);
+    gMarioState->pos[0] = 0; gMarioState->pos[1] = 0; gMarioState->pos[2] = 400;
+    set_mario_action(gMarioState, ACT_IDLE, 0);
+    stage_npcs_edge_test(1);
+    rfalls = stage_falls();
+    throws = stage_npcs_thrown_off(); shoves = stage_npcs_rolled_off();
+    for (int i = 0; i < 2000; i++) tick(0);
+    /* (in the crush of so many, one can be shoved through a wall now and then: that's the sky's to catch, not an edge) */
+    CHECK(stage_npcs() > 0 && stage_npcs_thrown_off() == throws && stage_npcs_rolled_off() == shoves,
+          "%d Marios, meaning to go over an edge, find none (%d thrown off, %d rolled off; %d back from the sky)", stage_npcs(),
+          stage_npcs_thrown_off() - throws, stage_npcs_rolled_off() - shoves, stage_falls() - rfalls);
+    stage_npcs_edge_test(-1);
+    CHECK(sm64unity_stage_room_end(), "ended");
+    for (int i = 0; i < 200 && gCurrAreaIndex != 1; i++) tick(0);
+    CHECK(gCurrAreaIndex == 1 && sm64unity_stage_room() == 0, "back in Castle Grounds");
 
     printf(failures ? "FAILED (%d failures)\n" : "PASSED (%d failures)\n", failures);
     return failures != 0;

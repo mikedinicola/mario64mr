@@ -52,6 +52,9 @@ struct GameWindow: View {
             HStack {
                 Button("Open a window into the game") { Task { await openRoom() } }
                 Button("Texture packs") { showingPacks = true }
+                Button("Mario 128") { Task { await openMario128() } }
+                    .disabled(game.stage != 3)
+                    .help(game.stage == 3 ? "Mario 128 in your room: put Mario down on a table" : "Start a game first")
                 Text(statusLine).monospacedDigit()
                 Spacer()
                 Text(game.hasGamePad ? "Gamepad connected" : "No gamepad: pair one, or use a keyboard "
@@ -74,6 +77,10 @@ struct GameWindow: View {
             // window, it stays here until you open the room again
             if !Self.openedRoomAtLaunch {
                 Self.openedRoomAtLaunch = true
+                #if DEBUG
+                // (-mario128, with -demo: the room opens for Mario 128, which begins once the game's in a course)
+                if ProcessInfo.processInfo.arguments.contains("-mario128") { game.room.update { $0.mario128 = true } }
+                #endif
                 Task { await openRoom() }
             }
             #if DEBUG
@@ -103,6 +110,13 @@ struct GameWindow: View {
             }
         }
         dismissWindow(id: Self.flatWindow)
+    }
+
+    /// Mario 128 in your room: the room opens for it, with Mario in front of you to put down on a table (Mario128Stage)
+    private func openMario128() async {
+        game.room.update { $0.mario128 = true }
+        await openRoom()
+        if !game.room.current.on { game.room.update { $0.mario128 = false } }  // (it didn't open)
     }
 
     private var statusLine: String {

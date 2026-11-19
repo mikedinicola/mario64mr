@@ -67,6 +67,15 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private var cartridge: Cartridge?
     /// The level as a diorama on a table, while it is one
     private var diorama: Diorama?
+    /// Mario 128 in your room, opened for it (RoomLink.mario128): no cartridge nor window, the stage on your table
+    private var mario128Mode = false
+    private var mario128: Mario128Stage?
+    #if DEBUG
+    private var mario128Since: TimeInterval?
+    private var mario128From: SIMD3<Float>?
+    #endif
+    /// The room as the scanner last gave it (metres), for the stage put down in it
+    private let latestRoom = OSAllocatedUnfairLock<RoomMesh?>(uncheckedState: nil)
     /// The treasure chest by the window, and what was taken out of it this frame
     private let chest = TreasureChest()
     /// (the simulator's stand-in room's planes)
@@ -157,11 +166,13 @@ final class ImmersiveRenderer: @unchecked Sendable {
             }
         }
         reopenWidth = link.current.reopenWidth
+        mario128Mode = link.current.mario128
         link.update { $0.on = true; $0.reopenWidth = nil }
         defer {
             // The Digital Crown in a diorama: back to the window (the room opens again), not out of the room
             let width = diorama != nil ? cartridge.map { $0.window.halfSize.x * 2 } : nil
             link.update { $0.reopenWidth = width }
+            link.update { $0.mario128 = false; $0.stagePlace = nil }
             link.update { $0.on = false; $0.head = nil; $0.facing = nil; $0.debugRelease = nil; $0.geometry = nil; $0.hands = []; $0.picks = []; $0.chest = nil }
             link.onClose?()
             tracking.cancel()
@@ -206,6 +217,10 @@ final class ImmersiveRenderer: @unchecked Sendable {
         // tracked head at standing or sitting height. Placed without one (after 2 s), it moves once one comes, if
         // it isn't open or in a hand by then.
         let realHead = anchor.map { $0.isTracked && $0.originFromAnchorTransform.columns.3.y > 0.5 } ?? false
+        if mario128Mode {
+            renderMario128(drawables, commands: commands, head: head, realHead: realHead, time: time, now: now)
+            return
+        }
         // (with no cartridge, the window opens at once, so it moves too until a hand takes it)
         let movable = cartridge.map { (!$0.isOpen || !Cartridge.enabled || reopenWidth != nil) && $0.holding.isEmpty }
             ?? true
@@ -630,6 +645,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
 
     /// A new room from the scanner: to the game (its collision, loaded on the game thread) and to the drawing
     private func useRoom(_ mesh: RoomMesh) {
+        latestRoom.withLockUnchecked { $0 = mesh }
         let triangles = mesh.gameTriangles()
         if !loggedRoom {
             // (how much of the room the game has, and how much of it is floor: tops of things, facing up)
@@ -792,6 +808,133 @@ final class ImmersiveRenderer: @unchecked Sendable {
     }
 }
 
+// ---------------------------------------------------------------- Mario 128 in your room
+
+extension ImmersiveRenderer {
+    /// A frame of Mario 128 in your room (Mario128Stage): no cartridge nor window. Mario in front of you, in your
+    /// hand, or the stage where he was put down, hidden where the room's surfaces are in front; its count over the
+    /// picture
+    private func renderMario128(_ drawables: [LayerRenderer.Drawable], commands: MTLCommandBuffer, head: simd_float4x4,
+                                realHead: Bool, time: TimeInterval, now: CFTimeInterval) {
+        let eyePosition = SIMD3(head.columns.3.x, head.columns.3.y, head.columns.3.z)
+        let lookForward = -SIMD3(head.columns.2.x, head.columns.2.y, head.columns.2.z)
+        if mario128 == nil, realHead || !WorldTrackingProvider.isSupported || now - (started ?? now) > 2 {
+            mario128 = Mario128Stage(eye: eyePosition, forward: lookForward)
+            if startTime == nil { startTime = time }
+            Self.log.info("Mario 128 in your room: Mario in front of you")
+            #if DEBUG
+            if !RoomScanner.isSupported {  // (the simulator: a floor and a table to put him down on)
+                let (room, above, planes) = RoomMesh.standIn(window: RoomPlacement(facing: head),
+                                                              floor: head.columns.3.y - 1.5)
+                useRoom(room)
+                standInPlanes = planes
+                link.update { $0.debugRelease = above }
+            }
+            #endif
+        }
+        var hands = handTracker.update(at: time)
+        while hands.count < 2 { hands.append(HandState()) }
+        for (side, hand, _) in controllerTracker.hands(at: time) { hands[side] = hand }
+        _ = gazePinches.take()  // (looks and pinches from afar aren't used here)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-mario128"), let stage = mario128 {
+            hands = scriptedMario128Hands(time, stage: stage, eye: eyePosition)
+        }
+        #endif
+        lastTime = time
+        let planes = planeFinder.current + standInPlanes
+        let gameFrame = frames.latest()
+        let state = link.current
+        let ready = state.stageRoom != 0  // (the game's on the stage, holding him)
+        if let stage = mario128, ready {
+            let room = latestRoom.withLockUnchecked { $0 }
+            let put = stage.update(hands: hands, eye: eyePosition) { p in
+                room?.ground(under: p, depth: Mario128Stage.dropMost) ?? Self.circle(under: p, planes: planes).map(\.y)
+            }
+            if put, let placed = stage.placed {
+                let triangles = room?.stageTriangles(worldFromRoom: stage.roomFromWorld().inverse) ?? []
+                Self.log.info("Mario 128 put down \(placed.height) m over a surface, on \(triangles.count / 9) of the room's triangles")
+                link.update { $0.stagePlace = (triangles, placed.height / Mario128Stage.scale) }
+            }
+            scanner.focus = stage.at
+        }
+
+        let roomFromWorld = mario128?.roomFromWorld() ?? matrix_identity_float4x4
+        let camera = gameFrame?.camera ?? matrix_identity_float4x4
+        let roomFromView = roomFromWorld * camera.inverse
+        let up = simd_normalize(SIMD3(camera.columns.1.x, camera.columns.1.y, camera.columns.1.z))
+        let headInView = roomFromView.inverse * head.columns.3
+        let back = head.columns.2, headUp = head.columns.1
+        let levelBack = back - headUp * (back.y >= 0 ? 1 : -1)
+        let geometry = RoomGeometry(roomFromView: roomFromView, windowFromRoom: matrix_identity_float4x4,
+                                    halfSize: SIMD2(0.3, 0.2), open: true, diorama: true,
+                                    startLabel: (.zero, .zero), worldFromRoom: roomFromWorld.inverse)
+        let forward = mario128?.forwardInWorld(eyeForward: lookForward)
+        link.update {
+            $0.head = SIMD3(headInView.x, headInView.y, headInView.z); $0.up = up
+            $0.facing = SIMD2(levelBack.x, levelBack.z)
+            $0.geometry = geometry; $0.hands = []; $0.dioramaForward = forward; $0.busy = []; $0.chest = nil
+        }
+
+        let mesh = roomMesh.withLockUnchecked { $0 }
+        let xScale = gameFrame.map { RoomPlacement.xScale($0.size) } ?? 0.75
+        // (the count over the picture's middle, 6 cm up: stage_mosaic_lay_at's, ahead of where he was put down)
+        let countAt = roomFromWorld * SIMD4<Float>(0, 480, -1080, 1)
+        for (slot, drawable) in drawables.enumerated() {
+            for (index, view) in drawable.views.enumerated() {
+                let roomFromEye = head * view.transform
+                let eye = GameRenderer.RoomEye(
+                    viewProjection: drawable.computeProjection(viewIndex: index) * roomFromEye.inverse,
+                    roomFromView: roomFromView, roomFromWindow: matrix_identity_float4x4,
+                    windowFromRoom: matrix_identity_float4x4, eye: roomFromEye.columns.3,
+                    window: SIMD4(1, 1, 100, 0.01), up: SIMD4(up, 0))
+                guard let encoder = makeEncoder(commands, drawable: drawable, slot: slot, view: view) else { continue }
+                // The room's surfaces into depth, then the stage (none of it cut away: what falls off the table is
+                // seen falling), then its count
+                if let buffer = mesh.buffer { game.encodeRoomMesh(buffer, count: mesh.count, into: encoder, eye: eye) }
+                if ready, mario128 != nil, let gameFrame {
+                    game.encodeDiorama(gameFrame, into: encoder, eye: eye, roomFromWorld: roomFromWorld, table: -1e6,
+                                       xScale: xScale)
+                }
+                if state.stageRoom == 2, state.stageCount > 0 {
+                    props.encodeCount(state.stageCount, at: SIMD3(countAt.x, countAt.y, countAt.z), facing: eyePosition,
+                                      into: encoder, eye: eye)
+                }
+                if graphics?.gloves == true { props.encodeGloves(hands, into: encoder, eye: eye) }
+                encoder.endEncoding()
+            }
+            drawable.encodePresent(commandBuffer: commands)
+        }
+        commands.commit()
+    }
+
+    #if DEBUG
+    /// With -mario128 (and -demo, into a course; the flat window's button pressed for you): a hand, as the simulator
+    /// has none, takes Mario from in front of you, carries him over the stand-in room's counter and lets go 6 cm
+    /// above it
+    private func scriptedMario128Hands(_ time: TimeInterval, stage: Mario128Stage, eye: SIMD3<Float>) -> [HandState] {
+        guard link.current.stageRoom != 0, let above = link.current.debugRelease else { return [] }
+        if mario128Since == nil { mario128Since = time }
+        if mario128From == nil { mario128From = stage.at + SIMD3(0, Mario128Stage.middle, 0) }
+        let s = time - mario128Since!, from = mario128From!
+        func hand(_ p: SIMD3<Float>, pinching: Bool) -> HandState {
+            var h = HandState(tracked: true)
+            h.pinch = p; h.reach = p; h.pinching = pinching
+            h.palm = p + SIMD3(0, -0.05, 0.08)
+            h.joints = HandState.debugJoints(pinch: p, eye: eye)
+            return h
+        }
+        let to = above - SIMD3(0, 0.25 - 0.06 - Mario128Stage.middle, 0)  // (debugRelease is 25 cm over the counter)
+        if s < 1 { return [HandState(), hand(from + SIMD3(0, 0.05 * Float(1 - s), 0), pinching: false)] }
+        if s < 4 {
+            let k = Float(min(max((s - 1.3) / 2, 0), 1))
+            return [HandState(), hand(from + (to - from) * k, pinching: s > 1.1 && s < 3.6)]
+        }
+        return []
+    }
+    #endif
+}
+
 /// What the room tells the game thread: whether the game is drawn in the room (sm64unity_mr_geometry), and where
 /// your head is for billboards to face it
 final class RoomLink: @unchecked Sendable {
@@ -826,6 +969,15 @@ final class RoomLink: @unchecked Sendable {
         var spawnable: UInt32 = 0
         /// The chest for the game to draw in the room (the game's own), when it's shown
         var chest: ChestPose?
+        /// Mario 128 in your room (the flat window's button, as the room opens): the game begins it, and ends it as
+        /// the room closes
+        var mario128 = false
+        /// Mario put down there: the room's triangles about it in the game's world, and his height (units), for the
+        /// game to take (sm64unity_stage_room_place)
+        var stagePlace: (triangles: [Int16], marioY: Float)?
+        /// (from the game) Mario 128 in your room: 0 not yet, 1 held, 2 put down; and how many Marios
+        var stageRoom: Int32 = 0
+        var stageCount: Int32 = 0
     }
     private let state = OSAllocatedUnfairLock(initialState: State())
     /// Called (on the room's thread) when the room closes

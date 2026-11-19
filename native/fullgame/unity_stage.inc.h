@@ -49,6 +49,10 @@
 #include "game/mario_step.h"
 #include "behavior_data.h"
 extern s16 unity_stick_yaw(s16 camera_yaw); /* (unity_mr.c: the stick's way, the camera's or, out in the room, yours) */
+extern int sm64unity_carry(int mode, float x, float y, float z, float vx, float vy, float vz); /* (unity_mr.c) */
+extern int sm64unity_carry_mode(void);
+extern int sm64unity_stage(void); /* (unity_bridge.c: 3, playing) */
+extern void initiate_warp(s16 destLevel, s16 destArea, s16 destWarpNode, s32 arg3); /* (level_update.c) */
 #include "pc/stage_mosaic.inc.h"
 
 /* (obj_behaviors.c's own, as its objects step: on the floor, into a wall) */
@@ -162,6 +166,59 @@ int stage_box_mario(struct Object *o) {
 
 /* Is Mario on the stage? */
 static int stage_here(void) { return gCurrLevelNum == LEVEL_CASTLE_GROUNDS && gCurrAreaIndex == 2; }
+
+/* Mario 128 in your room (the visionOS app's Mario 128 button): the stage on a real table, a Mario about 2 cm tall.
+ * No disc, nor its pipe, tilt or shapes: the room's own triangles, put down where he's let go of, are its ground, the
+ * table's height 0, and a real edge is its rim. Where there's no edge (on a floor), none is made up.
+ * 0: the disc; 1: in your room, not yet put down (held where the host draws him: the hand); 2: put down */
+static int stage_room;
+static struct Surface *stage_room_surfaces; /* (its own pool: unity_build_static's) */
+static struct SurfaceNode *stage_room_nodes;
+static int stage_room_count;
+#define STAGE_ROOM_LEVEL 100.f    /* (a floor within this of a height is at that height: the table's, on it) */
+#define STAGE_ROOM_AHEAD 150.f    /* (an NPC looks this far ahead for the floor it's on going on) */
+#define STAGE_ROOM_RIM_LOOK 1200.f
+#define STAGE_ROOM_RIM_STEP 40.f
+#define STAGE_ROOM_ROAM 1400.f    /* (an NPC wanders, and the sky drops, within this of where Mario was put down) */
+/* A floor at (x, z) at height y (up to STAGE_ROOM_LEVEL below: one step), its height in *h */
+static int stage_room_floor_at(float x, float y, float z, float *h) {
+    struct Surface *floor;
+    float f = find_floor(x, y + STAGE_ROOM_LEVEL, z, &floor);
+    if (h) *h = f;
+    return floor && f > y - STAGE_ROOM_LEVEL;
+}
+/* Would m, going `yaw`, be off the floor it's on `ahead` from here? */
+static int stage_room_edge_ahead(struct MarioState *m, s16 yaw, float ahead) {
+    return !stage_room_floor_at(m->pos[0] + ahead * sins(yaw), m->pos[1], m->pos[2] + ahead * coss(yaw), NULL);
+}
+/* Is there a floor of the room's (not the stage's own, under everything) at (x, z), lower than y? */
+static int stage_room_floor_below(float x, float y, float z) {
+    for (int i = 0; i < stage_room_count; i++) {
+        struct Surface *s = &stage_room_surfaces[i];
+        if (s->normal.y < 0.01f) continue; /* (floors only) */
+        float x1 = s->vertex1[0], z1 = s->vertex1[2], x2 = s->vertex2[0], z2 = s->vertex2[2], x3 = s->vertex3[0], z3 = s->vertex3[2];
+        float a = (z1 - z) * (x2 - x1) - (x1 - x) * (z2 - z1), b = (z2 - z) * (x3 - x2) - (x2 - x) * (z3 - z2);
+        float c = (z3 - z) * (x1 - x3) - (x3 - x) * (z1 - z3);
+        if (!((a >= 0 && b >= 0 && c >= 0) || (a <= 0 && b <= 0 && c <= 0))) continue;
+        if (-(s->normal.x * x + s->normal.z * z + s->originOffset) / s->normal.y < y) return 1;
+    }
+    return 0;
+}
+/* The nearest real edge from p (of 16 ways, out to STAGE_ROOM_RIM_LOOK): where the floor it's on stops and the room's
+ * goes on far below (not where it stops at a wall, or the room isn't scanned). Its way out and how far; 0, none */
+static int stage_room_rim(const Vec3f p, s16 *out, float *distance) {
+    int found = 0;
+    for (int i = 0; i < 16; i++) {
+        s16 a = (s16) (i * 0x1000);
+        for (float d = STAGE_ROOM_RIM_STEP; d <= STAGE_ROOM_RIM_LOOK && (!found || d < *distance); d += STAGE_ROOM_RIM_STEP) {
+            float x = p[0] + d * sins(a), z = p[2] + d * coss(a);
+            if (stage_room_floor_at(x, p[1], z, NULL)) continue;
+            if (stage_room_floor_below(x, p[1] - 4.f * STAGE_ROOM_LEVEL, z)) { found = 1; *out = a; *distance = d; }
+            break; /* (this way, the floor stops here: an edge, or not) */
+        }
+    }
+    return found;
+}
 /* The Marios' voices here, how much higher (as Mario 128's were: 1.5, a fifth up), for the sound bank of Mario's
  * voice (patch_sm64ex.py: external.c's get_sound_freq_scale) */
 #define STAGE_VOICE_PITCH 1.5f
@@ -203,6 +260,7 @@ static void stage_tumble_start(struct UnityMario *t, struct MarioState *by, floa
     if (!t->tumbling) t->tumble.spin = 0;
     t->tumbling = 1;
     t->tumble.by = by;
+    t->tumble.meant = by && by == gMarioState; /* (yours mean what they do; an NPC's, when it lets go at an edge) */
     t->tumble.speed = speed;
     t->tumble.dir = dir;
     t->m.action = ACT_STAGE_TUMBLE;
@@ -379,7 +437,9 @@ static void stage_tumble_step(struct UnityMario *u) {
             float x = m->pos[0] + speed * sins(u->tumble.dir), z = m->pos[2] + speed * coss(u->tumble.dir);
             struct Surface *floor;
             float y = find_floor(x, m->pos[1] + 100.f, z, &floor);
-            if (!floor || y < m->pos[1] - STAGE_TUMBLE_DROP) { /* (over the rim: off the edge, falling) */
+            if ((!floor || y < m->pos[1] - STAGE_TUMBLE_DROP) && stage_room && !u->tumble.meant) {
+                u->tumble.speed = 0.f; /* (in your room, at a real edge, not meant to go over it: it stops short) */
+            } else if (!floor || y < m->pos[1] - STAGE_TUMBLE_DROP) { /* (over the rim: off the edge, falling) */
                 stage_tumble_fall(u);
                 return;
             } else {
@@ -396,6 +456,7 @@ static void stage_tumble_step(struct UnityMario *u) {
                     if (t == u || !stage_rollable(t)) continue;
                     if (stage_distance(t->m.pos[0], t->m.pos[2], x, z) < STAGE_TUMBLE_HIT) {
                         stage_tumble_start(t, NULL, speed * 0.8f, u->tumble.dir);
+                        t->tumble.meant = u->tumble.meant;
                         play_sound(SOUND_MARIO_WHOA, t->obj->header.gfx.cameraToObject);
                         u->tumble.speed *= 0.5f;
                         stage_tumbles_knocked++;
@@ -746,7 +807,7 @@ static void stage_disc_shape_step(struct Object *o) {
 
 /* The disc's mesh, as it's shaped now (its model's: stage_disc_model_geo) */
 Gfx *geo_stage_disc(s32 callContext, struct GraphNode *node, UNUSED void *context) {
-    if (callContext != GEO_CONTEXT_RENDER || !stage_disc.ready) return NULL;
+    if (callContext != GEO_CONTEXT_RENDER || !stage_disc.ready || stage_room) return NULL;
     node->flags = (LAYER_OPAQUE << 8) | (node->flags & 0xFF);
     return stage_disc_gfx;
 }
@@ -767,7 +828,7 @@ static struct Object *stage_pipe;  /* the stage's own pipe, on the disc */
  * stick is, the way you look (in a diorama, the host turns it as it turns the stick). 0 0 with none */
 EXPORT void sm64unity_stage_tilt(float forward, float right) { stage_tilt_in[0] = forward; stage_tilt_in[1] = right; }
 /* Is tilting on? (the host can show it; tests) */
-EXPORT int sm64unity_stage_tilting(void) { return stage_tilting && stage_here(); }
+EXPORT int sm64unity_stage_tilting(void) { return stage_tilting && stage_here() && !stage_room; }
 
 /* An angle of the disc's turned towards the one wanted: much of the way at once (it follows the controller closely),
  * no faster than STAGE_TILT_RATE */
@@ -808,8 +869,10 @@ static void stage_disc_carry(struct Object *disc, Vec3f p) {
 /* The disc's step (bhvStageDisc, in the surface list: before Mario's platform displacement and everyone's own step):
  * its shape changes on, if it's changing; it leans towards the controller's lean, or back level; what's on it rides
  * along; its collision where it is now */
+static void stage_room_clear(struct Object *disc);
 void stage_disc_loop(void) {
     struct Object *o = gCurrentObject;
+    if (stage_room) { stage_room_clear(o); return; }
     stage_disc_shape_step(o);
     s16 pitch = 0, roll = 0;
     if (stage_tilting && gMarioState && gMarioState->area && gMarioState->area->camera) {
@@ -877,6 +940,24 @@ static int stage_sky_yours;    /* (your Mario, back from the sky, not yet landed
 static int stage_fallen;       /* (for tests: how many times one came back) */
 int stage_falls(void) { return stage_fallen; }
 static void stage_sky_spot(Vec3f p) {
+    if (stage_room) { /* (in your room: over the table, under whatever's over it, a shelf; or where he was put down) */
+        for (int i = 0; i < 16; i++) {
+            float r = STAGE_ROOM_ROAM * sqrtf(random_float()), h;
+            s16 a = (s16) random_u16();
+            if (i == 15) r = 0.f;
+            float x = r * sins(a), z = r * coss(a);
+            if (r > 0.f && !(stage_room_floor_at(x, 0.f, z, &h) && stage_room_floor_at(x + 200.f, 0.f, z, NULL)
+                             && stage_room_floor_at(x - 200.f, 0.f, z, NULL) && stage_room_floor_at(x, 0.f, z + 200.f, NULL)
+                             && stage_room_floor_at(x, 0.f, z - 200.f, NULL))) continue; /* (on it, not by its edge) */
+            if (r == 0.f) stage_room_floor_at(x, 0.f, z, &h);
+            struct Surface *ceiling;
+            float top = find_ceil(x, h + 80.f, z, &ceiling), y = STAGE_SKY_Y;
+            if (ceiling && top - 200.f < y) y = top - 200.f;
+            if (y < h + 100.f) y = h + 100.f;
+            vec3f_set(p, x, y, z);
+            return;
+        }
+    }
     float r = STAGE_SKY_ROAM * sqrtf(random_float());
     s16 a = (s16) random_u16();
     vec3f_set(p, r * sins(a), STAGE_SKY_Y, r * coss(a));
@@ -931,11 +1012,16 @@ static int stage_celebration; /* (at 128 Marios: 0, not yet; then steps since) *
 static void stage_celebration_step(void);
 void stage_watch(void) {
     if (!stage_here() || !gMarioState || !gMarioState->controller) return;
+    if (stage_room == 1) { /* (in your room, not yet put down: held, where the host draws him) */
+        if (sm64unity_carry_mode() != 1) sm64unity_carry(1, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f);
+        return;
+    }
     stage_celebration_step();
     stage_marios_fall_back();
     unity_marios_let_go_taken(gMarioState); /* (yours, if another Mario took it the same step) */
     u16 pressed = gMarioState->controller->buttonPressed;
     if (pressed & B_BUTTON) stage_roll_start(gMarioState);
+    if (stage_room) return; /* (no disc to tilt or reshape) */
     if (pressed & U_JPAD) {
         stage_tilting = !stage_tilting;
         play_sound(stage_tilting ? SOUND_MENU_CAMERA_ZOOM_IN : SOUND_MENU_CAMERA_ZOOM_OUT, gDefaultSoundArgs);
@@ -973,6 +1059,38 @@ static s16 stage_npc_outward(struct UnityMario *u) {
     if (stage_distance(m->pos[0], m->pos[2], 0.f, 0.f) < 200.f) return (s16) stage_npc_between(u, 0, 0xFFFF);
     return atan2s(m->pos[2], m->pos[0]);
 }
+/* Where an NPC means to go over the edge from, `at` out from the middle on the disc (the way out from it in
+ * brain.out); in your room, short of the nearest real edge, if there is one. 0: there isn't (none is made up) */
+static int stage_npc_edge_from(struct UnityMario *u, float at) {
+    if (!stage_room) {
+        s16 out = stage_npc_outward(u);
+        u->brain.out = out;
+        u->brain.x = at * sins(out);
+        u->brain.z = at * coss(out);
+        return 1;
+    }
+    s16 out;
+    float d;
+    if (!stage_room_rim(u->m.pos, &out, &d)) return 0;
+    float short_of = d > STAGE_ROOM_AHEAD ? d - STAGE_ROOM_AHEAD : 0.f;
+    u->brain.out = out;
+    u->brain.x = u->m.pos[0] + short_of * sins(out);
+    u->brain.z = u->m.pos[2] + short_of * coss(out);
+    return 1;
+}
+/* In your room, a place to go to on the floor it's on (brain.x, z: as drawn for the disc, but nearer, and redrawn
+ * till it's on the table; else where it is) */
+static void stage_npc_room_spot(struct UnityMario *u) {
+    if (!stage_room) return;
+    u->brain.x *= STAGE_ROOM_ROAM / STAGE_NPC_ROAM;
+    u->brain.z *= STAGE_ROOM_ROAM / STAGE_NPC_ROAM;
+    for (int i = 0; i < 8 && !stage_room_floor_at(u->brain.x, u->m.pos[1], u->brain.z, NULL); i++) {
+        float a = stage_npc_between(u, 0, 0xFFFF), r = STAGE_ROOM_ROAM * sqrtf(stage_npc_between(u, 0, 1000) / 1000.f);
+        u->brain.x = r * sins((s16) a);
+        u->brain.z = r * coss((s16) a);
+    }
+    if (!stage_room_floor_at(u->brain.x, u->m.pos[1], u->brain.z, NULL)) { u->brain.x = u->m.pos[0]; u->brain.z = u->m.pos[2]; }
+}
 /* Is there room for more Marios? (Till there isn't, most of them go for boxes never picked up) */
 static int stage_npc_room(void) { return unity_marios_all() < UNITY_MARIOS_MOST; }
 static int stage_npcs_fetching = 1; /* (tests turn it off: they keep the Marios they made) */
@@ -989,7 +1107,8 @@ int stage_npcs_boxing(void) {
 static int stage_npc_box_free(struct UnityMario *u, struct Object *b) {
     if (!b || !(b->activeFlags & ACTIVE_FLAG_ACTIVE) || b->behavior != segmented_to_virtual(bhvStageBox) || b->oAction
         || b->oHeldState != HELD_FREE || !stage_npc_room()
-        || stage_distance(b->oPosX, b->oPosZ, 0.f, 0.f) > STAGE_NPC_SAFE) return 0;
+        || (stage_room ? fabsf(b->oPosY) > STAGE_ROOM_LEVEL : stage_distance(b->oPosX, b->oPosZ, 0.f, 0.f) > STAGE_NPC_SAFE))
+        return 0;
     for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) {
         struct UnityMario *t = &unity_marios[i];
         if (t != u && t->obj && t->brain.mode == STAGE_NPC_GO_BOX && t->brain.box == b) return 0;
@@ -1022,13 +1141,10 @@ static void stage_npc_think(struct UnityMario *u) {
         u->brain.x = r * sins((s16) a);
         u->brain.z = r * coss((s16) a);
         u->brain.timer = stage_npc_between(u, 40, 120);
+        stage_npc_room_spot(u);
         u->brain.edge = stage_npc_means_edge(u);
-        if (u->brain.edge) { /* (out to near the rim, the nearest way, to throw it off) */
-            s16 out = stage_npc_outward(u);
-            u->brain.x = STAGE_NPC_THROW_FROM * sins(out);
-            u->brain.z = STAGE_NPC_THROW_FROM * coss(out);
-            u->brain.timer = 450;
-        }
+        if (u->brain.edge && !stage_npc_edge_from(u, STAGE_NPC_THROW_FROM)) u->brain.edge = 0;
+        if (u->brain.edge) u->brain.timer = 450; /* (out to near the rim, the nearest way, to throw it off) */
     }
     /* What next, its time up for this (carrying, when it's thrown) */
     if (--u->brain.timer <= 0 && u->brain.mode != STAGE_NPC_CARRY) {
@@ -1069,6 +1185,7 @@ static void stage_npc_think(struct UnityMario *u) {
                 u->brain.x = r * sins((s16) a);
                 u->brain.z = r * coss((s16) a);
                 u->brain.timer = stage_npc_between(u, 90, 300);
+                stage_npc_room_spot(u);
             } else {
                 u->brain.mode = STAGE_NPC_FOLLOW;
                 u->brain.timer = stage_npc_between(u, 120, 240);
@@ -1098,14 +1215,24 @@ static void stage_npc_think(struct UnityMario *u) {
             down = B_BUTTON;
             u->brain.yaw = (s16) (m->faceAngle[1] + stage_npc_between(u, -0x200, 0x200));
             speed = STAGE_NPC_WALK;
-            if (u->brain.edge) { /* (out to the rim, and let go short of it: it tumbles on, off the edge) */
+            if (u->brain.edge && stage_room) { /* (in your room: out to the edge it found, and let go short of it) */
+                u->brain.yaw = u->brain.out;
+                if (stage_distance(u->brain.x, u->brain.z, m->pos[0], m->pos[2]) < 80.f
+                    || stage_room_edge_ahead(m, u->brain.yaw, 120.f)) {
+                    down = 0;
+                    stage_npc_edge_shoves++;
+                    for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) /* (the one it rolls: over, on purpose) */
+                        if (unity_marios[i].tumbling && unity_marios[i].tumble.by == m) unity_marios[i].tumble.meant = 1;
+                }
+            } else if (u->brain.edge) { /* (out to the rim, and let go short of it: it tumbles on, off the edge) */
                 u->brain.yaw = stage_npc_outward(u);
                 if (stage_distance(m->pos[0], m->pos[2], 0.f, 0.f) > STAGE_NPC_SHOVE_AT) {
                     down = 0;
                     stage_npc_edge_shoves++;
                 }
             } else {
-                if (stage_distance(m->pos[0], m->pos[2], 0.f, 0.f) > STAGE_NPC_ROAM) /* (not towards the rim) */
+                if (stage_room ? stage_room_edge_ahead(m, u->brain.yaw, STAGE_ROLL_GAP + STAGE_ROOM_AHEAD)
+                               : stage_distance(m->pos[0], m->pos[2], 0.f, 0.f) > STAGE_NPC_ROAM) /* (not towards the rim) */
                     u->brain.yaw = atan2s(-m->pos[2], -m->pos[0]);
                 if (u->brain.timer <= 1) down = 0; /* (let go: it tumbles on) */
             }
@@ -1122,6 +1249,7 @@ static void stage_npc_think(struct UnityMario *u) {
             u->brain.yaw = atan2s(dz, dx);
             s16 off = (s16) (u->brain.yaw - m->faceAngle[1]);
             if (sqrtf(dx * dx + dz * dz) < STAGE_ROLL_REACH - 30.f && off < 0x1800 && off > -0x1800) {
+                if (u->brain.edge && stage_room && !stage_npc_edge_from(u, 0.f)) u->brain.edge = 0;
                 if (stage_roll_start(m)) {
                     u->brain.mode = STAGE_NPC_ROLLING;
                     u->brain.timer = u->brain.edge ? 900 : stage_npc_between(u, 45, 150); /* (over the edge: till it's there) */
@@ -1157,7 +1285,7 @@ static void stage_npc_think(struct UnityMario *u) {
             u->brain.timer = stage_npc_between(u, 20, 60);
         } else if (u->brain.edge && stage_distance(u->brain.x, u->brain.z, m->pos[0], m->pos[2]) < 150.f) {
             /* (near the rim: facing out, then thrown, off the edge) */
-            u->brain.yaw = atan2s(m->pos[2], m->pos[0]);
+            u->brain.yaw = stage_room ? u->brain.out : atan2s(m->pos[2], m->pos[0]);
             s16 off = (s16) (u->brain.yaw - m->faceAngle[1]);
             if (off < STAGE_NPC_THROW_FACING && off > -STAGE_NPC_THROW_FACING) {
                 if (!(m->action & ACT_FLAG_THROWING) && !(pad->buttonDown & B_BUTTON)) {
@@ -1171,12 +1299,13 @@ static void stage_npc_think(struct UnityMario *u) {
             u->brain.timer = 2; /* (till it's gone) */
         } else {
             u->brain.yaw = atan2s(u->brain.z - m->pos[2], u->brain.x - m->pos[0]);
-            if (!u->brain.edge && stage_distance(m->pos[0], m->pos[2], 0.f, 0.f) > STAGE_NPC_ROAM)
-                u->brain.yaw = atan2s(-m->pos[2], -m->pos[0]);
+            if (!u->brain.edge && (stage_room ? stage_room_edge_ahead(m, u->brain.yaw, STAGE_ROOM_AHEAD)
+                                              : stage_distance(m->pos[0], m->pos[2], 0.f, 0.f) > STAGE_NPC_ROAM))
+                u->brain.yaw = atan2s(-m->pos[2], -m->pos[0]); /* (back to the middle: where Mario was put down) */
             speed = u->brain.edge ? 64.f : 24.f; /* (out to the rim, a purpose: holding a box he's slow) */
         }
     }
-    if (u->brain.mode < STAGE_NPC_GO_ROLL && sqrtf(m->pos[0] * m->pos[0] + m->pos[2] * m->pos[2]) > STAGE_NPC_SAFE) {
+    if (!stage_room && u->brain.mode < STAGE_NPC_GO_ROLL && sqrtf(m->pos[0] * m->pos[0] + m->pos[2] * m->pos[2]) > STAGE_NPC_SAFE) {
         /* (near the edge: back to the middle) */
         u->brain.mode = STAGE_NPC_WANDER;
         u->brain.x = u->brain.z = 0.f;
@@ -1191,6 +1320,17 @@ static void stage_npc_think(struct UnityMario *u) {
             u->brain.yaw = atan2s(dz, dx);
             speed = u->brain.mode == STAGE_NPC_FOLLOW ? 64.f : STAGE_NPC_WALK;
         }
+    }
+    /* In your room, not over the edge but on purpose: where the floor it's on stops ahead, it stops, and thinks again */
+    float ahead = STAGE_ROOM_AHEAD; /* (not past the box it's going for) */
+    if (u->brain.mode == STAGE_NPC_GO_BOX && u->brain.box)
+        ahead = fminf(ahead, stage_distance(u->brain.box->oPosX, u->brain.box->oPosZ, m->pos[0], m->pos[2]));
+    if (stage_room && speed > 0.f && u->brain.mode <= STAGE_NPC_GO_BOX && u->brain.mode != STAGE_NPC_ROLLING
+        && stage_room_edge_ahead(m, u->brain.yaw, ahead)) {
+        speed = 0.f;
+        u->brain.mode = STAGE_NPC_IDLE;
+        u->brain.box = NULL;
+        u->brain.timer = stage_npc_between(u, 10, 40);
     }
     /* Now and then, on its way, a jump (A held a while, for its full height) */
     if (u->brain.hold > 0) { u->brain.hold--; down |= A_BUTTON; }
@@ -1301,18 +1441,96 @@ Gfx *geo_stage_box(s32 callContext, struct GraphNode *node, UNUSED void *context
     return list;
 }
 
-/* The picture's boxes on the disc (bhvStageMosaic's one step, where the stage's level script puts it) */
-void stage_mosaic_lay(void) {
-    struct Object *o = gCurrentObject;
-    stage_celebration = 0; /* (a new visit: none yet) */
+/* The picture's boxes, its middle at z (from o: the mosaic). In your room, only where there's floor at the table's
+ * height (dropped onto it), none off its edge */
+static void stage_mosaic_lay_at(struct Object *o, float middle_z) {
     for (int i = 0; i < STAGE_MOSAIC_BOXES; i++) {
         float x = (stage_mosaic[i].column - (STAGE_MOSAIC_WIDTH - 1) / 2.f) * STAGE_MOSAIC_SPACING;
-        float z = STAGE_MOSAIC_Z + (stage_mosaic[i].row - (STAGE_MOSAIC_HEIGHT - 1) / 2.f) * STAGE_MOSAIC_SPACING;
-        struct Object *box = spawn_object_abs_with_rot(o, 0, MODEL_STAGE_BOX, bhvStageBox, (s16) x, 0, (s16) z, 0, 0, 0);
+        float z = middle_z + (stage_mosaic[i].row - (STAGE_MOSAIC_HEIGHT - 1) / 2.f) * STAGE_MOSAIC_SPACING, y = 0.f;
+        if (stage_room && !stage_room_floor_at(x, 0.f, z, &y)) continue;
+        struct Object *box = spawn_object_abs_with_rot(o, 0, MODEL_STAGE_BOX, bhvStageBox, (s16) x, (s16) y, (s16) z, 0, 0, 0);
         if (!box) break;
         box->oBehParams = (stage_mosaic[i].r << 16) | (stage_mosaic[i].g << 8) | stage_mosaic[i].b;
     }
 }
+/* The picture's boxes on the disc (bhvStageMosaic's one step, where the stage's level script puts it). In your room,
+ * not till Mario's put down (sm64unity_stage_room_place) */
+static struct Object *stage_room_mosaic;
+void stage_mosaic_lay(void) {
+    stage_celebration = 0; /* (a new visit: none yet) */
+    if (stage_room) { stage_room_mosaic = gCurrentObject; return; }
+    stage_mosaic_lay_at(gCurrentObject, STAGE_MOSAIC_Z);
+}
+
+/* ---- Mario 128 in your room: the host's ---- */
+#define STAGE_ROOM_MOSAIC_GAP 200.f /* (from Mario, put down, to the picture's near side: it's ahead of him, -z) */
+static int stage_room_idle(void) { return sWarpDest.type == 0 /* (WARP_TYPE_NOT_WARPING) */ && sDelayedWarpOp == WARP_OP_NONE; }
+/* (bhvStageDisc's step, in your room) the disc and its pipe gone */
+static void stage_room_clear(struct Object *disc) {
+    const BehaviorScript *pipe = segmented_to_virtual(bhvWarpPipe);
+    for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_SURFACE].next;
+         b != (struct Object *) &gObjectLists[OBJ_LIST_SURFACE]; b = (struct Object *) b->header.next)
+        if (b->behavior == pipe) obj_mark_for_deletion(b);
+    obj_mark_for_deletion(disc);
+    stage_pipe = NULL;
+}
+/* Into your room: to the stage, Mario held (where the host draws him: in your hand), the disc and its pipe gone, and
+ * no boxes till he's put down. Only while playing; on the stage already, it's made over where it is. 1 if so */
+EXPORT int sm64unity_stage_room_begin(void) {
+    if (sm64unity_stage() != 3 || !gMarioState || !gMarioObject || stage_room || !stage_room_idle()) return 0;
+    stage_room = 1;
+    stage_room_mosaic = NULL;
+    stage_tilting = 0;
+    if (!stage_here()) {
+        initiate_warp(LEVEL_CASTLE_GROUNDS, 2, 0x0A, 0);
+        return 1;
+    }
+    /* (here already: its boxes and other Marios gone, the disc and pipe next step, the picture's maker kept) */
+    unity_marios_warped();
+    const BehaviorScript *box = segmented_to_virtual(bhvStageBox), *mosaic = segmented_to_virtual(bhvStageMosaic);
+    for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_DESTRUCTIVE].next;
+         b != (struct Object *) &gObjectLists[OBJ_LIST_DESTRUCTIVE]; b = (struct Object *) b->header.next)
+        if (b->behavior == box) obj_mark_for_deletion(b);
+    if (gMarioState->heldObj) mario_drop_held_object(gMarioState);
+    for (struct Object *b = (struct Object *) gObjectLists[OBJ_LIST_SPAWNER].next;
+         b != (struct Object *) &gObjectLists[OBJ_LIST_SPAWNER]; b = (struct Object *) b->header.next)
+        if (b->behavior == mosaic) stage_room_mosaic = b;
+    stage_celebration = 0;
+    sm64unity_carry(1, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f);
+    return 1;
+}
+/* Put down: the room's triangles (game units: 9 s16 each, the table's top at y 0 under where he's let go of, x 0 z 0)
+ * the stage's ground, its picture laid out ahead of him (-z) where there's table, and Mario let go of at height
+ * marioY over it. The surfaces added, or <0 (not held in your room, or the triangles out of the game's reach) */
+EXPORT int sm64unity_stage_room_place(const s16 *triangles, int count, float marioY) {
+    if (stage_room != 1 || !stage_here() || !stage_room_idle() || !stage_room_mosaic || !isfinite(marioY)) return -1;
+    /* (the stage's last visit's: its area since loaded again, nothing in its surfaces now) */
+    free(stage_room_surfaces); free(stage_room_nodes);
+    stage_room_surfaces = NULL; stage_room_nodes = NULL; stage_room_count = 0;
+    struct Surface *surfaces; struct SurfaceNode *nodes;
+    int added = unity_build_static(triangles, count, &surfaces, &nodes);
+    if (added < 0) return added;
+    stage_room_surfaces = surfaces; stage_room_nodes = nodes; stage_room_count = added;
+    stage_room = 2;
+    stage_mosaic_lay_at(stage_room_mosaic, -(STAGE_ROOM_MOSAIC_GAP + STAGE_MOSAIC_HEIGHT * STAGE_MOSAIC_SPACING / 2.f));
+    marioY = fmaxf(0.f, fminf(marioY, 7000.f));
+    sm64unity_carry(0, 0.f, marioY, 0.f, 0.f, 0.f, 0.f);
+    gMarioState->peakHeight = marioY; /* (no fall damage from your hand) */
+    return added;
+}
+/* Out of your room: back to Castle Grounds, by its pipe (the host's flat window again). 1 if it was in it */
+EXPORT int sm64unity_stage_room_end(void) {
+    if (!stage_room) return 0;
+    stage_room = 0;
+    if (stage_here() && stage_room_idle()) initiate_warp(LEVEL_CASTLE_GROUNDS, 1, 0x32, 0);
+    return 1;
+}
+/* 0: not in your room; 1: in it, held, not put down; 2: put down */
+EXPORT int sm64unity_stage_room(void) { return stage_here() ? stage_room : 0; }
+/* How many Marios there are on the stage (yours too: its count) */
+EXPORT int sm64unity_stage_count(void) { return stage_here() ? unity_marios_all() : 0; }
+/* (unity_mr.c, a warp) Off the stage: not in your room any more */
+void stage_room_warped(void) { if (!stage_here()) stage_room = 0; }
 
 /* At 128 Marios (UNITY_MARIOS_MOST, Mario too), a celebration: the star's fanfare, and every Mario waving at you;
  * then the title theme, on till Mario leaves (the stage has no music of its own before it, as Castle Grounds hasn't) */

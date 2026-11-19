@@ -171,6 +171,30 @@ final class RoomProps {
              flags: SIMD4(0, 0, 0, 1), blend: true, depth: depthWrite, into: encoder, eye: eye)
     }
 
+    // ---------------------------------------------------------------- Mario 128 in your room
+
+    private var countPicture: (count: Int32, texture: MTLTexture, aspect: Float)?
+
+    /// How many Marios there are (Mario's head, ×, the count, in the game's letters), 1.2 cm high, standing at `at`
+    /// and turned to face `viewer` (about the room's up)
+    func encodeCount(_ count: Int32, at: SIMD3<Float>, facing viewer: SIMD3<Float>, into encoder: MTLRenderCommandEncoder,
+                     eye: GameRenderer.RoomEye) {
+        if countPicture?.count != count {
+            let loader = MTKTextureLoader(device: device)
+            guard let image = Self.gameFontImage("@×\(count)"),
+                  let texture = try? loader.newTexture(cgImage: image, options: [.SRGB: true, .generateMipmaps: true])
+            else { return }
+            countPicture = (count, texture, Float(image.width) / Float(image.height))
+        }
+        guard let picture = countPicture else { return }
+        var z = SIMD3(viewer.x - at.x, 0, viewer.z - at.z)
+        z = simd_length(z) > 1e-4 ? simd_normalize(z) : SIMD3(0, 0, 1)
+        let y = SIMD3<Float>(0, 1, 0), x = simd_cross(y, z), h: Float = 0.012
+        let model = simd_float4x4(SIMD4(x * h * picture.aspect, 0), SIMD4(y * h, 0), SIMD4(z, 0), SIMD4(at, 1))
+        draw(quad, count: 6, model: model, color: SIMD4(1, 1, 1, 1), texture: picture.texture,
+             flags: SIMD4(0, 0, 0, 1), blend: true, depth: depthWrite, into: encoder, eye: eye)
+    }
+
     // ---------------------------------------------------------------- The treasure chest
 
     /// Each kind's pictures from the game, loaded the first time it's drawn (none: a plain tile)
@@ -535,32 +559,38 @@ final class RoomProps {
                        provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)!
     }
 
-    /// `text` (capitals and spaces) in the game's colourful HUD letters, as print_text lays them out: 16×16 glyphs
-    /// every 12 pixels (segment2's, from your texture packs first, else base.zip). Nil if a letter isn't there.
-    /// Its picture is `labelAspect` wide for "PRESS START".
+    /// `text` (capitals, digits, spaces; "×", and "@" for Mario's head) in the game's colourful HUD letters, as
+    /// print_text lays them out: 16×16 glyphs every 12 pixels (Mario's head 16: segment2's, from your texture packs
+    /// first, else base.zip). Nil if a letter isn't there. Its picture is `labelAspect` wide for "PRESS START".
     private static func gameFontImage(_ text: String) -> CGImage? {
         let letters = Array(Set(text).subtracting([" "]))
-        // (segment2's letters: A at 0x1400, each 0x200 on)
+        // (segment2's: 0 at 0x0000 and A at 0x1400, each 0x200 on; × at 0x5600, Mario's head at 0x5A00)
         var paths: [String] = []
         for c in letters {
-            guard let a = Character("A").asciiValue, let v = c.asciiValue, v >= a, v <= a + 25 else { return nil }
-            paths.append(String(format: "gfx/textures/segment2/segment2.%05X.rgba16.png", 0x1400 + Int(v - a) * 0x200))
+            let at: Int
+            if c == "×" { at = 0x5600 } else if c == "@" { at = 0x5A00 }
+            else if let v = c.asciiValue, let a = Character("A").asciiValue, v >= a, v <= a + 25 { at = 0x1400 + Int(v - a) * 0x200 }
+            else if let v = c.asciiValue, let zero = Character("0").asciiValue, v >= zero, v <= zero + 9 { at = Int(v - zero) * 0x200 }
+            else { return nil }
+            paths.append(String(format: "gfx/textures/segment2/segment2.%05X.rgba16.png", at))
         }
         guard let pictures = gamePictures(paths) else { return nil }
         let glyphs = Dictionary(uniqueKeysWithValues: zip(letters, pictures))
         // (an HD pack's letters are bigger: the picture is made at their size)
         let k = max(1, (glyphs.values.map { $0.width }.max() ?? 16) / 16)
-        let count = text.count
-        let size = CGSize(width: ((count - 1) * 12 + 16) * k, height: 16 * k)
+        let advance = { (c: Character) in c == "@" ? 16 : 12 }
+        let width = text.dropLast().reduce(0) { $0 + advance($1) } + 16
+        let size = CGSize(width: width * k, height: 16 * k)
         return image(size) { context in
             context.clear(CGRect(origin: .zero, size: size))
             context.interpolationQuality = .none
             // (UIKit's context is flipped: drawn the right way up)
             context.translateBy(x: 0, y: size.height)
             context.scaleBy(x: 1, y: -1)
-            for (i, c) in text.enumerated() {
-                guard let glyph = glyphs[c] else { continue }
-                context.draw(glyph, in: CGRect(x: i * 12 * k, y: 0, width: 16 * k, height: 16 * k))
+            var x = 0
+            for c in text {
+                if let glyph = glyphs[c] { context.draw(glyph, in: CGRect(x: x * k, y: 0, width: 16 * k, height: 16 * k)) }
+                x += advance(c)
             }
         }
     }
