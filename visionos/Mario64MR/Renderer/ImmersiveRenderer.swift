@@ -78,6 +78,8 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private var started: TimeInterval?
     private var drewFirstFrame = false
     static let log = Logger(subsystem: "Mario64MR", category: "Room")
+    /// (-perf: its frames' times in the console, GameHost's PerfLog)
+    private let perf = PerfLog(name: "room")
     /// The options' graphics applied now
     private var graphics: GameOptions.Graphics?
     /// The views' MSAA targets (memoryless), resolved into the drawable's
@@ -178,6 +180,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
         guard let timing = frame.predictTiming() else { return }
         LayerRenderer.Clock().wait(until: timing.optimalInputTime)
         frame.startSubmission()
+        let cpuStart = PerfLog.now
         // (usually one; a second while the view is being recorded or shared, at its own quality and without
         // foveation: each gets the same frame)
         let drawables = frame.queryDrawables()
@@ -437,7 +440,12 @@ final class ImmersiveRenderer: @unchecked Sendable {
             drewFirstFrame = true
             Self.log.info("First frame in the room: \(gameFrame.draws.count) draws")
         }
+        if PerfLog.enabled {
+            commands.addCompletedHandler { [perf] done in perf.addAnyThread("gpu", done.gpuEndTime - done.gpuStartTime) }
+        }
         commands.commit()
+        perf.add("cpu", PerfLog.now - cpuStart)
+        perf.step(extra: "\(gameFrame?.draws.count ?? 0) game draws")
     }
 
     /// The point on a plane under `p` (the window's bottom edge), if one is near enough below it to put it down on

@@ -107,7 +107,14 @@ final class GameHost {
         let period = 1.0 / 30
         var deadline = Date.now.timeIntervalSinceReferenceDate
         var frame = 0
+        let perf = PerfLog(name: "game")
+        var joining = true
         while !Thread.current.isCancelled {
+            // (-perfab: the frame's batches joined, then not, 10 s each, to compare in the console's lines)
+            if PerfLog.compare, frame % 300 == 0 {
+                joining = frame % 600 == 0
+                sm64unity_join_batches(joining ? 1 : 0)
+            }
             var pad = padReader.read(busy: self.room.current.busy)
             #if DEBUG
             if demo { pad = Self.demoInput(frame) }
@@ -217,6 +224,7 @@ final class GameHost {
             var tilt = controllerTilt.read(on: sm64unity_stage_tilting() == 1)
             if room.on, let forward = room.dioramaForward { tilt = Self.turned(tilt, toward: forward) ?? tilt }
             sm64unity_stage_tilt(tilt.y, tilt.x)
+            let tickStart = PerfLog.now
             guard sm64unity_tick(pad.buttons, pad.stickX, pad.stickY) == 1 else {
                 return fail("The game stopped (bridge error \(sm64unity_error()))")
             }
@@ -233,14 +241,21 @@ final class GameHost {
             }
             // 60 fps build: the tick drew the frame between the last tick and this one, shown now; render_current
             // draws this tick's own, shown half a tick later
+            let tickEnd = PerfLog.now
+            perf.add("step + between frame", tickEnd - tickStart)
             var between = maker.make()
             between.title = titleFrame
+            perf.add("handoff", PerfLog.now - tickEnd)
             var marioState = [Float](repeating: 0, count: 8)
             if sm64unity_mario(&marioState) != 0, sm64unity_carry_mode() < 2 {
                 between.mario = SIMD3(marioState[0], marioState[1], marioState[2])
             }
+            let currentStart = PerfLog.now
             if sm64unity_interpolates() == 1, sm64unity_render_current() == 1 {
+                perf.add("current frame", PerfLog.now - currentStart)
+                let handoff = PerfLog.now
                 var current = maker.make()
+                perf.add("handoff", PerfLog.now - handoff)
                 current.title = titleFrame
                 current.mario = between.mario
                 output.publish(between, then: current, after: period / 2)
@@ -256,6 +271,10 @@ final class GameHost {
                     $0.hasGamePad = pad
                 }
             }
+            perf.add("busy", PerfLog.now - tickStart)
+            if PerfLog.now > deadline + period { perf.count("late") }
+            perf.step(extra: "\(between.draws.count) batches, \((between.vertices?.length ?? 0) / 4000)k floats"
+                      + (PerfLog.compare ? ", joining \(joining ? "on" : "off")" : ""))
             sleep(until: &deadline, period: period)
         }
     }
@@ -342,3 +361,51 @@ final class GameHost {
     }
     #endif
 }
+
+/// Timings, for the console, with -perf in the run's arguments (-perfab too: the game thread then joins a frame's
+/// batches for 10 s and doesn't for 10 s, by turns, to compare): once a second, a line of each part's mean time a step
+/// (or a frame) in milliseconds. One for each thread that keeps one (the game's, the room's renderer); `add` and
+/// `count` from that thread, `addAnyThread` from any (the GPU's times, as command buffers complete).
+final class PerfLog: @unchecked Sendable {
+    static let enabled = ProcessInfo.processInfo.arguments.contains { $0 == "-perf" || $0 == "-perfab" }
+    static let compare = ProcessInfo.processInfo.arguments.contains("-perfab")
+    static var now: Double { ProcessInfo.processInfo.systemUptime }
+
+    private let name: String
+    private var sums: [(String, Double)] = [], counts: [(String, Int)] = []
+    private var steps = 0, since = PerfLog.now
+    private let lock = NSLock()
+    private var other: [(String, Double)] = []
+
+    init(name: String) { self.name = name }
+
+    func add(_ part: String, _ seconds: Double) {
+        guard Self.enabled else { return }
+        if let i = sums.firstIndex(where: { $0.0 == part }) { sums[i].1 += seconds } else { sums.append((part, seconds)) }
+    }
+    func count(_ what: String) {
+        guard Self.enabled else { return }
+        if let i = counts.firstIndex(where: { $0.0 == what }) { counts[i].1 += 1 } else { counts.append((what, 1)) }
+    }
+    func addAnyThread(_ part: String, _ seconds: Double) {
+        guard Self.enabled else { return }
+        lock.lock(); defer { lock.unlock() }
+        if let i = other.firstIndex(where: { $0.0 == part }) { other[i].1 += seconds } else { other.append((part, seconds)) }
+    }
+
+    /// The end of a step (or frame): a line once a second
+    func step(extra: String = "") {
+        guard Self.enabled else { return }
+        steps += 1
+        let elapsed = Self.now - since
+        guard elapsed >= 1 else { return }
+        lock.lock(); let fromOthers = other; other = []; lock.unlock()
+        var line = String(format: "PERF %@ %.1f/s", name, Double(steps) / elapsed)
+        for (part, total) in sums + fromOthers { line += String(format: " · %@ %.2f ms", part, total * 1000 / Double(steps)) }
+        for (what, n) in counts { line += " · \(what) \(n)" }
+        if !extra.isEmpty { line += " · " + extra }
+        fputs(line + "\n", stderr)  // (unbuffered: in Xcode's console as it comes)
+        sums = []; counts = []; steps = 0; since = Self.now
+    }
+}
+

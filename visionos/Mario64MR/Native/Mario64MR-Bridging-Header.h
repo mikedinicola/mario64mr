@@ -18,6 +18,8 @@ int sm64unity_init(const char *save_path);
 int sm64unity_tick(uint16_t buttons, int8_t stick_x, int8_t stick_y);
 int sm64unity_interpolates(void);
 int sm64unity_render_current(void);
+// (unity_bridge.c: a frame's like batches joined into one, on by default; off, to compare)
+void sm64unity_join_batches(int on);
 int sm64unity_error(void);
 int sm64unity_stage(void);
 int sm64unity_batch_size(void);

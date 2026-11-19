@@ -150,7 +150,8 @@ static int batch_same(int a, int b) {
 static struct UnityBatch joined[MAX_BATCHES];
 static float joined_projections[MAX_BATCHES][16];
 static int joined_tags[MAX_BATCHES], run_groups[MAX_BATCHES], run_group_of[MAX_BATCHES];
-int unity_join_batches = 1; /* (0: not joined, for a test to compare) */
+int unity_join_batches = 1; /* (0: not joined, for a test or the host to compare) */
+EXPORT void sm64unity_join_batches(int on) { unity_join_batches = on; }
 static void end_frame(void) {
     if (batch_count < 2 || !unity_join_batches) return;
     float *out = vertices == vertex_buffers[0] ? vertex_buffers[1] : vertex_buffers[0];
