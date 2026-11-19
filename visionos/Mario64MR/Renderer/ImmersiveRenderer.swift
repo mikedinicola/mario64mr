@@ -60,6 +60,9 @@ final class ImmersiveRenderer: @unchecked Sendable {
     /// on the glass: RoomProps.encodeWindowPicture)
     private let flat: GameRenderer
     private var windowPicture: (color: MTLTexture, depth: MTLTexture)?
+    /// The game frame the window's picture is of (its number and vertices) and the anisotropy it was drawn with: a
+    /// game frame lasts 1½ of the headset's (60 a second to 90), and drawn again it would be the same picture
+    private var windowPictureOf: (number: UInt32, vertices: ObjectIdentifier?, anisotropy: Int)?
     /// The cartridge, and the window it opens into (made at the first frame, in front of you)
     private var cartridge: Cartridge?
     /// The level as a diorama on a table, while it is one
@@ -662,8 +665,11 @@ final class ImmersiveRenderer: @unchecked Sendable {
             guard let color = make(GameRenderer.Target.flat.colorFormat),
                   let depth = make(GameRenderer.Target.flat.depthFormat) else { return nil }
             windowPicture = (color, depth)
+            windowPictureOf = nil
         }
         guard let picture = windowPicture else { return nil }
+        let of = (number: frame.number, vertices: frame.vertices.map(ObjectIdentifier.init), anisotropy: game.anisotropy)
+        if let last = windowPictureOf, last == of { return picture }
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = picture.color
         pass.colorAttachments[0].loadAction = .clear
@@ -677,6 +683,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
         flat.anisotropy = game.anisotropy
         flat.encode(frame, into: encoder, target: SIMD2(Double(width), Double(height)), worldOnly: true)
         encoder.endEncoding()
+        windowPictureOf = of
         return picture
     }
 
