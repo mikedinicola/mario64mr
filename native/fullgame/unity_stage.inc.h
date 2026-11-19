@@ -2,7 +2,9 @@
  * surface_load.c).
  *
  * - A box (bhvStageBox) is picked up, carried and thrown as the game's small cork box is (Mario's own grab and throw),
- *   but never breaks nor goes away: thrown off the disc's edge it bounces back onto it, and it slides to a stop.
+ *   but never breaks nor goes away, and it slides to a stop.
+ * - Off the disc's edge, a Mario (yours too) or a box falls, and once it's STAGE_FALL_Y down it's back from the sky,
+ *   somewhere over the disc, and falls onto it again (stage_fall_back); a Mario without the fall's damage.
  * - It's drawn in a colour of its own (its oBehParams, 0xRRGGBB: geo_stage_box).
  * - Arriving on the stage, the boxes lie on the disc as a picture, one a pixel (bhvStageMosaic, stage_mosaic.inc.h from
  *   mosaic.png, yours in stage/local/ else stage/'s placeholder, made by stage_gen.py), the picture's top furthest
@@ -19,7 +21,7 @@
  *   over it, hands out and down, and rolls it along ahead of him as he would a barrel (ACT_STAGE_ROLL, steered by
  *   the stick, as long as B is held). The one rolled lies down and tumbles over and over (stage_tumble_step); let go
  *   (B let up, or a jump), it tumbles on, slowing, knocks over any Mario it rolls into to tumble on too, rolls back
- *   off the rim rather than over it, and gets up again once it stops. Only the other Marios are rolled, not yours.
+ *   over the rim and off (or off the rim and on), and gets up again once it stops. Only the other Marios are rolled, not yours.
  * - The disc tilts (bhvStageDisc: an object, its collision loaded as it turns). D-pad up turns tilting on and off
  *   (the game has no other use for it); on, the disc leans as you tilt your controller (sm64unity_stage_tilt, from the
  *   host: forward and right, as the stick is, the way the camera looks), up to STAGE_TILT_MOST; off, it eases level.
@@ -85,7 +87,7 @@ extern s16 object_step(void);
 #define STAGE_TUMBLE_DRAG 0.25f
 #define STAGE_TUMBLE_STOP 2.f
 #define STAGE_TUMBLE_HIT 90.f
-#define STAGE_TUMBLE_RIM 2900.f
+#define STAGE_TUMBLE_DROP 100.f /* (the floor this far below where it would go: over the rim) */
 /* What the NPCs are for rolling each other: how near they look for one, how long they roll it */
 #define STAGE_NPC_ROLL_LOOK 1200.f
 #define STAGE_NPC_ROLL_ONE_IN 4
@@ -227,7 +229,7 @@ static int stage_roll_start(struct MarioState *m) {
     stage_rolls_started++;
     return 1;
 }
-/* Let go of it: it tumbles on, ahead (or back off the rim) */
+/* Let go of it: it tumbles on, ahead */
 static void stage_roll_let_go(struct UnityMario *t, struct MarioState *by, float push) {
     if (!t || t->tumble.by != by) return;
     t->tumble.by = NULL;
@@ -238,10 +240,8 @@ static void stage_roll_carry(struct UnityMario *t, struct MarioState *by) {
     float x = by->pos[0] + STAGE_ROLL_GAP * sins(by->faceAngle[1]), z = by->pos[2] + STAGE_ROLL_GAP * coss(by->faceAngle[1]);
     struct Surface *floor;
     float y = find_floor(x, by->pos[1] + 100.f, z, &floor);
-    if (!floor || stage_distance(x, z, 0.f, 0.f) > STAGE_TUMBLE_RIM) { /* (at the rim: it rolls back off it) */
-        stage_roll_let_go(t, by, 0.f);
-        t->tumble.dir = (s16) (by->faceAngle[1] + 0x8000);
-        t->tumble.speed = 6.f;
+    if (!floor || y < by->pos[1] - STAGE_TUMBLE_DROP) { /* (over the rim: let go, it tumbles on, off the edge) */
+        stage_roll_let_go(t, by, STAGE_ROLL_PUSH);
         return;
     }
     float moved = stage_distance(x, z, t->m.pos[0], t->m.pos[2]);
@@ -329,6 +329,21 @@ s32 stage_act_wave(struct MarioState *m) {
     return FALSE;
 }
 
+/* Tumbled over the edge: it stops tumbling, and falls on the way it went */
+static void stage_tumble_fall(struct UnityMario *u) {
+    struct MarioState *m = &u->m;
+    struct Object *o = u->obj;
+    float speed = u->tumble.speed;
+    u->tumbling = 0;
+    u->tumble.by = NULL;
+    vec3s_set(m->faceAngle, 0, u->tumble.dir, 0);
+    set_mario_action(m, ACT_FREEFALL, 0);
+    mario_set_forward_vel(m, speed);
+    o->header.gfx.throwMatrix = NULL;
+    vec3f_copy(o->header.gfx.pos, m->pos);
+    vec3s_set(o->header.gfx.angle, 0, m->faceAngle[1], 0);
+}
+
 /* A rolled Mario's step: rolled along, or tumbling on, or getting up */
 static void stage_tumble_step(struct UnityMario *u) {
     struct MarioState *m = &u->m;
@@ -355,9 +370,9 @@ static void stage_tumble_step(struct UnityMario *u) {
             float x = m->pos[0] + speed * sins(u->tumble.dir), z = m->pos[2] + speed * coss(u->tumble.dir);
             struct Surface *floor;
             float y = find_floor(x, m->pos[1] + 100.f, z, &floor);
-            if (!floor || stage_distance(x, z, 0.f, 0.f) > STAGE_TUMBLE_RIM) { /* (the rim: back off it) */
-                u->tumble.dir += 0x8000;
-                u->tumble.speed *= 0.6f;
+            if (!floor || y < m->pos[1] - STAGE_TUMBLE_DROP) { /* (over the rim: off the edge, falling) */
+                stage_tumble_fall(u);
+                return;
             } else {
                 m->pos[0] = x; m->pos[1] = y; m->pos[2] = z;
                 m->floor = floor; m->floorHeight = y;
@@ -845,6 +860,62 @@ void stage_disc_loop(void) {
     stage_disc_load_collision(o);
 }
 
+/* ---- Off the edge, and back from the sky ---- */
+#define STAGE_FALL_Y -2500.f   /* (fallen this far below the disc's middle: back from the sky) */
+#define STAGE_SKY_Y 3000.f     /* (how high over it) */
+#define STAGE_SKY_ROAM 2400.f  /* (within this of its middle: on it, away from the rim) */
+static int stage_sky_yours;    /* (your Mario, back from the sky, not yet landed) */
+static int stage_fallen;       /* (for tests: how many times one came back) */
+int stage_falls(void) { return stage_fallen; }
+static void stage_sky_spot(Vec3f p) {
+    float r = STAGE_SKY_ROAM * sqrtf(random_float());
+    s16 a = (s16) random_u16();
+    vec3f_set(p, r * sins(a), STAGE_SKY_Y, r * coss(a));
+}
+/* A Mario fallen far enough: back from the sky, falling (with what he holds), facing anywhere. Then, till he lands,
+ * his fall starts again each step: there's no damage, nor his far fall's cry, from so high */
+static void stage_fall_back(struct MarioState *m, int *sky) {
+    if (m->pos[1] < STAGE_FALL_Y) {
+        stage_sky_spot(m->pos);
+        vec3f_set(m->vel, 0.f, 0.f, 0.f);
+        m->faceAngle[0] = m->faceAngle[2] = 0;
+        m->faceAngle[1] = (s16) random_u16();
+        set_mario_action(m, m->heldObj ? ACT_HOLD_FREEFALL : ACT_FREEFALL, 0);
+        mario_set_forward_vel(m, 0.f);
+        struct Object *o = m->marioObj;
+        if (o) {
+            o->oPosX = m->pos[0]; o->oPosY = m->pos[1]; o->oPosZ = m->pos[2];
+            vec3f_copy(o->header.gfx.pos, m->pos);
+            vec3s_set(o->header.gfx.angle, 0, m->faceAngle[1], 0);
+        }
+        *sky = 1;
+        stage_fallen++;
+    }
+    if (*sky) {
+        if (m->action & ACT_FLAG_AIR) m->peakHeight = m->pos[1];
+        else *sky = 0;
+    }
+}
+/* A box fallen far enough: back from the sky, falling straight down */
+static void stage_box_fall_back(struct Object *o) {
+    if (o->oHeldState != HELD_FREE || o->oPosY >= STAGE_FALL_Y) return;
+    Vec3f p;
+    stage_sky_spot(p);
+    o->oPosX = p[0]; o->oPosY = p[1]; o->oPosZ = p[2];
+    o->oVelX = o->oVelY = o->oVelZ = 0.f;
+    o->oForwardVel = 0.f;
+    stage_fallen++;
+}
+/* Every Mario: yours (not while he's out in the room), and the others */
+static void stage_marios_fall_back(void) {
+    if (!unity_room_depth) stage_fall_back(gMarioState, &stage_sky_yours);
+    for (int i = 0; i < UNITY_EXTRA_MARIOS; i++) {
+        struct UnityMario *u = &unity_marios[i];
+        if (!u->obj || !(u->obj->activeFlags & ACTIVE_FLAG_ACTIVE) || u->tumbling) continue;
+        stage_fall_back(&u->m, &u->sky);
+    }
+}
+
 /* Each step, before the Marios' own (bhvStageMosaic, in the spawner list): your B with one in front rolls it,
  * rather than punching; D-pad up turns tilting on or off; the rest of the D-pad changes the disc's shape */
 static int stage_celebration; /* (at 128 Marios: 0, not yet; then steps since) */
@@ -852,6 +923,7 @@ static void stage_celebration_step(void);
 void stage_watch(void) {
     if (!stage_here() || !gMarioState || !gMarioState->controller) return;
     stage_celebration_step();
+    stage_marios_fall_back();
     unity_marios_let_go_taken(gMarioState); /* (yours, if another Mario took it the same step) */
     u16 pressed = gMarioState->controller->buttonPressed;
     if (pressed & B_BUTTON) stage_roll_start(gMarioState);
@@ -1082,11 +1154,11 @@ static void stage_npc_think(struct UnityMario *u) {
 }
 
 static void stage_box_move(struct Object *o) {
+    stage_box_fall_back(o);
     s16 collisions = object_step();
     stage_box_attack(o);
     if (collisions == STAGE_COL_GROUNDED) cur_obj_play_sound_2(SOUND_GENERAL_BOX_LANDING_2);
-    if (collisions & STAGE_COL_HIT_WALL) /* (past the rim, nothing to land on: object_step turned it back) */
-        o->oForwardVel *= 0.5f;
+    if (collisions & STAGE_COL_HIT_WALL) o->oForwardVel *= 0.5f; /* (into the pipe) */
     if (collisions & STAGE_COL_GROUNDED) {
         /* On a lean, it slides down it */
         struct Surface *floor;

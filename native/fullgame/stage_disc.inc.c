@@ -3,12 +3,22 @@
  * patch_sm64ex.py.
  *
  * The disc is an object (bhvStageDisc: it tilts, and changes shape), its mesh and collision made as the game runs
- * (unity_stage.inc.h, geo_stage_disc); the area's own ground is none. Nothing is under it, so Mario can't walk off
- * its edge (out of bounds). */
+ * (unity_stage.inc.h, geo_stage_disc); the area's own ground is only a floor far below it, there for there to be
+ * somewhere to fall (with nothing under it, its edge would be out of bounds, a wall): off the edge, Marios and boxes
+ * fall, and before they reach it they're back from the sky, falling onto the disc (unity_stage.inc.h, STAGE_FALL_Y). */
 
-const Collision stage_disc_no_collision[] = {
+#define STAGE_UNDER_Y -6000 /* (well below STAGE_FALL_Y: nothing reaches it) */
+#define STAGE_UNDER_HALF 8000 /* (as far as the level goes: LEVEL_BOUNDARY_MAX, 8192) */
+const Collision stage_disc_under_collision[] = {
     COL_INIT(),
-    COL_VERTEX_INIT(0),
+    COL_VERTEX_INIT(4),
+    COL_VERTEX(-STAGE_UNDER_HALF, STAGE_UNDER_Y, -STAGE_UNDER_HALF),
+    COL_VERTEX(-STAGE_UNDER_HALF, STAGE_UNDER_Y,  STAGE_UNDER_HALF),
+    COL_VERTEX( STAGE_UNDER_HALF, STAGE_UNDER_Y,  STAGE_UNDER_HALF),
+    COL_VERTEX( STAGE_UNDER_HALF, STAGE_UNDER_Y, -STAGE_UNDER_HALF),
+    COL_TRI_INIT(SURFACE_DEFAULT, 2),
+    COL_TRI(0, 1, 2), /* (facing up) */
+    COL_TRI(0, 2, 3),
     COL_TRI_STOP(),
     COL_END(),
 };

@@ -627,7 +627,8 @@ Gfx *geo_offset_klepto_held_object(""")
     # starts outside the castle. The pipe is warp node 0x32 there; it comes out of the stage's own pipe, node 0x0A,
     # and back the same way. Its boxes (unity_stage.inc.h) lie on it as mosaic.png's picture (stage/local/'s, yours, else
     # stage/'s placeholder: stage_gen.art). The disc itself is an object (bhvStageDisc), for it tilts and changes
-    # shape, its mesh and collision made as the game runs (unity_stage.inc.h): the area's own ground is none. Its
+    # shape, its mesh and collision made as the game runs (unity_stage.inc.h): the area's own ground is only a floor far
+    # below it, to fall towards off its edge. Its
     # pictures are textures in base.zip (stage_gen.pictures: install_mario64mr.py packs them).
     grounds = "levels/castle_grounds/"
     (root / grounds / "leveldata.c").write_text(original(grounds + "leveldata.c")
@@ -642,7 +643,7 @@ Gfx *geo_offset_klepto_held_object(""")
                           "extern const GeoLayout stage_disc_model_geo[];\n"
                           "extern const Gfx stage_disc_dl_box_begin[];\nextern const Gfx stage_disc_dl_box_faces[5][2];\n"
                           "extern const Gfx stage_disc_dl_box_plain[];\n"
-                          "extern const Gfx stage_disc_dl_box_bottom[];\nextern const Gfx stage_disc_dl_box_end[];\nextern const Collision stage_disc_no_collision[];\n"
+                          "extern const Gfx stage_disc_dl_box_bottom[];\nextern const Gfx stage_disc_dl_box_end[];\nextern const Collision stage_disc_under_collision[];\n"
                           "extern const BehaviorScript bhvStageBox[];\nextern const BehaviorScript bhvStageMosaic[];\n"
                           "extern const BehaviorScript bhvStageDisc[];\n"
                           "struct GraphNode;\nGfx *geo_stage_box(s32 callContext, struct GraphNode *node, void *context);\n"
@@ -670,7 +671,7 @@ Gfx *geo_offset_klepto_held_object(""")
         OBJECT(/*model*/ MODEL_NONE, /*pos*/ 0, 0, 0, /*angle*/ 0, 0, 0, /*behParam*/ 0x00000000, /*beh*/ bhvStageMosaic),
         WARP_NODE(/*id*/ 0x0A, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x32, /*flags*/ WARP_NO_CHECKPOINT),
         WARP_NODE(/*id*/ 0xF1, /*destLevel*/ LEVEL_CASTLE_GROUNDS, /*destArea*/ 0x01, /*destNode*/ 0x32, /*flags*/ WARP_NO_CHECKPOINT),
-        TERRAIN(/*terrainData*/ stage_disc_no_collision),
+        TERRAIN(/*terrainData*/ stage_disc_under_collision),
         SET_BACKGROUND_MUSIC(/*settingsPreset*/ 0x0000, /*seq*/ SEQ_SOUND_PLAYER),
         TERRAIN_TYPE(/*terrainType*/ TERRAIN_GRASS),
     END_AREA(),

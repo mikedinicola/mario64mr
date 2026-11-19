@@ -61,6 +61,7 @@ struct UnityMario {
     struct { int mode, timer, hold; float x, z; s16 yaw; u32 seed; struct UnityMario *target; struct Object *box; } brain; /* (stage_npc_think's) */
     int tumbling;       /* rolled along, or tumbling on (stage_tumble_step's) */
     struct { struct MarioState *by; float speed; s16 dir, spin; } tumble;
+    int sky;            /* fallen off the disc stage, back from the sky, not yet landed (stage_fall_back's) */
 };
 extern Mat4 sFloorAlignMatrix[2]; /* (mario_actions_moving.c: a player each, by MarioState's unk00) */
 static struct UnityMario unity_marios[UNITY_EXTRA_MARIOS];
@@ -121,6 +122,7 @@ static struct UnityMario *unity_marios_make(float x, float y, float z, s16 yaw, 
     memset(&u->brain, 0, sizeof(u->brain));
     u->tumbling = 0;
     memset(&u->tumble, 0, sizeof(u->tumble));
+    u->sky = 0;
     u->brain.seed = 0x9E3779B9u * (u32) slot;
     m->spawnInfo = gMarioState->spawnInfo;
     m->statusForCamera = &u->camera;

@@ -41,6 +41,7 @@ int stage_hud_count(void);
 int stage_rolls(void);
 int stage_knocks(void);
 int stage_tumbling(int n);
+int stage_falls(void);
 struct MarioState *stage_npc_state(int n);
 void stage_npcs_pause(int paused);
 void stage_npcs_fetch(int on);
@@ -246,21 +247,46 @@ int main(int argc, char **argv) {
     CHECK(gMarioState->pos[2] > 2400 - 1500 && gMarioState->pos[2] < 2400 + 1500 && fabsf(gMarioState->pos[0]) < 1500,
           "he came out by the stage's pipe");
 
-    /* Walking: the stick moves him over the ground */
+    /* Walking: the stick moves him over the ground (from the disc's far side: he runs towards the pipe's, +z, and by
+     * the pipe he'd run off the edge) */
+    gMarioState->pos[0] = 0; gMarioState->pos[1] = 0; gMarioState->pos[2] = -1000;
+    set_mario_action(gMarioState, ACT_IDLE, 0);
+    ticks(5);
     float before[3] = { gMarioState->pos[0], gMarioState->pos[1], gMarioState->pos[2] };
     for (int i = 0; i < 45; i++) { sm64unity_tick(0, 0, 80); sm64unity_render_current(); }
     ticks(30);
     float moved = hypotf(gMarioState->pos[0] - before[0], gMarioState->pos[2] - before[2]);
     CHECK(moved > 300 && gCurrAreaIndex == 2 && fabsf(gMarioState->pos[1]) < 1.f, "he runs on it (%.0f units)", moved);
 
-    /* Off the edge: out of bounds, he stays on */
-    gMarioState->pos[0] = 2900; gMarioState->pos[2] = 0;
-    set_mario_action(gMarioState, ACT_IDLE, 0);
-    gMarioState->faceAngle[1] = 0x4000; /* (+x) */
-    for (int i = 0; i < 90; i++) { sm64unity_tick(0, 80, 0); sm64unity_render_current(); }
-    ticks(30);
-    CHECK(gCurrAreaIndex == 2 && gMarioState->pos[0] < 3050 && fabsf(gMarioState->pos[1]) < 1.f,
-          "at the edge he stays on the stage (x %.0f)", gMarioState->pos[0]);
+    /* Off the edge: he falls, and he's back from the sky, falling onto the disc, unhurt */
+    {
+        gMarioState->pos[0] = 2920; gMarioState->pos[1] = 0; gMarioState->pos[2] = 0;
+        gMarioState->faceAngle[1] = 0x4000; /* (+x, running at the rim) */
+        set_mario_action(gMarioState, ACT_WALKING, 0);
+        gMarioState->forwardVel = 32.f;
+        int falls = stage_falls();
+        s16 health = gMarioState->health;
+        float lowest = 0.f, outmost = 0.f, sky = 0.f;
+        for (int i = 0; i < 400; i++) {
+            tick(0);
+            if (gMarioState->pos[0] > outmost) outmost = gMarioState->pos[0];
+            if (stage_falls() == falls && gMarioState->pos[1] < lowest) lowest = gMarioState->pos[1];
+            if (stage_falls() > falls && gMarioState->pos[1] > sky) sky = gMarioState->pos[1];
+            if (stage_falls() > falls && !(gMarioState->action & ACT_FLAG_AIR) && i > 60) break;
+        }
+        ticks(30);
+        CHECK(gCurrAreaIndex == 2 && outmost > 3050 && lowest < -2000,
+              "he walks off the edge and falls (out to x %.0f, down to %.0f)", outmost, lowest);
+        CHECK(stage_falls() == falls + 1 && sky > 2500, "then he's back from the sky (from %.0f)", sky);
+        CHECK(gCurrAreaIndex == 2 && gMarioState->pos[1] > -1.f && gMarioState->pos[1] < 400.f
+              && hypotf(gMarioState->pos[0], gMarioState->pos[2]) < 3000.f && !(gMarioState->action & ACT_FLAG_AIR),
+              "and lands on the disc (%.0f %.0f %.0f)", gMarioState->pos[0], gMarioState->pos[1], gMarioState->pos[2]);
+        CHECK(gMarioState->health == health && gMarioState->action != 0x00020460 /* (ACT_HARD_BACKWARD_GROUND) */,
+              "unhurt (health %04x, %08x)", gMarioState->health, gMarioState->action);
+        gMarioState->pos[0] = 0; gMarioState->pos[1] = 0; gMarioState->pos[2] = 1500; /* (where he was, about) */
+        set_mario_action(gMarioState, ACT_IDLE, 0);
+        ticks(10);
+    }
 
     /* The boxes: laid out as the picture, picked up, thrown, never broken */
     printf("Boxes:\n");
@@ -303,11 +329,20 @@ int main(int argc, char **argv) {
     CHECK(fabsf(box->oPosY) < 1.f && hypotf(box->oPosX, box->oPosZ) < 3000 && box->oForwardVel == 0.f,
           "and came to rest on the disc");
     CHECK(stage_boxes() == stage_mosaic_boxes(), "all %d still there", stage_mosaic_boxes());
-    /* Thrown hard into the rim: it bounces back off it */
-    box->oPosX = 2700; box->oPosY = 50; box->oPosZ = 0; box->oMoveAngleYaw = 0x4000; box->oForwardVel = 60; box->oVelY = 0;
-    ticks(200);
-    CHECK((box->activeFlags & ACTIVE_FLAG_ACTIVE) && box->oPosX < 2900 && fabsf(box->oPosY) < 1.f,
-          "thrown into the rim, it bounces back onto the disc (%.0f %.0f %.0f)", box->oPosX, box->oPosY, box->oPosZ);
+    /* Thrown hard over the rim: it falls off, and it's back from the sky, falling onto the disc */
+    {
+        box->oPosX = 2700; box->oPosY = 50; box->oPosZ = 0; box->oMoveAngleYaw = 0x4000; box->oForwardVel = 60; box->oVelY = 0;
+        int falls = stage_falls();
+        float lowest = 0.f;
+        for (int i = 0; i < 300; i++) { tick(0); if (stage_falls() == falls && box->oPosY < lowest) lowest = box->oPosY; }
+        CHECK((box->activeFlags & ACTIVE_FLAG_ACTIVE) && lowest < -2000 && stage_falls() == falls + 1,
+              "thrown over the rim, it falls off (down to %.0f), and is back from the sky", lowest);
+        CHECK(box->oPosY > -1.f && box->oPosY < 400.f && hypotf(box->oPosX, box->oPosZ) < 3000.f && box->oForwardVel == 0.f,
+              "onto the disc (%.0f %.0f %.0f)", box->oPosX, box->oPosY, box->oPosZ);
+        CHECK(stage_boxes() == stage_mosaic_boxes(), "all %d still there", stage_mosaic_boxes());
+        box->oPosX = 2700; box->oPosY = 0; box->oPosZ = 0; /* (put back by the rim, the rightmost: as the tests after want) */
+        ticks(5);
+    }
 
     /* The Marios: one more for each box picked up, the first time only */
     printf("Marios:\n");
@@ -419,13 +454,23 @@ int main(int argc, char **argv) {
     ticks(60);
     shot("4-up-again");
     CHECK(a->action == ACT_IDLE && b->action == ACT_IDLE && stage_npcs() == 3, "on their feet");
-    /* Tumbling into the rim: back off it */
+    /* Tumbling over the rim: off the edge, and back from the sky */
     stand(c, 2500, 0, 0x4000);
     stage_tumble_test(2, 40, 0x4000);
-    float outmost = 0;
-    for (int i = 0; i < 300; i++) { tick(0); if (c->pos[0] > outmost) outmost = c->pos[0]; }
-    CHECK(stage_npcs() == 3 && c->pos[0] < outmost - 50 && outmost < 2950 && c->action != ACT_STAGE_TUMBLE,
-          "tumbled at the rim, it rolls back off it (to %.0f, back to %.0f)", outmost, c->pos[0]);
+    {
+        int falls = stage_falls();
+        float outmost = 0, lowest = 0;
+        for (int i = 0; i < 400; i++) {
+            tick(0);
+            if (c->pos[0] > outmost && stage_falls() == falls) outmost = c->pos[0];
+            if (c->pos[1] < lowest && stage_falls() == falls) lowest = c->pos[1];
+        }
+        CHECK(outmost > 3000 && lowest < -2000 && stage_falls() == falls + 1 && stage_npcs() == 3,
+              "tumbled over the rim, it falls off (out to %.0f, down to %.0f), and is back from the sky", outmost, lowest);
+        CHECK(stage_tumbling(2) == 0 && !(c->action & ACT_FLAG_AIR) && c->pos[1] > -1.f && c->pos[1] < 400.f
+              && hypotf(c->pos[0], c->pos[2]) < 3000.f, "on its feet on the disc (%.0f %.0f %.0f, %08x)",
+              c->pos[0], c->pos[1], c->pos[2], c->action);
+    }
     /* The NPCs roll each other */
     stage_npcs_pause(0);
     int rolls = stage_rolls();
