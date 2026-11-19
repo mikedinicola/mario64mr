@@ -27,9 +27,12 @@ struct HandState: Sendable {
     var controller = false
     var grabsMario = true
 
-    /// The skeleton's joints (room metres) in `HandState.jointNames`' order, for Mario's gloves; none for a
-    /// controller
+    /// The skeleton's joints (room metres) in `HandState.jointNames`' order; none for a controller
     var joints: [SIMD3<Float>] = []
+    /// For Mario's gloves (GloveMesh): the hand's anchor (at the wrist, into the room), and each joint's turn from
+    /// its parent's, in the skeleton's own order (`allJoints`); none for a controller
+    var anchor: simd_float4x4?
+    var jointRotations: [simd_quatf] = []
 
     /// The palm turned up: a pinch made like that is the menu gesture (Start)
     var palmUp: Bool { palmNormal.y > 0.7 }
@@ -69,6 +72,8 @@ final class HandTracker: @unchecked Sendable {
         hand.pinch = (thumb + indexTip) / 2
         hand.reach = indexTip
         hand.joints = HandState.jointNames.map(at)
+        hand.anchor = anchor.originFromAnchorTransform
+        hand.jointRotations = skeleton.allJoints.map { simd_quatf($0.parentFromJointTransform) }
 
         history[index].append((time, hand.pinch))
         history[index].removeAll { time - $0.time > 0.1 }
@@ -107,33 +112,6 @@ extension HandState {
         .littleFingerMetacarpal, .littleFingerKnuckle, .littleFingerIntermediateBase, .littleFingerIntermediateTip,
         .littleFingerTip,
     ]
-
-    /// Mario's glove over the hand (the options' Hands), as glove_vertex draws it: tapered capsules, each two ends
-    /// of a point and a radius (metres), puffier than a hand. Always `gloveBoneCount`, in this order: the palm (8),
-    /// each finger (thumb, index, middle, ring, little: 3 each), and the cuff last (cut flat, from the wrist up the
-    /// arm)
-    static let gloveBoneCount = 24
-    var gloveBones: [(SIMD4<Float>, SIMD4<Float>)] {
-        guard joints.count == Self.jointNames.count else { return [] }
-        func bone(_ i: Int, _ j: Int, _ r: Float, _ r2: Float? = nil) -> (SIMD4<Float>, SIMD4<Float>) {
-            (SIMD4(joints[i], r), SIMD4(joints[j], r2 ?? r))
-        }
-        let wrist = joints[0]
-        // The palm: from the wrist to each knuckle, across the knuckles, and the thumb's fleshy base
-        var bones = [6, 11, 16, 21].map { bone(0, $0 + 1, 0.019, 0.0145) }
-        bones += [bone(7, 12, 0.0135), bone(12, 17, 0.0135), bone(17, 22, 0.013), bone(0, 2, 0.02, 0.017)]
-        // The fingers, from their knuckles (the thumb's from its first joint), fat and a little rounder at the tips
-        bones += [bone(2, 3, 0.0145, 0.014), bone(3, 4, 0.014, 0.0135), bone(4, 5, 0.0135, 0.0135)]
-        for (first, r) in [(6, 0.0118), (11, 0.0122), (16, 0.0116), (21, 0.0104)] as [(Int, Float)] {
-            bones += [bone(first + 1, first + 2, r), bone(first + 2, first + 3, r, r * 0.97),
-                      bone(first + 3, first + 4, r * 0.97, r * 1.0)]
-        }
-        // The cuff: from just past the wrist up the arm, flaring a little, its end cut flat
-        let arm = joints[1] - wrist
-        let up = simd_length(arm) > 1e-4 ? simd_normalize(arm) : SIMD3<Float>(0, -1, 0)
-        bones.append((SIMD4(wrist + up * 0.005, 0.03), SIMD4(wrist + up * 0.06, 0.036)))
-        return bones
-    }
 
     #if DEBUG
     /// (the simulator's scripted hands) a skeleton for a hand pinching at `p`, reaching away from `eye`

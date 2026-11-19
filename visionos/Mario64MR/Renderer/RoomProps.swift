@@ -33,7 +33,8 @@ final class RoomProps {
     private let depthTestOnly: MTLDepthStencilState
     private let depthOff: MTLDepthStencilState
     private let quad: MTLBuffer
-    private let capsule: MTLBuffer
+    /// Mario's gloves (left, right), if they loaded
+    private let gloves: [GloveMesh]?
     private let cartridge: MTLBuffer
     private let white: MTLTexture
     private let label: MTLTexture
@@ -61,11 +62,14 @@ final class RoomProps {
         guard let depthWrite = depth(test: true, write: true), let depthTestOnly = depth(test: true, write: false),
               let depthOff = depth(test: false, write: false),
               let quad = device.makeBuffer(bytes: Self.quadVertices, length: Self.quadVertices.count * 4),
-              let capsule = device.makeBuffer(bytes: Self.capsuleVertices, length: Self.capsuleVertices.count * 4),
               let cartridge = device.makeBuffer(bytes: Self.cartridgeVertices, length: Self.cartridgeVertices.count * 4)
         else { print("Mario 64 MR: the room's props didn't build"); return nil }
         (self.depthWrite, self.depthTestOnly, self.depthOff, self.quad) = (depthWrite, depthTestOnly, depthOff, quad)
-        self.capsule = capsule
+        let gloves = ["LeftGlove", "RightGlove"].compactMap { name in
+            Bundle.main.url(forResource: name, withExtension: "glove").flatMap { GloveMesh(device: device, url: $0) }
+        }
+        if gloves.count < 2 { print("Mario 64 MR: Mario's gloves didn't load") }
+        self.gloves = gloves.count == 2 ? gloves : nil
         self.cartridge = cartridge
 
         let loader = MTKTextureLoader(device: device)
@@ -259,20 +263,24 @@ final class RoomProps {
     /// the app draws, not over it). Last, and only where something's drawn already: each pixel blended by how much
     /// of the game is there, so out in your room, where the passthrough shows, your hands are your own.
     func encodeGloves(_ hands: [HandState], into encoder: MTLRenderCommandEncoder, eye: GameRenderer.RoomEye) {
-        let gloves = hands.filter { $0.tracked }.map { $0.gloveBones }
-            .filter { $0.count == HandState.gloveBoneCount }
-        guard !gloves.isEmpty, let pipelines = pipelines() else { return }
-        var bones = gloves.flatMap { $0 }.flatMap { [$0.0, $0.1] }
+        guard let gloves else { return }
+        let skins = hands.prefix(2).enumerated().compactMap { side, hand in
+            hand.tracked ? gloves[side].skin(hand).map { (gloves[side], $0) } : nil
+        }
+        guard !skins.isEmpty, let pipelines = pipelines() else { return }
         var e = eye
-        encoder.setCullMode(.front)  // (the capsules wind anticlockwise from outside)
-        encoder.setVertexBuffer(capsule, offset: 0, index: 0)
-        encoder.setVertexBytes(&bones, length: bones.count * MemoryLayout<SIMD4<Float>>.stride, index: 1)
+        encoder.setCullMode(.none)  // (the cuff is open: its inside shows)
         encoder.setVertexBytes(&e, length: MemoryLayout<GameRenderer.RoomEye>.stride, index: 2)
         encoder.setFragmentBytes(&e, length: MemoryLayout<GameRenderer.RoomEye>.stride, index: 2)
         encoder.setRenderPipelineState(pipelines[4])
         encoder.setDepthStencilState(depthWrite)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: Self.capsuleVertices.count / 4,
-                               instanceCount: bones.count / 2)
+        for (glove, skin) in skins {
+            var matrices = skin
+            encoder.setVertexBuffer(glove.vertices, offset: 0, index: 0)
+            encoder.setVertexBytes(&matrices, length: matrices.count * MemoryLayout<simd_float4x4>.stride, index: 1)
+            encoder.drawIndexedPrimitives(type: .triangle, indexCount: glove.indexCount, indexType: .uint32,
+                                          indexBuffer: glove.indices, indexBufferOffset: 0)
+        }
     }
 
     // ---------------------------------------------------------------- The title screen
@@ -444,32 +452,6 @@ final class RoomProps {
         simd_float4x4(SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, 1, 0), SIMD4(x, y, z, 1))
     }
     static func scale(_ s: SIMD3<Float>) -> simd_float4x4 { simd_float4x4(diagonal: SIMD4(s, 1)) }
-
-    /// A capsule's unit sphere (GloveVertex: direction, then 0 for the lower end, 1 the upper): rings from the
-    /// bottom pole to the equator round the lower end, then again from the equator to the top pole round the upper,
-    /// the band between the two equators its side. Wound anticlockwise from outside
-    private static let capsuleVertices: [Float] = {
-        let slices = 20, half = 6  // (smooth: drawn as it is, no more than a few thousand triangles a hand)
-        var rings: [[SIMD4<Float>]] = []
-        for end in 0...1 {
-            for k in 0...half {
-                let lat = Float.pi / 2 * (Float(end == 0 ? k - half : k) / Float(half))
-                rings.append((0..<slices).map { i in
-                    let lon = 2 * Float.pi * Float(i) / Float(slices)
-                    return SIMD4(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon), Float(end))
-                })
-            }
-        }
-        var out: [Float] = []
-        for r in 0..<rings.count - 1 {
-            let lo = rings[r], hi = rings[r + 1]
-            for i in 0..<slices {
-                let j = (i + 1) % slices
-                for v in [lo[i], hi[j], lo[j], lo[i], hi[i], hi[j]] { out += [v.x, v.y, v.z, v.w] }
-            }
-        }
-        return out
-    }()
 
     /// The cartridge's shell (PropVertex; its own space, metres, Cartridge.size): its outline from the front a
     /// gently arched top, straight sides, and below them stepped in narrower to its bottom edge, every corner

@@ -483,7 +483,7 @@ build in Xcode.
 | Anti-aliasing | MSAA 2x or 4x in your room |
 | Foveation | On (any level) or off. It changes the next time you open a window into the game |
 | Textures | As on the other headsets: N64, mipmaps, or mipmaps with 2x to 16x anisotropic filtering |
-| Hands | Gloves: Mario's white gloves over your hands wherever the game is (the window, the level, Mario out in your room), your own hands everywhere else. Your own: visionOS draws your hands over everything, as other apps do. Gloves don't show on hands holding Sense controllers |
+| Hands | Gloves: Mario's white gloves, following your fingers joint by joint, over your hands wherever the game is (the window, the level, Mario out in your room), your own hands everywhere else. Your own: visionOS draws your hands over everything, as other apps do. Gloves don't show on hands holding Sense controllers |
 | Refresh rate, Sharpening | Not in the menu: visionOS sets them itself |
 | Bring Mario back | Out in your room or held: back into the game where he went out (or was picked up) |
 
@@ -537,7 +537,8 @@ It is not affiliated with, endorsed or sponsored by Nintendo.
 - It is free and always will be: it isn't sold, and there are no donations or ads.
 
 The code written for Mario 64 MR in this repository is under the MIT license (`LICENSE`); the sources the tool
-downloads keep their own terms.
+downloads keep their own terms. Mario's gloves on Vision Pro are the shape of the gloves in Apple's sample code
+project "Animating hand models in visionOS", under Apple's MIT license (`visionos/Mario64MR/Gloves/LICENSE.txt`).
 
 If you hold rights in something here and want it changed or removed, open an issue or contact
 [@lucas_martinic](https://x.com/lucas_martinic), and it will be dealt with promptly.
