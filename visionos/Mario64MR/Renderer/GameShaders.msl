@@ -379,14 +379,26 @@ vertex GloveVaryings glove_vertex(uint vid [[vertex_id]], const device GloveVert
 // White cloth, softly lit from above and from where you look (what faces you is never in shadow, its edges turning
 // a cool grey). Blended by what's already there (RoomProps.encodeGloves): only over the game, the passthrough left
 // showing your own hand everywhere else
-// The three black dots on the back of the hand (GloveMesh.Dots), as on the game's menu hand: discs seen from the
-// back of the glove at rest, drawn only on its skin above the hand's middle, so the palm stays white (by where the
+// The three black teardrops on the back of the hand (GloveMesh.Dots), as on the game's menu hand: seen from the
+// back of the glove at rest, their heads by the knuckles, their tips towards the wrist; drawn only on its skin above the hand's middle, so the palm stays white (by where the
 // skin is: the right glove's normals point into it)
 struct GloveDots {
     float4 center[3];
     float4 across, along, up;
-    float4 size;  // x: radius across the hand, y: along it, z: where the back of the hand begins above the centre
+    float4 size;  // x: the head's radius, y: the tip's, z: where the back of the hand begins above the head,
+                  // w: from the head's centre to the tip's
 };
+
+// How far `p` is outside a teardrop (a circle of radius r1 at the origin narrowing to one of r2 at (0, h): Inigo
+// Quilez's uneven capsule)
+static float teardrop(float2 p, float r1, float r2, float h) {
+    p.x = abs(p.x);
+    float b = (r1 - r2) / h, a = sqrt(1 - b * b);
+    float k = dot(p, float2(-b, a));
+    if (k < 0) return length(p) - r1;
+    if (k > a * h) return length(p - float2(0, h)) - r2;
+    return dot(p, float2(a, b)) - r1;
+}
 
 static float gloveDots(GloveVaryings in, constant GloveDots &dots) {
     float height = dot(in.bound - dots.center[1].xyz, dots.up.xyz);
@@ -394,9 +406,10 @@ static float gloveDots(GloveVaryings in, constant GloveDots &dots) {
     float ink = 0;
     for (int i = 0; i < 3; i++) {
         float3 d = in.bound - dots.center[i].xyz;
-        float r = length(float2(dot(d, dots.across.xyz) / dots.size.x, dot(d, dots.along.xyz) / dots.size.y));
-        float edge = max(fwidth(r), 1e-4);
-        ink = max(ink, 1 - smoothstep(1 - edge, 1 + edge, r));
+        float r = teardrop(float2(dot(d, dots.across.xyz), -dot(d, dots.along.xyz)), dots.size.x, dots.size.y,
+                           dots.size.w);
+        float edge = max(fwidth(r), 1e-5);
+        ink = max(ink, 1 - smoothstep(-edge, edge, r));
     }
     return ink * back;
 }
