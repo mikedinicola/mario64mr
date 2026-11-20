@@ -301,8 +301,9 @@ final class RoomProps {
         encoder.setRenderPipelineState(pipelines[4])
         encoder.setDepthStencilState(depthWrite)
         for (glove, skin) in skins {
-            var matrices = skin
+            var matrices = skin, dots = glove.dots
             encoder.setVertexBuffer(glove.vertices, offset: 0, index: 0)
+            encoder.setFragmentBytes(&dots, length: MemoryLayout<GloveMesh.Dots>.stride, index: 3)
             encoder.setVertexBytes(&matrices, length: matrices.count * MemoryLayout<simd_float4x4>.stride, index: 1)
             encoder.drawIndexedPrimitives(type: .triangle, indexCount: glove.indexCount, indexType: .uint32,
                                           indexBuffer: glove.indices, indexBufferOffset: 0)

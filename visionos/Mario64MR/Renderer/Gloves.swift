@@ -4,7 +4,7 @@ import simd
 
 /// Mario's gloves: the gloves of Apple's "Animating hand models in visionOS" sample (MIT, see
 /// Gloves/Gloves-LICENSE.txt), only their shape and bones (Gloves/*.glove, made by tools/convert_gloves.swift),
-/// drawn white by glove_fragment. Their 27 joints are the ARKit hand skeleton's, in its order, and rest as it does: as in the sample, each joint
+/// drawn white by glove_fragment, with the three black dots on the back of the hand that the game's menu hand has (`dots`). Their 27 joints are the ARKit hand skeleton's, in its order, and rest as it does: as in the sample, each joint
 /// keeps the glove's own length and takes the tracked joint's turn (`parentFromJointTransform`), the whole glove
 /// placed at the hand's anchor (its wrist).
 final class GloveMesh {
@@ -20,6 +20,18 @@ final class GloveMesh {
     /// The mesh's place in the model: the skeleton's centimetres to metres from the wrist
     let instance: simd_float4x4
     let joints: [Joint]
+    /// The dots on the back of the hand, for glove_fragment (GloveDots), in the mesh's own space
+    let dots: Dots
+
+    /// GloveDots: where the three dots are on the glove at rest (bound: its rest is its bind pose), so they stay
+    /// where they are on it however the hand moves. Each a disc seen from the back of the hand (`up`), on the
+    /// surfaces that face that way only, so never through to the palm.
+    struct Dots {
+        var center: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
+        var across: SIMD4<Float>, along: SIMD4<Float>, up: SIMD4<Float>
+        /// x: a dot's radius across the hand, y: along it (the mesh's units)
+        var size: SIMD4<Float>
+    }
 
     static let jointCount = 27
     /// GloveVertex: position (3 floats), normal (3 floats), joints (4 bytes), weights (4 bytes)
@@ -57,6 +69,39 @@ final class GloveMesh {
               })
         else { return nil }
         (self.vertices, self.indices, self.indexCount, self.joints) = (vertices, indices, indexCount, joints)
+        dots = Self.dots(joints: joints, instance: instance)
+    }
+
+    /// The menu hand's dots (Goddard's hand_open, the file select's pointer): three in a row across the back of the
+    /// hand, just behind the knuckles, close together in the middle of it, each about a tenth of the hand across.
+    /// Placed by the glove's rest skeleton (palm down, the back of the hand up: the anchor's +y), so they sit alike
+    /// on the left glove and on the right, its mirror.
+    private static func dots(joints: [Joint], instance: simd_float4x4) -> Dots {
+        var model = [simd_float4x4](repeating: matrix_identity_float4x4, count: joints.count)
+        for (i, joint) in joints.enumerated() {
+            let local = translate(joint.translation) * simd_float4x4(joint.rotation)
+                * simd_float4x4(diagonal: SIMD4(joint.scale, 1))
+            model[i] = joint.parent >= 0 ? model[joint.parent] * local : local
+        }
+        // (the skeleton's joints: the index's metacarpal and knuckle 5 and 6, the middle's 10 and 11, the ring's 16)
+        func at(_ i: Int) -> SIMD3<Float> { let p = instance * model[i].columns.3; return SIMD3(p.x, p.y, p.z) }
+        let up = SIMD3<Float>(0, 1, 0)
+        func flat(_ v: SIMD3<Float>) -> SIMD3<Float> { simd_normalize(v - up * simd_dot(v, up)) }
+        let across = flat(at(6) - at(16))  // (along the knuckles, as the menu hand's dots slant with them)
+        let along = simd_cross(up, across)
+        let middle = at(10) + (at(11) - at(10)) * 0.62
+        let spacing: Float = 0.014, radius: Float = 0.0042  // (metres)
+        // Into the mesh's own space, where glove_vertex hands glove_fragment the bound point
+        let meshFromRest = instance.inverse
+        func point(_ p: SIMD3<Float>) -> SIMD4<Float> { let q = meshFromRest * SIMD4(p, 1); return SIMD4(q.x, q.y, q.z, 0) }
+        func direction(_ d: SIMD3<Float>) -> SIMD4<Float> {
+            let q = meshFromRest * SIMD4(d, 0)
+            return SIMD4(simd_normalize(SIMD3(q.x, q.y, q.z)), 0)
+        }
+        let scale = 1 / simd_length(SIMD3(instance.columns.0.x, instance.columns.0.y, instance.columns.0.z))
+        return Dots(center: (point(middle + across * spacing), point(middle), point(middle - across * spacing)),
+                    across: direction(across), along: direction(along), up: direction(up),
+                    size: SIMD4(radius * scale, radius * 1.25 * scale, 0, 0))
     }
 
     /// Each joint's skinning matrix (bind pose to room metres) for `hand`, if it's a tracked hand
