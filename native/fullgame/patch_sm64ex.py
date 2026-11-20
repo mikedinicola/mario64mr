@@ -364,7 +364,8 @@ def prepare(root, rom, sixty=True, external_data=True):
     # Hands touching objects (unity_hands.inc.h): what they touch Mario touches, once the game has found what he
     # touches; what stands on them is found once everything has moved, and carried with them next frame
     processor = replace_once(processor, '    detect_object_collisions();\n',
-                             '    detect_object_collisions();\n    extern void unity_hands_touch(void);\n    unity_hands_touch();\n')
+                             '    detect_object_collisions();\n    extern void unity_hands_touch(void);\n    unity_hands_touch();\n'
+                             '    extern void unity_spawned_settle(void);\n    unity_spawned_settle();\n')
     processor = replace_once(processor, '    unload_deactivated_objects();\n\n    // Check if Mario is on a platform',
                              '    extern void unity_hands_find_riders(void);\n    unity_hands_find_riders();\n'
                              '    unload_deactivated_objects();\n\n    // Check if Mario is on a platform')

@@ -58,6 +58,9 @@ void unity_viewer(Vec3f out);
 void sm64unity_billboards(int on, float x, float y, float z, float ux, float uy, float uz);
 void stage_tumble_test(int n, float speed, s16 dir);
 void sm64unity_stage_tilt(float forward, float right);
+int sm64unity_spawn_held(int kind, int in_room, float x, float y, float z);
+int sm64unity_spawn_near_mario(int kind);
+void sm64unity_object_release(float, float, float);
 int sm64unity_stage_tilting(void);
 int stage_disc_shape(void);
 int stage_disc_changing(void);
@@ -232,10 +235,11 @@ static int room_wall(s16 *t, float x0, float z0, float x1, float z1, float y0, f
     memcpy(t, v, sizeof(v));
     return 4;
 }
-/* A table 60 cm by 29 cm (x -2400..2400, z -1500..800: Mario put down 10 cm in from its near side), 3 cm thick, and
+/* A table 60 cm by 26 cm (x -2400..2400, z -1300..800: Mario put down 10 cm in from its near side; the picture, from
+ * 200 to 1520 ahead of him, past its far edge), 3 cm thick, and
  * the room's floor 75 cm below it */
 #define ROOM_TABLE_X 2400.f
-#define ROOM_TABLE_FAR -1500.f
+#define ROOM_TABLE_FAR -1300.f
 #define ROOM_TABLE_NEAR 800.f
 static int room_table(void) {
     int n = 0;
@@ -326,6 +330,38 @@ int main(int argc, char **argv) {
           && fabsf(gMarioState->pos[1]) < 1.f, "he stands on the stage's ground");
     CHECK(gMarioState->pos[2] > 2400 - 1500 && gMarioState->pos[2] < 2400 + 1500 && fabsf(gMarioState->pos[0]) < 1500,
           "he came out by the stage's pipe");
+
+    /* The treasure chest's boxes on the disc: over it, where Mario can jump into them, not over the floor far below it
+     * (the disc's floor is an object's, loaded again only once the frame's objects step) */
+    printf("The treasure chest's boxes on the disc:\n");
+    {
+        enum { WING_BOX = 5 }; /* (unity_spawn.inc.h's UNITY_SPAWN_WING_BOX) */
+        const BehaviorScript *exclamation = segmented_to_virtual(bhvExclamationBox);
+        float bx = gMarioState->pos[0] - 600.f, bz = gMarioState->pos[2], ground = disc_height(bx, bz);
+        CHECK(fabsf(ground) < 50.f, "the disc there (%.0f)", ground);
+        CHECK(sm64unity_spawn_held(WING_BOX, 0, bx, gMarioState->pos[1] + 500.f, bz) == 1, "a wing cap box taken out with a pinch");
+        struct Object *held = NULL;
+        for (struct Object *o = (struct Object *) gObjectLists[OBJ_LIST_SURFACE].next;
+             o != (struct Object *) &gObjectLists[OBJ_LIST_SURFACE]; o = (struct Object *) o->header.next)
+            if (o->behavior == exclamation) held = o;
+        tick(0);
+        sm64unity_object_release(0, 0, 0);
+        ticks(60);
+        CHECK(held && (held->activeFlags & ACTIVE_FLAG_ACTIVE) && fabsf(held->oPosY - (ground + 260.f)) < 2.f,
+              "let go of, it floats a jump over the disc (%.0f over it)", held ? held->oPosY - ground : 0.f);
+        CHECK(sm64unity_spawn_near_mario(WING_BOX), "another taken out with a look");
+        struct Object *looked = NULL;
+        for (struct Object *o = (struct Object *) gObjectLists[OBJ_LIST_SURFACE].next;
+             o != (struct Object *) &gObjectLists[OBJ_LIST_SURFACE]; o = (struct Object *) o->header.next)
+            if (o->behavior == exclamation && o != held) looked = o;
+        float under = looked ? disc_height(looked->oPosX, looked->oPosZ) : 0.f; /* (before its own collision's loaded) */
+        ticks(60);
+        CHECK(looked && (looked->activeFlags & ACTIVE_FLAG_ACTIVE) && fabsf(looked->oPosY - (under + 260.f)) < 2.f,
+              "in front of Mario, a jump over the disc too (%.0f over it)", looked ? looked->oPosY - under : 0.f);
+        if (held) obj_mark_for_deletion(held); /* (gone again: not in the way of what's tested next) */
+        if (looked) obj_mark_for_deletion(looked);
+        ticks(2);
+    }
 
     /* Walking: the stick moves him over the ground (from the disc's far side: he runs towards the pipe's, +z, and by
      * the pipe he'd run off the edge) */
