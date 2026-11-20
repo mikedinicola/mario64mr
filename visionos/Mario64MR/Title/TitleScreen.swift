@@ -43,10 +43,11 @@ final class TitleScreen {
     private var depth: Float?
     private var audioBuffer = [Int16](repeating: 0, count: 2 * 2 * 600)
 
-    /// The menu sounds Goddard asks for (play_menu_sounds, sound_init.c), first flag first
+    /// The menu sounds Goddard asks for (play_menu_sounds, sound_init.c), first flag first, as libsm64 spells them:
+    /// its SOUND_ARG_LOAD sets SOUND_STATUS_STARTING (the low bit), without which play_sound queues nothing
     private static let sounds: [(flag: Int32, sound: UInt32)] = [
-        (0x01, 0x700A_0080), (0x02, 0x700B_0080), (0x04, 0x700C_0080), (0x08, 0x7008_0080),
-        (0x10, 0x7008_0080), (0x20, 0x7009_0080), (0x40, 0x7006_0080), (0x80, 0x7007_0080),
+        (0x01, 0x700A_0081), (0x02, 0x700B_0081), (0x04, 0x700C_0081), (0x08, 0x7008_0081),
+        (0x10, 0x7008_0081), (0x20, 0x7009_0081), (0x40, 0x7006_0081), (0x80, 0x7007_0081),
     ]
 
     /// Gives Goddard its textures from the resource pack (base.zip: sm64ex's, made from your ROM), or your texture
