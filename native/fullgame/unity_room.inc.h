@@ -121,6 +121,20 @@ EXPORT void sm64unity_displace(float dx,float dy,float dz) {
 /* Triangles (9 s16 each, x y z thrice) built as the game builds its static surfaces, in their own new pool, and added to
  * gStaticSurfacePartition as it is: the room's (sm64unity_room_mesh), and the disc stage's out in your room
  * (unity_stage.inc.h). The caller frees *out_surfaces and *out_nodes once nothing can stand on them. How many, or <0 */
+/* A scanned surface within 30 degrees of upright is a wall. The game's own rule (read_surface_data, add_surface) makes
+ * anything off upright by more than half a degree a floor or a ceiling, which no scanned wall ever is: it would stop
+ * Mario as a steep floor's step up, or catch his head as a sliver of ceiling, never push him off it as a wall does.
+ * Made upright through its middle, facing the way it did */
+static void unity_upright_wall(struct Surface *s) {
+    f32 ny=s->normal.y;
+    if (ny>=0.5f || ny<=-0.5f) return;
+    f32 h=sqrtf(s->normal.x*s->normal.x+s->normal.z*s->normal.z);
+    if (h<0.0001f) return;
+    s->normal.x/=h; s->normal.y=0; s->normal.z/=h;
+    f32 mx=(s->vertex1[0]+s->vertex2[0]+s->vertex3[0])/3.0f, mz=(s->vertex1[2]+s->vertex2[2]+s->vertex3[2])/3.0f;
+    s->originOffset=-(s->normal.x*mx+s->normal.z*mz);
+}
+
 static int unity_build_static(const s16 *triangles,int count,struct Surface **out_surfaces,struct SurfaceNode **out_nodes) {
     if (count<0 || count>30000 || (count && !triangles)) return -1;
     int node_count=0;
@@ -143,7 +157,7 @@ static int unity_build_static(const s16 *triangles,int count,struct Surface **ou
     for (int i=0;i<count;i++) {
         s16 indices[]={0,1,2}, *index=indices;
         struct Surface *surface=read_surface_data((s16 *)(triangles+i*9),&index);
-        if (surface)add_surface(surface,FALSE);
+        if (surface) { unity_upright_wall(surface); add_surface(surface,FALSE); }
     }
     int added=gSurfacesAllocated;
     sSurfacePool=saved_surfaces; sSurfaceNodePool=saved_nodes; sSurfacePoolSize=saved_size;

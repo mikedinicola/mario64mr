@@ -19,7 +19,7 @@
 
 /* The options menu's values (unity_options.h); Unity sets them from what it kept as the game starts */
 unsigned int gUnityOptions[UNITY_OPT_COUNT] = { 2, 3, 2, 2, 4, 0, 0, 0, 127, 127, 127, 127, 1, 0, 1,
-                                                ((1u << UNITY_HAND_CHEAT_COUNT) - 1) ^ UNITY_HAND_CHEATS_INVERTED };
+                                                ((1u << UNITY_HAND_CHEAT_COUNT) - 1) ^ UNITY_HAND_CHEATS_INVERTED, 0 };
 bool gUnityHandCheats[UNITY_HAND_CHEAT_COUNT];
 int unity_hand_cheat(int which) { return Cheats.EnableCheats && gUnityHandCheats[which]; }
 EXPORT unsigned int *sm64unity_options(void) { return gUnityOptions; }

@@ -30,6 +30,7 @@ final class GameRenderer: NSObject, MTKViewDelegate {
     var sampleCount = 1
     var anisotropy = 1
     private var roomMeshPipelines: [Int: MTLRenderPipelineState] = [:]
+    private var roomMeshShownPipelines: [Int: MTLRenderPipelineState] = [:]
     private let inFlight = DispatchSemaphore(value: 3)
 
     init?(device: MTLDevice, frames: GameFrames, target: Target = .flat) {
@@ -233,6 +234,41 @@ final class GameRenderer: NSObject, MTKViewDelegate {
         let pipeline = try? device.makeRenderPipelineState(descriptor: descriptor)
         roomMeshPipelines[sampleCount] = pipeline
         return pipeline
+    }
+
+    private var roomMeshShownPipeline: MTLRenderPipelineState? {
+        if let pipeline = roomMeshShownPipelines[sampleCount] { return pipeline }
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction = library.makeFunction(name: "room_mesh_shown_vertex")
+        descriptor.fragmentFunction = library.makeFunction(name: "room_mesh_shown_fragment")
+        descriptor.depthAttachmentPixelFormat = target.depthFormat
+        let color = descriptor.colorAttachments[0]!
+        color.pixelFormat = target.colorFormat
+        color.isBlendingEnabled = true
+        color.sourceRGBBlendFactor = .sourceAlpha
+        color.destinationRGBBlendFactor = .oneMinusSourceAlpha
+        color.sourceAlphaBlendFactor = .one
+        color.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        descriptor.rasterSampleCount = sampleCount
+        let pipeline: MTLRenderPipelineState?
+        do { pipeline = try device.makeRenderPipelineState(descriptor: descriptor) } catch {
+            print("Mario 64 MR: the room's shown surfaces didn't build: \(error)")
+            pipeline = nil
+        }
+        roomMeshShownPipelines[sampleCount] = pipeline
+        return pipeline
+    }
+
+    /// The room's surfaces shown (the options' Room): see-through over what's drawn, hidden behind it
+    func encodeRoomMeshShown(_ mesh: MTLBuffer, count: Int, into encoder: MTLRenderCommandEncoder, eye: RoomEye) {
+        guard count > 0, let pipeline = roomMeshShownPipeline else { return }
+        var eye = eye
+        encoder.setRenderPipelineState(pipeline)
+        encoder.setDepthStencilState(depthState(test: true, write: false))
+        encoder.setCullMode(.none)
+        encoder.setVertexBytes(&eye, length: MemoryLayout<RoomEye>.stride, index: 2)
+        encoder.setVertexBuffer(mesh, offset: 0, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: count)
     }
 
     /// The room's surfaces (`count` vertices of packed float3, metres), into depth only

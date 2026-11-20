@@ -291,6 +291,20 @@ int main(int argc, char **argv) {
     ticks(2);
     CHECK(gUnityOptions[UNITY_OPT_HAND_CHEATS] == 7, "back on, kept with the options (%u)", gUnityOptions[UNITY_OPT_HAND_CHEATS]);
 
+    printf("A scanned wall leaning 20 degrees (unity_upright_wall):\n");
+    {
+        /* Its foot along x = 500, its top 600 up and 218 further out, facing back toward the origin (and a little up:
+         * by the game's own rule a steep floor) */
+        s16 lean[] = { 500, 0, -300, 500, 0, 300, 718, 600, 300, 500, 0, -300, 718, 600, 300, 718, 600, -300 };
+        s16 leaning[(2 + 2) * 9];
+        int n = quad(leaning, -3000, -3000, 3000, 3000, 0);
+        memcpy(leaning + n * 9, lean, sizeof(lean));
+        CHECK(sm64unity_room_mesh(leaning, n + 2) == n + 2, "loaded");
+        float f = sm64unity_room_floor(600, 1000, 0);
+        CHECK(f < 5, "a wall, not a floor partway up it: the floor under it is the room's (%.0f)", f);
+        sm64unity_room_mesh(NULL, 0);
+    }
+
     ticks(60);
     printf("%s (%d failures)\n", failures ? "FAILED" : "PASSED", failures);
     return failures != 0;

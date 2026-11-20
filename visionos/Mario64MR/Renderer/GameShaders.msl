@@ -256,6 +256,28 @@ vertex float4 room_mesh_vertex(uint vid [[vertex_id]], const device packed_float
     return eye.viewProjection * float4(float3(positions[vid]), 1);
 }
 
+// The same surfaces shown (the options' Room): see-through, outlined, each coloured as the game takes it from its
+// corners' order (unity_upright_wall: within 30 degrees of upright, a wall; else facing up a floor, down a ceiling)
+struct RoomMeshShown { float4 position [[position]]; float kind [[flat]]; };
+vertex RoomMeshShown room_mesh_shown_vertex(uint vid [[vertex_id]], const device packed_float3 *positions [[buffer(0)]],
+                                            constant RoomEye &eye [[buffer(2)]]) {
+    uint first = vid / 3 * 3;
+    float3 a = float3(positions[first]), b = float3(positions[first + 1]), c = float3(positions[first + 2]);
+    float3 n = cross(b - a, c - a);
+    float up = length(n) > 0 ? n.y / length(n) : 0;
+    RoomMeshShown out;
+    out.position = eye.viewProjection * float4(float3(positions[vid]), 1);
+    out.kind = up >= 0.5 ? 0 : up <= -0.5 ? 2 : 1;
+    return out;
+}
+fragment float4 room_mesh_shown_fragment(RoomMeshShown in [[stage_in]], float3 bary [[barycentric_coord]]) {
+    float3 w = max(fwidth(bary), float3(1e-5));
+    float3 inside = smoothstep(float3(0), w * 1.5, bary);
+    float edge = 1 - min(inside.x, min(inside.y, inside.z));
+    float3 color = in.kind < 0.5 ? float3(0.15, 0.85, 0.3) : in.kind < 1.5 ? float3(1, 0.45, 0.05) : float3(1, 0.1, 0.2);
+    return float4(color, mix(0.12, 0.75, edge));
+}
+
 // ---------------------------------------------------------------- Props: the cartridge, the window's frame, labels
 struct PropVertex { packed_float3 position; packed_float3 normal; packed_float2 uv; };
 struct PropDraw {

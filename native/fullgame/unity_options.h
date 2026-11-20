@@ -24,6 +24,7 @@ enum UnityOption {
     UNITY_OPT_HAND_CHEATS,   /* the Cheats menu's switches for what your hands do in the game, a bit each in
                                 enum UnityHandCheat's order (UNITY_HAND_CHEATS_INVERTED's the other way round),
                                 all on by default */
+    UNITY_OPT_ROOM_MESH,     /* (Vision Pro) the room's surfaces as the game has them, drawn over it: 0 hidden, 1 shown */
     UNITY_OPT_COUNT
 };
 extern unsigned int gUnityOptions[UNITY_OPT_COUNT];

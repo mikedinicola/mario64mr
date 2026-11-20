@@ -443,6 +443,9 @@ final class ImmersiveRenderer: @unchecked Sendable {
                     let glow = Float(0.75 + 0.25 * sin(time * 6))
                     props.encodeCircle(at: circle, radius: Diorama.radius, glow: glow, into: encoder, eye: eye)
                 }
+                if graphics?.roomMesh == true, let mesh = room.buffer {
+                    game.encodeRoomMeshShown(mesh, count: room.count, into: encoder, eye: eye)
+                }
                 if graphics?.gloves == true { props.encodeGloves(hands, into: encoder, eye: eye) }
                 encoder.endEncoding()
                 if !trackingAreas.isEmpty,
@@ -899,6 +902,9 @@ extension ImmersiveRenderer {
                 if state.stageRoom == 2, state.stageCount > 0 {
                     props.encodeCount(state.stageCount, at: SIMD3(countAt.x, countAt.y, countAt.z), facing: eyePosition,
                                       into: encoder, eye: eye)
+                }
+                if graphics?.roomMesh == true, let buffer = mesh.buffer {
+                    game.encodeRoomMeshShown(buffer, count: mesh.count, into: encoder, eye: eye)
                 }
                 if graphics?.gloves == true { props.encodeGloves(hands, into: encoder, eye: eye) }
                 encoder.endEncoding()
