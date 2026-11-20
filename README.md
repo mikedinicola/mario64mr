@@ -492,6 +492,8 @@ screen's face uses them too; Mario out in your room keeps the ROM's look, as do 
 The ROM itself can't be swapped in the app: the installer builds the game code from it, so it goes in when you
 build in Xcode.
 
+**Your room, remembered.** visionOS scans your room afresh every launch, and lets go of parts of it as you move about. Mario 64 MR keeps what it let go of, and saves the room every 20 seconds against a world anchor, which visionOS finds again the next time you're in the same room: the room from before comes back at once, filling in what the scan hasn't reached yet, and the room fills in more each time you play. Wherever the scan sees something again, its new view replaces the saved one; anything it hasn't seen again in 3 launches (furniture moved, or gone) is forgotten. Up to 8 rooms are kept.
+
 **Options on Vision Pro.** The pause menu's options (above) apply as the headset allows; they're kept between runs.
 
 | Option | On Vision Pro |
@@ -501,7 +503,7 @@ build in Xcode.
 | Foveation | On (any level) or off. It changes the next time you open a window into the game |
 | Textures | As on the other headsets: N64, mipmaps, or mipmaps with 2x to 16x anisotropic filtering |
 | Hands | Gloves: Mario's white gloves, following your fingers joint by joint, over your hands wherever the game is (the window, the level, Mario out in your room), your own hands everywhere else. Your own: visionOS draws your hands over everything, as other apps do. Gloves don't show on hands holding Sense controllers |
-| Room | Shown: the room as the game has it, what Mario stands on and bumps into out in it (and on the Mario 128 stage), drawn over it see-through and outlined: floors green, walls orange, ceilings red. For finding the invisible walls a scan left (a curtain, a chair's back, a bit of floor that came out as a slope). Where the scan has a gap in a table or the floor that the headset's plane detection did find (a dark tabletop, a rug in dim light), the plane is laid in, in 5 cm strips, solid for Mario too. Hidden by default |
+| Room | Shown: the room as the game has it, what Mario stands on and bumps into out in it (and on the Mario 128 stage), drawn over it see-through and outlined: floors green, walls orange, ceilings red. For finding the invisible walls a scan left (a curtain, a chair's back, a bit of floor that came out as a slope). Where the scan has a gap in a table or the floor that the headset's plane detection did find (a dark tabletop, a rug in dim light), the plane is laid in, in 5 cm strips, solid for Mario too; and where the scan is lumpy within 2.5 cm of a plane (a rug, a tabletop), it's put flat onto it. Hidden by default |
 | Refresh rate, Sharpening | Not in the menu: visionOS sets them itself |
 | Bring Mario back | Out in your room or held: back into the game where he went out (or was picked up) |
 

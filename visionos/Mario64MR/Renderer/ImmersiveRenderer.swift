@@ -55,6 +55,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private let gazePinches = GazePinches()
     private let controllerTracker = ControllerTracker()
     private let planeFinder = PlaneFinder()
+    private let roomStore = RoomStore()
     private let props: RoomProps
     /// The game's flat picture of its level, each frame, for what it has between its camera and the window (painted
     /// on the glass: RoomProps.encodeWindowPicture)
@@ -128,7 +129,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private func run() {
         // (where the head is: if tracking doesn't start, the room still shows, placed in front of where the head
         // would be, rather than staying empty)
-        let tracking = Task { [session, world, scanner, handTracker, planeFinder, controllerTracker] in
+        let tracking = Task { [session, world, scanner, handTracker, planeFinder, controllerTracker, roomStore] in
             var providers: [any DataProvider] = WorldTrackingProvider.isSupported ? [world] : []
             var wanted: [ARKitSession.AuthorizationType] = [.worldSensing, .handTracking]
             if ControllerTracker.isSupported { wanted += AccessoryTrackingProvider.requiredAuthorizations }
@@ -159,6 +160,9 @@ final class ImmersiveRenderer: @unchecked Sendable {
             await withTaskGroup(of: Void.self) { group in
                 if providers.contains(where: { $0 === scanner.provider }) {
                     group.addTask { await scanner.run { [weak self] mesh in self?.useRoom(mesh) } }
+                    if providers.contains(where: { $0 === world }) {
+                        group.addTask { await roomStore.run(world: world, scanner: scanner) }  // (kept between launches)
+                    }
                 }
                 if providers.contains(where: { $0 === planeFinder.provider }) {
                     group.addTask { await planeFinder.run() }
