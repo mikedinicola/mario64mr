@@ -21,6 +21,7 @@ final class GameOptions {
         case cheats      // the Cheats menu's switches, a bit each (unity_options.h)
         case handCheats  // ...and what your hands do in the game, a bit each
         case roomMesh    // Room: the room's surfaces as the game has them, drawn over it (1)
+        case forgetRoom  // Forget the room: counts the presses
     }
 
     /// What the room's renderer applies
@@ -32,6 +33,7 @@ final class GameOptions {
         var anisotropy = 4            // 1 (none) to 16
         var gloves = true             // Hands: Mario's gloves (0), or your own (1)
         var roomMesh = false          // Room: hidden (0), or shown (1)
+        var forgetRoom: UInt32 = 0    // Forget the room: pressed when it changes
 
         init() {}
         init(_ o: [UInt32]) {
@@ -43,6 +45,7 @@ final class GameOptions {
             anisotropy = t >= 2 ? 1 << (t - 1) : 1
             if o.count > Index.hands.rawValue { gloves = o[Index.hands.rawValue] == 0 }
             if o.count > Index.roomMesh.rawValue { roomMesh = o[Index.roomMesh.rawValue] != 0 }
+            if o.count > Index.forgetRoom.rawValue { forgetRoom = o[Index.forgetRoom.rawValue] }
             #if DEBUG
             if CommandLine.arguments.contains("-roommesh") { roomMesh = true }  // (to see it without the menu)
             #endif

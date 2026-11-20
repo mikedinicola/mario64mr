@@ -680,7 +680,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
 
     private func useRoom(_ scanned: RoomMesh) {
         // (with the planes laid in where the scan has gaps: tables and floor it missed, solid in the game too)
-        let (mesh, laid) = scanned.filled(with: planeFinder.current + standInPlanes)
+        let (mesh, laid) = scanned.filled(with: planeFinder.current + standInPlanes, walls: planeFinder.walls)
         latestRoom.withLockUnchecked { $0 = mesh }
         let triangles = mesh.gameTriangles()
         if !loggedRoom {
@@ -743,6 +743,10 @@ final class ImmersiveRenderer: @unchecked Sendable {
     private func applyOptions() {
         let wanted = link.current.graphics
         guard wanted != graphics else { return }
+        if let graphics, wanted.forgetRoom != graphics.forgetRoom {  // (Forget the room pressed)
+            scanner.forget()
+            Task { [roomStore, world] in await roomStore.forget(world: world) }
+        }
         if wanted.resolution != graphics?.resolution, let quality = RoomLayerConfiguration.quality(wanted.resolution) {
             let most = layer.configuration.maxRenderQuality.rawValue
             layer.renderQuality = LayerRenderer.RenderQuality(rawValue: min(quality, most))

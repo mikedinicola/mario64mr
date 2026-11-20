@@ -25,6 +25,7 @@ enum UnityOption {
                                 enum UnityHandCheat's order (UNITY_HAND_CHEATS_INVERTED's the other way round),
                                 all on by default */
     UNITY_OPT_ROOM_MESH,     /* (Vision Pro) the room's surfaces as the game has them, drawn over it: 0 hidden, 1 shown */
+    UNITY_OPT_FORGET_ROOM,   /* (Vision Pro) Forget the room: counts the presses (the host forgets the saved room) */
     UNITY_OPT_COUNT
 };
 extern unsigned int gUnityOptions[UNITY_OPT_COUNT];

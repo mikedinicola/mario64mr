@@ -68,7 +68,7 @@ struct RoomMesh {
 /// Reads the room from scene reconstruction while the immersive space is open, and hands it on whenever it changes
 /// (at most once a second)
 final class RoomScanner: @unchecked Sendable {
-    let provider = SceneReconstructionProvider()
+    let provider = SceneReconstructionProvider(modes: [.classification])
     private var anchors: [UUID: (center: SIMD3<Float>, triangles: [SIMD3<Float>])] = [:]
     /// What the scanner had and dropped (a mesh anchor removed: visionOS keeps only so much of the room), and what a
     /// saved room brought back (RoomStore): where the live scan has nothing of its own (RoomMesh.uncovered), after
@@ -88,6 +88,10 @@ final class RoomScanner: @unchecked Sendable {
     }
 
     static var isSupported: Bool { SceneReconstructionProvider.isSupported }
+
+    /// Forget the room (the options' Forget the room): all that's kept, from the next time the scan changes
+    func forget() { forgetting.withLock { $0 = true } }
+    private let forgetting = OSAllocatedUnfairLock(initialState: false)
 
     /// A saved room back (RoomStore), in the room: kept from the next time the scan changes
     func restore(_ triangles: [SIMD3<Float>], ages: [UInt8]) { restored.withLock { $0.append((triangles, ages)) } }
@@ -110,6 +114,10 @@ final class RoomScanner: @unchecked Sendable {
             }
             if Date.now.timeIntervalSince(lastPublished) > 1 {
                 lastPublished = .now
+                if forgetting.withLock({ f in defer { f = false }; return f }) {
+                    kept = []; keptAges = []
+                    restored.withLock { $0 = [] }
+                }
                 for (triangles, ages) in restored.withLock({ r in defer { r = [] }; return r }) {
                     kept = triangles + kept
                     keptAges = ages + keptAges
@@ -129,8 +137,15 @@ final class RoomScanner: @unchecked Sendable {
         }
     }
 
+    /// Faces visionOS labels as something to stand on (its classifications, ar_mesh_classification's values): floor,
+    /// table, seat, bed
+    static let standOn: Set<UInt8> = [2, 4, 5, 9]
+
     /// The anchor's faces in the room, each turned to face the way the surface does (its vertices' normals): the
-    /// game takes a triangle's front from its corners' order (counterclockwise: a floor faces up, a ceiling down)
+    /// game takes a triangle's front from its corners' order (counterclockwise: a floor faces up, a ceiling down).
+    /// Where visionOS labels them something to stand on (standOn), smoothed: each corner with only such faces about
+    /// it twice taken halfway to its neighbours' height, the scan's lumps evened out without pulling a table's top
+    /// down its sides
     private static func triangles(of anchor: MeshAnchor) -> [SIMD3<Float>] {
         let geometry = anchor.geometry, vertices = geometry.vertices, normals = geometry.normals, faces = geometry.faces
         guard vertices.format == .float3, faces.primitive == .triangle, faces.bytesPerIndex == 4 else { return [] }
@@ -150,15 +165,46 @@ final class RoomScanner: @unchecked Sendable {
             return SIMD3(world.x, world.y, world.z)
         }
         let indices = faces.buffer.contents().assumingMemoryBound(to: UInt32.self)
+        var points = (0..<vertices.count).map { corner(UInt32($0)) }
+        if let classes = geometry.classifications, classes.count == faces.count {
+            let labels = classes.buffer.contents().advanced(by: classes.offset)
+            let standOn = (0..<faces.count).map { Self.standOn.contains(labels.advanced(by: $0 * classes.stride).load(as: UInt8.self)) }
+            Self.smooth(&points, indices: indices, faces: faces.count, standOn: standOn)
+        }
         var out: [SIMD3<Float>] = []
         out.reserveCapacity(faces.count * 3)
         for f in 0..<faces.count {
             let i = (indices[f * 3], indices[f * 3 + 1], indices[f * 3 + 2])
-            let a = corner(i.0), b = corner(i.1), c = corner(i.2)
+            guard Int(max(i.0, i.1, i.2)) < points.count else { continue }
+            let a = points[Int(i.0)], b = points[Int(i.1)], c = points[Int(i.2)]
             let facing = normal(i.0) + normal(i.1) + normal(i.2)
             out += simd_dot(simd_cross(b - a, c - a), facing) < 0 ? [a, c, b] : [a, b, c]
         }
         return out
+    }
+
+    private static func smooth(_ points: inout [SIMD3<Float>], indices: UnsafePointer<UInt32>, faces: Int, standOn: [Bool]) {
+        var only = [Bool](repeating: true, count: points.count), touched = [Bool](repeating: false, count: points.count)
+        for f in 0..<faces {
+            for k in 0..<3 where Int(indices[f * 3 + k]) < points.count {
+                let v = Int(indices[f * 3 + k])
+                if standOn[f] { touched[v] = true } else { only[v] = false }
+            }
+        }
+        for _ in 0..<2 {
+            var sum = [Float](repeating: 0, count: points.count), count = [Float](repeating: 0, count: points.count)
+            for f in 0..<faces where standOn[f] {
+                let v = (0..<3).map { Int(indices[f * 3 + $0]) }
+                guard v.allSatisfy({ $0 < points.count }) else { continue }
+                for k in 0..<3 {
+                    sum[v[k]] += points[v[(k + 1) % 3]].y + points[v[(k + 2) % 3]].y
+                    count[v[k]] += 2
+                }
+            }
+            for v in points.indices where only[v] && touched[v] && count[v] > 0 {
+                points[v].y = (points[v].y + sum[v] / count[v]) / 2
+            }
+        }
     }
 }
 
@@ -177,22 +223,44 @@ actor RoomStore {
     private var loaded: Set<UUID> = []
     private var home: UUID?  // the anchor this launch's room is saved against
     private var made: UUID?  // an anchor begun this launch (no saved room found in time)
+    private var started = Date.now
     private static let log = Logger(subsystem: "local.mario64mr", category: "Room")
 
     private func file(_ id: UUID) -> URL { directory.appending(path: "\(id.uuidString).room") }
 
     func run(world: WorldTrackingProvider, scanner: RoomScanner) async {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let started = Date.now
+        var unbacked = directory
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true  // (a room's scan: made again by looking about, not worth a backup)
+        try? unbacked.setResourceValues(values)
+        started = .now
         await withTaskGroup(of: Void.self) { group in
             group.addTask { for await update in world.anchorUpdates { await self.found(update, world: world, scanner: scanner) } }
             group.addTask {
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(20))
-                    await self.save(world: world, scanner: scanner, started: started)
+                    await self.save(world: world, scanner: scanner)
                 }
+                await self.save(world: world, scanner: scanner)  // (the room closing: what's been seen since, too)
             }
         }
+    }
+
+    /// Forget the room (the options' Forget the room): every saved room and its anchor, and a new one begun at once
+    func forget(world: WorldTrackingProvider) async {
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        for url in files {
+            try? FileManager.default.removeItem(at: url)
+            if let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) {
+                loaded.insert(id)
+                try? await world.removeAnchor(forID: id)
+            }
+        }
+        if let home { try? await world.removeAnchor(forID: home) }
+        home = nil; made = nil
+        started = .distantPast
+        Self.log.info("The room forgotten")
     }
 
     private func found(_ update: AnchorUpdate<WorldAnchor>, world: WorldTrackingProvider, scanner: RoomScanner) async {
@@ -216,7 +284,7 @@ actor RoomStore {
         if home == nil { home = anchor.id }
     }
 
-    private func save(world: WorldTrackingProvider, scanner: RoomScanner, started: Date) async {
+    private func save(world: WorldTrackingProvider, scanner: RoomScanner) async {
         let room = scanner.current
         guard room.ages.count >= 500 else { return }
         if home == nil {
@@ -252,21 +320,30 @@ actor RoomStore {
 
 /// The room's horizontal planes (tables, desks, the floor) from plane detection, for the cartridge to land on
 final class PlaneFinder: @unchecked Sendable {
-    let provider = PlaneDetectionProvider(alignments: [.horizontal])
+    let provider = PlaneDetectionProvider(alignments: [.horizontal, .vertical])
     private let planes = OSAllocatedUnfairLock<[UUID: RoomPlane]>(initialState: [:])
+    private let wallPlanes = OSAllocatedUnfairLock<[UUID: WallPlane]>(initialState: [:])
 
     static var isSupported: Bool { PlaneDetectionProvider.isSupported }
 
+    /// The horizontal ones (not ceilings): tables, desks, the floor
     var current: [RoomPlane] { planes.withLock { Array($0.values) } }
+    /// The upright ones visionOS takes for walls
+    var walls: [WallPlane] { wallPlanes.withLock { Array($0.values) } }
 
     func run() async {
         for await update in provider.anchorUpdates {
             let anchor = update.anchor
             switch update.event {
             case .added, .updated:
-                let plane = Self.plane(of: anchor)
+                let horizontal = anchor.alignment == .horizontal && anchor.surfaceClassification != .ceiling
+                let plane = horizontal ? Self.plane(of: anchor) : nil
+                let wall = anchor.alignment == .vertical && anchor.surfaceClassification == .wall ? Self.wall(of: anchor) : nil
                 planes.withLock { $0[anchor.id] = plane }
-            case .removed: planes.withLock { $0[anchor.id] = nil }
+                wallPlanes.withLock { $0[anchor.id] = wall }
+            case .removed:
+                planes.withLock { $0[anchor.id] = nil }
+                wallPlanes.withLock { $0[anchor.id] = nil }
             @unknown default: break
             }
         }
@@ -294,9 +371,58 @@ final class PlaneFinder: @unchecked Sendable {
         let height = corners.map(\.y).reduce(0, +) / Float(corners.count)
         return RoomPlane(height: height, triangles: triangles)
     }
+
+    /// A wall's plane, facing into the room (toward where the space opened: inside it), its outline along it
+    private static func wall(of anchor: PlaneAnchor) -> WallPlane? {
+        let vertices = anchor.geometry.meshVertices, faces = anchor.geometry.meshFaces
+        guard vertices.format == .float3, faces.primitive == .triangle, faces.bytesPerIndex == 4,
+              vertices.count > 0 else { return nil }
+        let base = vertices.buffer.contents().advanced(by: vertices.offset)
+        let transform = anchor.originFromAnchorTransform
+        let corners = (0..<vertices.count).map { v -> SIMD3<Float> in
+            let p = base.advanced(by: v * vertices.stride).assumingMemoryBound(to: Float.self)
+            let world = transform * SIMD4(p[0], p[1], p[2], 1)
+            return SIMD3(world.x, world.y, world.z)
+        }
+        let indices = faces.buffer.contents().assumingMemoryBound(to: UInt32.self)
+        let order = (0..<(faces.count * 3)).map { Int(indices[$0]) }.filter { $0 < corners.count }
+        var normal = SIMD3<Float>.zero
+        var i = 0
+        while i + 2 < order.count {
+            normal += simd_cross(corners[order[i + 1]] - corners[order[i]], corners[order[i + 2]] - corners[order[i]])
+            i += 3
+        }
+        guard simd_length(normal) > 1e-9 else { return nil }
+        normal = simd_normalize(normal)
+        guard abs(normal.y) < 0.3 else { return nil }  // (upright)
+        let middle = corners.reduce(.zero, +) / Float(corners.count)
+        return WallPlane(through: middle, facing: normal, outline: order.map { corners[$0] })
+    }
 }
 
 // MARK: - The scan's gaps, filled from the planes
+
+/// A wall from plane detection: its plane (`normal` level, facing into the room: toward the room's origin, where the
+/// space opened, inside it; `offset` the normal's length along it to the plane) and its outline as triangles in the
+/// plane's own (along it, up) coordinates
+struct WallPlane: Sendable {
+    var normal: SIMD3<Float>
+    var offset: Float
+    var outline: RoomPlane  // (its height unused)
+
+    var along: SIMD3<Float> { SIMD3(-normal.z, 0, normal.x) }
+    func flat(_ p: SIMD3<Float>) -> SIMD2<Float> { SIMD2(simd_dot(p, along), p.y) }
+    func point(_ q: SIMD2<Float>) -> SIMD3<Float> { along * q.x + normal * offset + SIMD3(0, q.y, 0) }
+
+    init(through middle: SIMD3<Float>, facing n: SIMD3<Float>, outline corners: [SIMD3<Float>]) {
+        var level = simd_normalize(SIMD3(n.x, 0, n.z))
+        if simd_dot(level, SIMD3(-middle.x, 0, -middle.z)) < 0 { level = -level }
+        normal = level
+        offset = simd_dot(middle, level)
+        outline = RoomPlane(height: 0, triangles: [])
+        outline.triangles = corners.map { flat($0) }
+    }
+}
 
 extension RoomMesh {
     /// Squares a side, metres, the planes are filled in by
@@ -305,6 +431,10 @@ extension RoomMesh {
     static let fillNear: Float = 0.04
     /// How near a plane's height a scanned corner over it is put onto it, metres
     static let snapNear: Float = 0.025
+    /// How near a wall a scanned corner in front of (or behind) it is put onto it, metres
+    static let wallSnapNear: Float = 0.03
+    /// Squares a side, metres, walls are filled in by
+    static let wallFillCell: Float = 0.1
 
     /// The scan with the detected planes (tables, the floor: PlaneFinder) laid in where it has none of its own: what
     /// plane detection found that scene reconstruction didn't (a dark or glossy tabletop, a rug in dim light). Each
@@ -314,9 +444,27 @@ extension RoomMesh {
     ///
     /// First the scan's corners over a plane and within snapNear of its height put onto it: the lumps of a rug, a
     /// tabletop's few millimetres of noise, flat, not little steps and slopes in the game that stop a Mario 2 cm tall
-    func filled(with planes: [RoomPlane]) -> (RoomMesh, Int) {
-        guard !planes.isEmpty else { return (self, 0) }
+    ///
+    /// Then the same for walls (WallPlane: what visionOS takes for one, upright): the scan's corners within
+    /// wallSnapNear of one put onto it, its waves straight; and where it has nothing near a wall's outline (no
+    /// triangle's middle within a coverCell or two), the wall laid in, in wallFillCell squares facing into the room
+    func filled(with planes: [RoomPlane], walls: [WallPlane] = []) -> (RoomMesh, Int) {
+        guard !planes.isEmpty || !walls.isEmpty else { return (self, 0) }
         var triangles = self.triangles
+        let wallBounds = walls.map { wall in
+            (wall.outline.triangles.reduce(SIMD2<Float>(repeating: .infinity)) { simd_min($0, $1) },
+             wall.outline.triangles.reduce(SIMD2<Float>(repeating: -.infinity)) { simd_max($0, $1) })
+        }
+        for v in triangles.indices {
+            for (wall, (lo, hi)) in zip(walls, wallBounds) {
+                let d = simd_dot(triangles[v], wall.normal) - wall.offset
+                guard abs(d) < Self.wallSnapNear else { continue }
+                let q = wall.flat(triangles[v])
+                guard all(q .>= lo), all(q .<= hi), wall.outline.contains(q) else { continue }
+                triangles[v] -= wall.normal * d
+                break
+            }
+        }
         let bounds = planes.map { plane in
             (plane.triangles.reduce(SIMD2<Float>(repeating: .infinity)) { simd_min($0, $1) },
              plane.triangles.reduce(SIMD2<Float>(repeating: -.infinity)) { simd_max($0, $1) })
@@ -368,6 +516,42 @@ extension RoomMesh {
                         laid += [SIMD3(x0, y, z0), SIMD3(x0, y, z1), SIMD3(x1, y, z1),
                                  SIMD3(x0, y, z0), SIMD3(x1, y, z1), SIMD3(x1, y, z0)]
                         run = nil
+                    }
+                }
+            }
+        }
+        if !walls.isEmpty {
+            func cell(_ p: SIMD3<Float>) -> SIMD3<Int32> {
+                let c = (p / Self.coverCell).rounded(.down)
+                return SIMD3(Int32(c.x), Int32(c.y), Int32(c.z))
+            }
+            var seen = Set<SIMD3<Int32>>()
+            var t = 0
+            while t + 2 < triangles.count { seen.insert(cell((triangles[t] + triangles[t + 1] + triangles[t + 2]) / 3)); t += 3 }
+            func covered(_ p: SIMD3<Float>) -> Bool {
+                let c = cell(p)
+                for dx in Int32(-1)...1 { for dy in Int32(-1)...1 { for dz in Int32(-1)...1 where seen.contains(c &+ SIMD3(dx, dy, dz)) { return true } } }
+                return false
+            }
+            let w = Self.wallFillCell
+            for (wall, (lo, hi)) in zip(walls, wallBounds) {
+                let u0 = Int32((lo.x / w).rounded(.down)), u1 = Int32((hi.x / w).rounded(.down))
+                let y0 = Int32((lo.y / w).rounded(.down)), y1 = Int32((hi.y / w).rounded(.down))
+                guard Int(u1 - u0 + 1) * Int(y1 - y0 + 1) <= 100 * 60 else { continue }  // (10 m by 6 at most)
+                for y in y0...y1 {
+                    var run: Int32?
+                    for u in u0...(u1 + 1) {
+                        let middle = (SIMD2<Float>(Float(u), Float(y)) + 0.5) * w
+                        let gap = u <= u1 && wall.outline.contains(middle) && !covered(wall.point(middle))
+                        if gap, run == nil { run = u }
+                        if !gap, let from = run {
+                            let a = wall.point(SIMD2(Float(from) * w, Float(y) * w))
+                            let b = wall.point(SIMD2(Float(u) * w, Float(y) * w))
+                            let c = wall.point(SIMD2(Float(u) * w, Float(y + 1) * w))
+                            let d = wall.point(SIMD2(Float(from) * w, Float(y + 1) * w))
+                            laid += [a, c, b, a, d, c]  // (facing along its normal: into the room)
+                            run = nil
+                        }
                     }
                 }
             }

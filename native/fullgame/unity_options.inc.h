@@ -18,6 +18,7 @@ static const u8 mrMenuStr[][32] = {
     { TEXT_MR_DEFAULTS },
     { TEXT_MR_HANDS },
     { TEXT_MR_ROOM_MESH },
+    { TEXT_MR_FORGET_ROOM },
 };
 
 static const u8 mrRateStr[][8] = { { TEXT_MR_72HZ }, { TEXT_MR_80HZ }, { TEXT_MR_90HZ }, { TEXT_MR_120HZ } };
@@ -64,6 +65,12 @@ static void mr_defaults(UNUSED struct Option *self, s32 arg) {
     if (!arg) gUnityOptions[UNITY_OPT_DEFAULTS]++;
 }
 
+#ifdef MR_VISIONOS
+static void mr_forget_room(UNUSED struct Option *self, s32 arg) {
+    if (!arg) gUnityOptions[UNITY_OPT_FORGET_ROOM]++;
+}
+#endif
+
 /* (Vision Pro, MR_VISIONOS: the refresh rate and sharpening are the headset's own, left out) */
 static struct Option optsGraphics[] = {
 #ifndef MR_VISIONOS
@@ -79,6 +86,7 @@ static struct Option optsGraphics[] = {
     DEF_OPT_CHOICE( mrMenuStr[11], &gUnityOptions[UNITY_OPT_HANDS], mrHandsChoices ),
 #ifdef MR_VISIONOS
     DEF_OPT_CHOICE( mrMenuStr[12], &gUnityOptions[UNITY_OPT_ROOM_MESH], mrRoomMeshChoices ),
+    DEF_OPT_BUTTON( mrMenuStr[13], mr_forget_room ),
 #endif
     DEF_OPT_BUTTON( mrMenuStr[10], mr_defaults ),
 };

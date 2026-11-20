@@ -29,6 +29,7 @@ MR_STRINGS = """
 #define TEXT_MR_DEFAULTS     _("Back to defaults")
 #define TEXT_MR_HANDS        _("Hands")
 #define TEXT_MR_ROOM_MESH    _("Room")
+#define TEXT_MR_FORGET_ROOM  _("Forget the room")
 #define TEXT_MR_72HZ    _("72 Hz")
 #define TEXT_MR_80HZ    _("80 Hz")
 #define TEXT_MR_90HZ    _("90 Hz")
