@@ -78,24 +78,24 @@
 		294CA9B017B6EA2F7E38A37C /* GameFrame.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameFrame.swift; sourceTree = "<group>"; };
 		2FCD3075E68D6C4E2FE208A9 /* ARKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ARKit.framework; path = System/Library/Frameworks/ARKit.framework; sourceTree = SDKROOT; };
 		3726FFC0B162C03EAA65575F /* AVFAudio.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFAudio.framework; path = System/Library/Frameworks/AVFAudio.framework; sourceTree = SDKROOT; };
-		4206A5BD764056931B326463 /* Cartridge.shell */ = {isa = PBXFileReference; path = Cartridge.shell; sourceTree = "<group>"; };
+		4206A5BD764056931B326463 /* Cartridge.shell */ = {isa = PBXFileReference; lastKnownFileType = file; path = Cartridge.shell; sourceTree = "<group>"; };
 		463CC69BAD9D784A8981F455 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		4CC3BA56A75143E46A326E16 /* Mario64MR.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Mario64MR.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4CC3BA56A75143E46A326E16 /* Mario64MR.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Mario64MR.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4F445DB5C6F9AD8667114E35 /* LibSM64.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = LibSM64.xcframework; path = Build/Frameworks/LibSM64.xcframework; sourceTree = "<group>"; };
 		5F43AEDE2DB291E5E35525CD /* GameRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameRenderer.swift; sourceTree = "<group>"; };
-		6357D74BBDD470B8AC820B4F /* RightGlove.glove */ = {isa = PBXFileReference; path = RightGlove.glove; sourceTree = "<group>"; };
+		6357D74BBDD470B8AC820B4F /* RightGlove.glove */ = {isa = PBXFileReference; lastKnownFileType = file; path = RightGlove.glove; sourceTree = "<group>"; };
 		65BC27FCF1DA01E632D00DD8 /* Hands.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Hands.swift; sourceTree = "<group>"; };
 		68CB7AAC7557608A6803DF2B /* AudioOutput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioOutput.swift; sourceTree = "<group>"; };
 		6DE37540EB0552146DC22291 /* GameView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameView.swift; sourceTree = "<group>"; };
 		7676E3B3887EFCF59AB82C3A /* Cartridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cartridge.swift; sourceTree = "<group>"; };
-		7ACFB0947ABEBB5BE4664230 /* GameShaders.msl */ = {isa = PBXFileReference; path = GameShaders.msl; sourceTree = "<group>"; };
+		7ACFB0947ABEBB5BE4664230 /* GameShaders.msl */ = {isa = PBXFileReference; lastKnownFileType = text; path = GameShaders.msl; sourceTree = "<group>"; };
 		7D08E37159B83E89B4908AFA /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = System/Library/Frameworks/GameController.framework; sourceTree = SDKROOT; };
 		7F7340C8F92D6C1C7DB67773 /* RoomPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomPlacement.swift; sourceTree = "<group>"; };
 		943F5996D2653E5553963EF2 /* Data */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Data; path = Build/Data; sourceTree = SOURCE_ROOT; };
 		9804ACE3F4CB94673186F407 /* GameHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GameHost.swift; sourceTree = "<group>"; };
 		9DD4CFD5E67B1A2DED671C72 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
 		A4A92C8EA421D615DA6690C3 /* Diorama.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diorama.swift; sourceTree = "<group>"; };
-		A76871938AE82D16D39FCE3E /* LeftGlove.glove */ = {isa = PBXFileReference; path = LeftGlove.glove; sourceTree = "<group>"; };
+		A76871938AE82D16D39FCE3E /* LeftGlove.glove */ = {isa = PBXFileReference; lastKnownFileType = file; path = LeftGlove.glove; sourceTree = "<group>"; };
 		A7B25744D9B286AEA53F19E0 /* SpatialControllers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialControllers.swift; sourceTree = "<group>"; };
 		ADA9A7BA4F339B75DE635C04 /* MarioCarrier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarioCarrier.swift; sourceTree = "<group>"; };
 		AED565824E6717B29E252745 /* TitleScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TitleScreen.swift; sourceTree = "<group>"; };
@@ -170,6 +170,7 @@
 				9386AD67911FBFE6BE80C648 /* Mario64MR */,
 				1D77E2B7C008BC6803418B18 /* Frameworks */,
 				92AC85A612729031C33421D5 /* Products */,
+				EBF8D33930AFEF4300CE56B9 /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -259,12 +260,12 @@
 			path = Renderer;
 			sourceTree = "<group>";
 		};
-		"TEMP_6FED1C46-89C1-442C-9744-113317FC5B15" /* visionos */ = {
+		EBF8D33930AFEF4300CE56B9 /* Recovered References */ = {
 			isa = PBXGroup;
 			children = (
 				"TEMP_C57DC855-4C98-455B-AA23-7B31F8849D34" /* Signing.xcconfig */,
 			);
-			path = visionos;
+			name = "Recovered References";
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -381,6 +382,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = RC8MH6T24Z;
 				"EXCLUDED_ARCHS[sdk=xrsimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
@@ -405,6 +407,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = RC8MH6T24Z;
 				"EXCLUDED_ARCHS[sdk=xrsimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",

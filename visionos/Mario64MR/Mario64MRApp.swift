@@ -97,8 +97,9 @@ struct GameWindow: View {
     /// The game moves from this window into the room. The Digital Crown steps back out: from a diorama to the
     /// window in the room (visionOS closes the room either way, so it opens again at once), and from the window in
     /// the room to this one
-    private func openRoom() async {
-        guard case .opened = await openImmersiveSpace(id: Self.roomSpace) else { return }
+    @discardableResult
+    private func openRoom() async -> Bool {
+        guard case .opened = await openImmersiveSpace(id: Self.roomSpace) else { return false }
         let (openWindow, openImmersiveSpace, room) = (openWindow, openImmersiveSpace, game.room)
         room.onClose = {
             Task { @MainActor in
@@ -110,13 +111,14 @@ struct GameWindow: View {
             }
         }
         dismissWindow(id: Self.flatWindow)
+        return true
     }
 
     /// Mario 128 in your room: the room opens for it, with Mario in front of you to put down on a table (Mario128Stage)
     private func openMario128() async {
         game.room.update { $0.mario128 = true }
-        await openRoom()
-        if !game.room.current.on { game.room.update { $0.mario128 = false } }  // (it didn't open)
+        // (it didn't open. Opened, the room's renderer takes it as it starts, maybe only after this returns: left be)
+        if !(await openRoom()) { game.room.update { $0.mario128 = false } }
     }
 
     private var statusLine: String {
