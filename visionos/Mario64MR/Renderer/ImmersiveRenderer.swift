@@ -345,6 +345,21 @@ final class ImmersiveRenderer: @unchecked Sendable {
         let roomFromView = roomFromWorld.map { $0 * camera.inverse }
             ?? placement.roomFromView(projection: level, xScale: xScale)
         let viewFromRoom = roomFromView.inverse
+        // On the disc stage in the diorama, its count (Mario128Stage's too) over the box picture's middle, kept over
+        // the base however far in it's zoomed; gone at 128 (the celebration)
+        let stageCount = link.current.stageCount
+        let dioramaCountAt: SIMD3<Float>? = {
+            guard let diorama, let roomFromWorld, stageCount > 0, stageCount < Self.countGoneAt else { return nil }
+            let w = roomFromWorld * SIMD4<Float>(0, 480, -1080, 1)
+            var at = SIMD3(w.x, w.y, w.z)
+            let out = SIMD2(at.x - diorama.center.x, at.z - diorama.center.z)
+            if simd_length(out) > Diorama.radius {
+                let back = simd_normalize(out) * Diorama.radius
+                at = SIMD3(diorama.center.x + back.x, at.y, diorama.center.z + back.y)
+            }
+            at.y = max(at.y, diorama.table + 0.06)
+            return at
+        }()
         // What the level has between the game camera and the window: the game's flat picture of it, to paint on
         // the glass where its nearest surface is nearer than the window (in its depth, `nearer`). And a centimetre
         // past it (in a window 1.2 m wide): the level is cut off at the window a pixel at a time, the painting a
@@ -442,6 +457,9 @@ final class ImmersiveRenderer: @unchecked Sendable {
                 if diorama == nil, cartridge.isOpen, let circle {
                     let glow = Float(0.75 + 0.25 * sin(time * 6))
                     props.encodeCircle(at: circle, radius: Diorama.radius, glow: glow, into: encoder, eye: eye)
+                }
+                if let at = dioramaCountAt {
+                    props.encodeCount(stageCount, at: at, facing: eyePosition, into: encoder, eye: eye)
                 }
                 if graphics?.roomMesh == true, let mesh = room.buffer {
                     game.encodeRoomMeshShown(mesh, count: room.count, into: encoder, eye: eye)
@@ -647,6 +665,9 @@ final class ImmersiveRenderer: @unchecked Sendable {
     #endif
 
     /// A new room from the scanner: to the game (its collision, loaded on the game thread) and to the drawing
+    /// The disc stage's count is gone once it gets here (UNITY_MARIOS_MOST, Mario too: the celebration)
+    static let countGoneAt: Int32 = 128
+
     private func useRoom(_ scanned: RoomMesh) {
         // (with the planes laid in where the scan has gaps: tables and floor it missed, solid in the game too)
         let (mesh, laid) = scanned.filled(with: planeFinder.current + standInPlanes)
@@ -901,7 +922,7 @@ extension ImmersiveRenderer {
                     game.encodeDiorama(gameFrame, into: encoder, eye: eye, roomFromWorld: roomFromWorld, table: -1e6,
                                        xScale: xScale)
                 }
-                if state.stageRoom == 2, state.stageCount > 0 {
+                if state.stageRoom == 2, state.stageCount > 0, state.stageCount < Self.countGoneAt {
                     props.encodeCount(state.stageCount, at: SIMD3(countAt.x, countAt.y, countAt.z), facing: eyePosition,
                                       into: encoder, eye: eye)
                 }
