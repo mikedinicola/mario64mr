@@ -261,24 +261,36 @@ static void unity_spawned_frame(void) {
         if (o->oAction >= 5) { unity_spawned_remove(o); continue; }
         if (o == unity_held_obj) { s->settled = 0; continue; }
         if (o->oAction >= 3) continue; /* (breaking) */
-        if (!s->settled) {
-            float floor;
-            int found;
-            if (unity_object_in_room(o)) found = unity_room_floor(o->oPosX, o->oPosY, o->oPosZ, &floor);
-            else {
-                struct Surface *surface;
-                floor = find_floor(o->oPosX, o->oPosY, o->oPosZ, &surface);
-                found = surface != NULL;
-            }
-            if (!found) { unity_spawned_remove(o); continue; }
-            s->target = floor + BOX_REACH;
-            s->settled = 1;
-        }
+        if (!s->settled) continue; /* (its height not found yet: unity_spawned_settle, once the floors are loaded) */
         o->oVelX = o->oVelY = o->oVelZ = 0;
         o->oForwardVel = 0;
         float dy = s->target - o->oPosY;
         o->oPosY = fabsf(dy) < 1.f ? s->target : o->oPosY + dy * 0.25f;
         o->oHomeY = s->target;
         o->header.gfx.pos[1] = o->oPosY;
+    }
+}
+
+/* Once the objects have stepped (after detect_object_collisions), the moving floors loaded again: a box let go of finds
+ * its height over the floor under it. Not at the start of the frame, where the moving floors are cleared and not yet
+ * loaded: there the disc stage's disc (an object) isn't there, only the floor far below it (stage_disc.inc.c) */
+void unity_spawned_settle(void) {
+    for (int i = 0; i < UNITY_SPAWNED; i++) {
+        struct UnitySpawned *s = &unity_spawned_objects[i];
+        struct Object *o = s->obj;
+        if (!o || s->settled || o == unity_held_obj || !(o->activeFlags & ACTIVE_FLAG_ACTIVE)) continue;
+        if (s->kind >= UNITY_SPAWN_KINDS || unity_spawn_kinds[s->kind].behavior != bhvExclamationBox) continue;
+        if (o->oAction >= 3) continue; /* (breaking) */
+        float floor;
+        int found;
+        if (unity_object_in_room(o)) found = unity_room_floor(o->oPosX, o->oPosY, o->oPosZ, &floor);
+        else {
+            struct Surface *surface;
+            floor = find_floor(o->oPosX, o->oPosY, o->oPosZ, &surface);
+            found = surface != NULL;
+        }
+        if (!found) { unity_spawned_remove(o); continue; }
+        s->target = floor + BOX_REACH;
+        s->settled = 1;
     }
 }
