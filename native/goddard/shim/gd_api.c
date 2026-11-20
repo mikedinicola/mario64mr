@@ -10,6 +10,10 @@
 
 #include "goddard/renderer.h"
 #include "goddard/gd_main.h"
+#include "goddard/gd_types.h"
+#include "goddard/gd_math.h"
+#include "goddard/objects.h"
+#include "goddard/draw_objects.h"
 #include "gd_api.h"
 #undef printf
 
@@ -84,11 +88,15 @@ static float sCursorX, sCursorY;
 #define EYE_RING_OUTER 150.0f
 #define EYE_RING_MAX 256
 
-typedef struct { int32_t first, count, tris; float m[3][3]; } ShapeRange;
+typedef struct { int32_t first, count, tris; float m[3][3]; float full[4][4]; } ShapeRange;
 static ShapeRange sShapes[32];
 static int32_t sShapeCount;
 static float sObjOut[MAX_VERTS][3];  // object-space position of each output vertex
 static float sComposed[3][3];        // (modelview * view) rotation of the last vertex load
+static float sComposedFull[4][4];    // (and all of it)
+// The face's object space (Goddard's world, where its joints are) into the eye space it is drawn in: the last frame's
+static float sFaceMtx[4][4];
+static bool sFaceMtxValid;
 
 static float *sFaceRest;              // face object positions at rest, per output vertex
 static int32_t sFaceRestCount;
@@ -103,6 +111,10 @@ static void eyes_follow_skin(void) {
             if (eyes[0] == NULL) eyes[0] = &sShapes[i];
             else if (eyes[1] == NULL) eyes[1] = &sShapes[i];
         }
+    }
+    if (face != NULL) {
+        memcpy(sFaceMtx, face->full, sizeof(sFaceMtx));
+        sFaceMtxValid = true;
     }
     // Only whole frames: during the intro the head starts beyond the far plane and is partly culled
     if (face == NULL || eyes[0] == NULL || eyes[1] == NULL) return;
@@ -322,6 +334,7 @@ static void gfx_vertex(int32_t n, int32_t dest, const Vtx *vertices) {
     for (int32_t r = 0; r < 3; r++)
         for (int32_t c = 0; c < 3; c++)
             sComposed[r][c] = mv[r][0] * rsp.view[0][c] + mv[r][1] * rsp.view[1][c] + mv[r][2] * rsp.view[2][c];
+    mtx_mul(sComposedFull, mv, rsp.view);
     for (int32_t i = 0; i < n && dest + i < 16; i++) {
         const Vtx_t *v = &vertices[i].v;
         const Vtx_tn *vn = &vertices[i].n;
@@ -473,6 +486,7 @@ static void run_dl(const Gfx *cmd, int32_t depth) {
                         r->count = sVertCount - first;
                         r->tris = sTrisAtDepth[2];
                         memcpy(r->m, sComposed, sizeof(r->m));
+                        memcpy(r->full, sComposedFull, sizeof(r->full));
                     }
                     sTrisAtDepth[depth] += sTrisAtDepth[depth + 1];
                 } else {
@@ -670,6 +684,107 @@ void gd_api_set_drag_z(int32_t hand, float value) {
     if (hand == 0) gMarioFaceDragZ = value;
     else gMarioFaceDragZ2 = value;
 }
+
+// ---------------------------------------------------------------------------------------- hands as rays
+// A hand given as a ray (patches/two_hands_ray.patch) picks the grabbable point of the face nearest the line from
+// your eye through your pinch, as you see it, wherever your eye is; and drags it with the pinch, 1:1. Goddard's own
+// pick is a 2D cursor seen from its camera, which in the room (where the nose is well in front of the window and
+// the ears well behind it) picks the wrong point. All in Goddard's eye space, as gd_api_vertices.
+// Picks within this angle of the ray (radians; the grab points are ~0.15 apart, the head ~0.3 across)
+#define RAY_PICK_ANGLE 0.25f
+// What a frame's drag displacement moves a held joint by, once the spring has settled (drag_picked_object adds it
+// every frame, grabbable_joint_update_func pulls the joint back by a quarter of its offset)
+#define RAY_DRAG_GAIN 0.25f
+
+static struct {
+    s32 on;
+    float origin[3], dir[3], finger[3];
+    float grabFinger[3], grabEye[3];  // (where the pinch and the point were when it took hold)
+    struct GdObj *obj;
+} sRay[2];
+
+s32 gd_api_ray_on(s32 hand) { return sRay[hand].on; }
+
+// Goddard's world (where the joints are) into the eye space the face is drawn in
+static void world_to_eye(const float p[3], float out[3]) {
+    for (int k = 0; k < 3; k++) out[k] = p[0] * sFaceMtx[0][k] + p[1] * sFaceMtx[1][k] + p[2] * sFaceMtx[2][k] + sFaceMtx[3][k];
+}
+// and an eye-space direction back into the world's (the rotation's inverse: it is its transpose, scaled)
+static void eye_dir_to_world(const float d[3], float out[3]) {
+    float s2 = sFaceMtx[0][0] * sFaceMtx[0][0] + sFaceMtx[0][1] * sFaceMtx[0][1] + sFaceMtx[0][2] * sFaceMtx[0][2];
+    for (int k = 0; k < 3; k++) out[k] = (d[0] * sFaceMtx[k][0] + d[1] * sFaceMtx[k][1] + d[2] * sFaceMtx[k][2]) / s2;
+}
+static void joint_eye(struct GdObj *obj, float out[3]) {
+    struct ObjJoint *j = (struct ObjJoint *) obj;
+    float p[3] = { j->mat128[3][0], j->mat128[3][1], j->mat128[3][2] };
+    world_to_eye(p, out);
+}
+// (for the tests: a joint where it is drawn, and where it rests)
+GD_API void gd_api_joint_eye(const void *joint, float out[3], float rest[3]) {
+    struct ObjJoint *j = (struct ObjJoint *) joint;
+    float p[3] = { j->initPos.x, j->initPos.y, j->initPos.z };
+    joint_eye((struct GdObj *) joint, out);
+    world_to_eye(p, rest);
+}
+
+// Called by update_view when the hand starts a drag (instead of Goddard's cursor pick)
+struct GdObj *gd_api_ray_pick(s32 hand, struct GdObj *heldByOther) {
+    struct GdObj *best = NULL;
+    float bestAngle = RAY_PICK_ANGLE;
+    sRay[hand].obj = NULL;
+    if (!sFaceMtxValid) return NULL;
+    const float *o = sRay[hand].origin, *d = sRay[hand].dir;
+    for (struct GdObj *obj = gGdObjectList; obj != NULL; obj = obj->next) {
+        if (obj->type != OBJ_TYPE_JOINTS || !(obj->drawFlags & OBJ_IS_GRABBABLE) || obj == heldByOther) continue;
+        float j[3], v[3];
+        joint_eye(obj, j);
+        for (int k = 0; k < 3; k++) v[k] = j[k] - o[k];
+        float t = v[0] * d[0] + v[1] * d[1] + v[2] * d[2];
+        if (t <= 1.0f) continue;
+        float px = v[0] - t * d[0], py = v[1] - t * d[1], pz = v[2] - t * d[2];
+        float angle = sqrtf(px * px + py * py + pz * pz) / t;
+        if (angle < bestAngle) { bestAngle = angle; best = obj; }
+    }
+    if (best != NULL) {
+        sRay[hand].obj = best;
+        memcpy(sRay[hand].grabFinger, sRay[hand].finger, sizeof(float) * 3);
+        joint_eye(best, sRay[hand].grabEye);
+    }
+    return best;
+}
+
+// Called by drag_picked_object: the displacement that settles the held point where the pinch has taken it. Goddard
+// turns its displacement from its camera's space into the world's (the camera's rotation, inverted): this is given
+// in that space, so that the world's displacement is the one wanted.
+s32 gd_api_ray_drag(s32 hand, struct GdObj *obj, struct GdVec3f *displacement) {
+    if (!sRay[hand].on || obj != sRay[hand].obj || !sFaceMtxValid || gViewUpdateCamera == NULL) return 0;
+    struct ObjJoint *j = (struct ObjJoint *) obj;
+    float target[3], world[3];
+    // Where the pinch has taken the point, as you see it (so it stays with your hand while the head moves on its
+    // own), into the world, less where the point rests
+    for (int k = 0; k < 3; k++) target[k] = sRay[hand].grabEye[k] + sRay[hand].finger[k] - sRay[hand].grabFinger[k] - sFaceMtx[3][k];
+    eye_dir_to_world(target, world);
+    world[0] -= j->initPos.x;
+    world[1] -= j->initPos.y;
+    world[2] -= j->initPos.z;
+    struct GdVec3f d = { world[0] * RAY_DRAG_GAIN, world[1] * RAY_DRAG_GAIN, world[2] * RAY_DRAG_GAIN };
+    gd_mat4f_mult_vec3f(&d, &gViewUpdateCamera->unkE8);  // (Goddard inverts this)
+    *displacement = d;
+    return 1;
+}
+
+void gd_api_set_hand_ray(int32_t hand, int32_t on, const float origin[3], const float dir[3], const float finger[3]) {
+    if (hand < 0 || hand > 1) return;
+    sRay[hand].on = on;
+    if (!on) { sRay[hand].obj = NULL; return; }
+    float len = sqrtf(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+    for (int k = 0; k < 3; k++) {
+        sRay[hand].origin[k] = origin[k];
+        sRay[hand].dir[k] = len > 0 ? dir[k] / len : (k == 2 ? -1.0f : 0.0f);
+        sRay[hand].finger[k] = finger[k];
+    }
+}
+
 struct GdTextureSlot { const char *name; uint8_t *data; unsigned int size; int width, height; };
 extern const struct GdTextureSlot gd_texture_slots[];
 extern const int gd_texture_slot_count;

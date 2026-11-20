@@ -105,6 +105,7 @@ void gd_api_set_drag_z(int32_t hand, float value);
 void gd_api_set_hand2(int32_t setCursor, float cursorX, float cursorY, int32_t a, int8_t stickX, int8_t stickY, int8_t stickZ);
 int32_t gd_api_holding2(void);
 void gd_api_cursor2(float *x, float *y);
+void gd_api_set_hand_ray(int32_t hand, int32_t on, const float origin[3], const float dir[3], const float finger[3]);
 int32_t gd_api_set_texture(const char *name, const uint8_t *data, int32_t size);
 int32_t gd_api_texture_slot_count(void);
 const char *gd_api_texture_slot(int32_t index, int32_t *width, int32_t *height);
