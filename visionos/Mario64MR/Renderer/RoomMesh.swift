@@ -176,3 +176,65 @@ final class PlaneFinder: @unchecked Sendable {
         return RoomPlane(height: height, triangles: triangles)
     }
 }
+
+// MARK: - The scan's gaps, filled from the planes
+
+extension RoomMesh {
+    /// Squares a side, metres, the planes are filled in by
+    static let fillCell: Float = 0.05
+    /// How near a plane's height the scan's own surface must be, metres, for the plane to be taken as scanned there
+    static let fillNear: Float = 0.04
+
+    /// The scan with the detected planes (tables, the floor: PlaneFinder) laid in where it has none of its own: what
+    /// plane detection found that scene reconstruction didn't (a dark or glossy tabletop, a rug in dim light). Each
+    /// plane in fillCell squares, those whose middle is in its outline and with no surface of the scan's facing up
+    /// within fillNear of its height, a row's run of them one strip (two triangles, facing up). Ahead of the scan's,
+    /// so that the game's maxTriangles never leaves them out. The second, how many triangles were laid in
+    func filled(with planes: [RoomPlane]) -> (RoomMesh, Int) {
+        guard !planes.isEmpty else { return (self, 0) }
+        let cell = Self.fillCell
+        func key(_ x: Float, _ z: Float) -> SIMD2<Int32> { SIMD2(Int32((x / cell).rounded(.down)), Int32((z / cell).rounded(.down))) }
+        // The scan's up-facing surfaces (all the game would stand on: unity_upright_wall's), by the cells they cover
+        var scanned: [SIMD2<Int32>: [SIMD2<Float>]] = [:]  // (each: lowest and highest)
+        var i = 0
+        while i + 2 < triangles.count {
+            let a = triangles[i], b = triangles[i + 1], c = triangles[i + 2]
+            i += 3
+            let n = simd_cross(b - a, c - a)
+            guard simd_length(n) > 1e-9, simd_normalize(n).y >= 0.5 else { continue }
+            let lo = simd_min(a, simd_min(b, c)), hi = simd_max(a, simd_max(b, c))
+            let k0 = key(lo.x, lo.z), k1 = key(hi.x, hi.z)
+            let cells = Int(k1.x - k0.x + 1) * Int(k1.y - k0.y + 1)
+            guard cells <= 100 * 100 else { continue }  // (5 m across: no scan's)
+            for x in k0.x...k1.x { for z in k0.y...k1.y { scanned[SIMD2(x, z), default: []].append(SIMD2(lo.y, hi.y)) } }
+        }
+        func isScanned(_ k: SIMD2<Int32>, _ y: Float) -> Bool {
+            scanned[k]?.contains { y >= $0.x - Self.fillNear && y <= $0.y + Self.fillNear } ?? false
+        }
+        var laid: [SIMD3<Float>] = []
+        for plane in planes where !plane.triangles.isEmpty {
+            let lo = plane.triangles.reduce(SIMD2<Float>(repeating: .infinity)) { simd_min($0, $1) }
+            let hi = plane.triangles.reduce(SIMD2<Float>(repeating: -.infinity)) { simd_max($0, $1) }
+            let k0 = key(lo.x, lo.y), k1 = key(hi.x, hi.y)
+            let cells = Int(k1.x - k0.x + 1) * Int(k1.y - k0.y + 1)
+            guard cells <= 200 * 200 else { continue }  // (10 m across at most)
+            let y = plane.height
+            for z in k0.y...k1.y {
+                var run: Int32?  // (where a run of gaps along x began)
+                for x in k0.x...(k1.x + 1) {
+                    let k = SIMD2(x, z)
+                    let middle = (SIMD2<Float>(Float(x), Float(z)) + 0.5) * cell
+                    let gap = x <= k1.x && plane.contains(middle) && !isScanned(k, y)
+                    if gap, run == nil { run = x }
+                    if !gap, let from = run {
+                        let x0 = Float(from) * cell, x1 = Float(x) * cell, z0 = Float(z) * cell, z1 = z0 + cell
+                        laid += [SIMD3(x0, y, z0), SIMD3(x0, y, z1), SIMD3(x1, y, z1),
+                                 SIMD3(x0, y, z0), SIMD3(x1, y, z1), SIMD3(x1, y, z0)]
+                        run = nil
+                    }
+                }
+            }
+        }
+        return (RoomMesh(triangles: laid + triangles), laid.count / 3)
+    }
+}

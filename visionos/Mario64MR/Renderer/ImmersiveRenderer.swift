@@ -249,8 +249,8 @@ final class ImmersiveRenderer: @unchecked Sendable {
                 if !RoomScanner.isSupported {  // (the simulator: a floor and a table to try Mario out on)
                     let (room, above, planes) = RoomMesh.standIn(window: RoomPlacement(facing: facing),
                                                                   floor: facing.columns.3.y - 1.5)
-                    useRoom(room)
                     standInPlanes = planes
+                    useRoom(room)
                     link.update { $0.debugRelease = above }
                 }
                 #endif
@@ -647,7 +647,9 @@ final class ImmersiveRenderer: @unchecked Sendable {
     #endif
 
     /// A new room from the scanner: to the game (its collision, loaded on the game thread) and to the drawing
-    private func useRoom(_ mesh: RoomMesh) {
+    private func useRoom(_ scanned: RoomMesh) {
+        // (with the planes laid in where the scan has gaps: tables and floor it missed, solid in the game too)
+        let (mesh, laid) = scanned.filled(with: planeFinder.current + standInPlanes)
         latestRoom.withLockUnchecked { $0 = mesh }
         let triangles = mesh.gameTriangles()
         if !loggedRoom {
@@ -659,7 +661,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
                 if simd_normalize(n).y > 0.7 { floors += 1 }
                 i += 9
             }
-            Self.log.info("The room: \(mesh.triangles.count / 3) triangles scanned, \(triangles.count / 9) to the game, \(floors) of them floors")
+            Self.log.info("The room: \(scanned.triangles.count / 3) triangles scanned, \(laid) more from the planes, \(triangles.count / 9) to the game, \(floors) of them floors")
             loggedRoom = triangles.count / 9 > 1000
         }
         link.update { $0.roomTriangles = triangles }
@@ -829,8 +831,8 @@ extension ImmersiveRenderer {
             if !RoomScanner.isSupported {  // (the simulator: a floor and a table to put him down on)
                 let (room, above, planes) = RoomMesh.standIn(window: RoomPlacement(facing: head),
                                                               floor: head.columns.3.y - 1.5)
-                useRoom(room)
                 standInPlanes = planes
+                useRoom(room)
                 link.update { $0.debugRelease = above }
             }
             #endif
