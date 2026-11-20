@@ -114,14 +114,14 @@ let lo = positions.reduce(SIMD3(repeating: Double.infinity)) { simd_min($0, $1) 
 let hi = positions.reduce(SIMD3(repeating: -Double.infinity)) { simd_max($0, $1) }
 print("\(positions.count) vertices, \(indices.count / 3) triangles; in the scene from \(lo) to \(hi), size \(hi - lo)")
 
-// Into the app's cartridge space: across (the scene's z), up (its -y: its connector is at +y, where it's narrower),
+// Into the app's cartridge space: across (the scene's -z), up (its y: its connector is at -y, where it's narrower),
 // out of the front (its x: the label's recess is on +x). Scaled to the app's width, and its thickness to a real
 // cartridge's for that width (11.6 × 7.66 × 1.85 cm: the model is half as thick)
 let width = 0.124, realThickness = 0.0185 / 0.116
 let across = hi.z - lo.z, center = (lo + hi) / 2
 let s = SIMD3(width / across, width / across, width * realThickness / (hi.x - lo.x))
-func place(_ p: SIMD3<Double>) -> SIMD3<Double> { let q = p - center; return SIMD3(q.z, -q.y, q.x) * s }
-func turnNormal(_ n: SIMD3<Double>) -> SIMD3<Double> { simd_normalize(SIMD3(n.z, -n.y, n.x) / s) }
+func place(_ p: SIMD3<Double>) -> SIMD3<Double> { let q = p - center; return SIMD3(-q.z, q.y, q.x) * s }
+func turnNormal(_ n: SIMD3<Double>) -> SIMD3<Double> { simd_normalize(SIMD3(-n.z, n.y, n.x) / s) }
 positions = positions.map(place)
 normals = normals.map(turnNormal)
 let size = positions.reduce(SIMD3(repeating: 0.0)) { simd_max($0, abs($1)) } * 2
