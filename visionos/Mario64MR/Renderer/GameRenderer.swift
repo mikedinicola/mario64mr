@@ -202,7 +202,7 @@ final class GameRenderer: NSObject, MTKViewDelegate {
         let narrowing = simd_float4x4(diagonal: SIMD4(xScale, 1, 1, 1))
         var cache: [SIMD16<Float>: simd_float4x4] = [:]
         var state = DrawState()
-        for draw in frame.draws where draw.kind == .world {
+        for draw in frame.draws where draw.kind == .world && !frame.outside(draw) {  // (what's in the room: encodeRoom's)
             guard prepare(draw, encoder: encoder, state: &state) else { continue }
             let key = draw.projectionKey
             let m = cache[key] ?? roomFromView * (narrowing * draw.projection).inverse
@@ -213,7 +213,7 @@ final class GameRenderer: NSObject, MTKViewDelegate {
         }
         // See-through surfaces (lava, water) write no depth, and with no sky behind them, where nothing of the level
         // is either, they'd be left at depth 0, which the compositor takes as empty: drawn again into depth only
-        for draw in frame.draws where draw.kind == .world && draw.blend && draw.depthTest {
+        for draw in frame.draws where draw.kind == .world && draw.blend && draw.depthTest && !frame.outside(draw) {
             guard prepare(draw, encoder: encoder, state: &state, depthOnly: true),
                   let m = cache[draw.projectionKey] else { continue }
             state.setRoom(RoomDraw(roomFromClip: m, kind: SIMD4(4, table.bitPattern, 0, 0)), encoder: encoder)

@@ -171,7 +171,9 @@ final class GameHost {
                 if !picks.isEmpty { self.room.update { $0.picks.removeFirst(min(picks.count, $0.picks.count)) } }
                 carrier.update(hands: hands, geometry: geometry, picks: picks)
             } else if room.on, let geometry = room.geometry, geometry.diorama {
-                carrier.touchDiorama(hands: room.hands, geometry: geometry)
+                let picks = room.picks
+                if !picks.isEmpty { self.room.update { $0.picks.removeFirst(min(picks.count, $0.picks.count)) } }
+                carrier.touchDiorama(hands: room.hands, geometry: geometry, picks: picks)
             } else {
                 carrier.reset()
             }
