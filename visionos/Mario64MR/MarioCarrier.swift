@@ -222,11 +222,53 @@ final class MarioCarrier {
     }
 
     /// A diorama: nothing to carry or stand on, but your fingers over the level collect what they touch (coins,
-    /// stars, 1-ups)
-    func touchDiorama(hands: [HandState], geometry g: RoomGeometry) {
-        reset()
-        guard let worldFromRoom = g.worldFromRoom else { return }
-        Self.touch(hands, where: { _ in true }) { xyz(worldFromRoom * SIMD4($0, 1)) }
+    /// stars, 1-ups). What's taken out of the treasure chest beside it goes into the level: by a pinch, held at the
+    /// pinch (in the level where your fingers are over it) and let go of there; by a look, near Mario
+    func touchDiorama(hands: [HandState], geometry g: RoomGeometry, picks: [ChestPick] = []) {
+        // (as reset, but what the chest gave a hand stays held, in the level)
+        if held != nil || holdingInRoom || g.worldFromRoom == nil {
+            let keep = holdingInRoom ? nil : holding
+            holding = nil
+            reset()
+            holding = keep
+        } else {
+            sm64unity_room_objects_return()
+            wasPinching = [false, false]
+            lastPalm = [nil, nil]
+            sm64unity_room_hands(nil, 0)
+            sm64unity_game_hands(nil, 0)
+            sm64unity_game_hand_points(nil, 0, 0)
+            sm64unity_hold_camera(0)
+        }
+        guard let worldFromRoom = g.worldFromRoom else {
+            for pick in picks { _ = sm64unity_spawn_near_mario(pick.kind.rawValue) }
+            return
+        }
+        func world(_ p: SIMD3<Float>) -> SIMD3<Float> { xyz(worldFromRoom * SIMD4(p, 1)) }
+        Self.touch(hands, where: { _ in true }, world)
+        for pick in picks {
+            guard let i = pick.hand, i < hands.count, hands[i].tracked, holding == nil else {
+                _ = sm64unity_spawn_near_mario(pick.kind.rawValue)
+                continue
+            }
+            let w = world(hands[i].pinch)
+            switch sm64unity_spawn_held(pick.kind.rawValue, 0, w.x, w.y, w.z) {
+            case 1: holding = i
+            case 0: _ = sm64unity_spawn_near_mario(pick.kind.rawValue)
+            default: break  // (another Mario: put down there)
+            }
+        }
+        if let h = holding {
+            let hand = hands.indices.contains(h) ? hands[h] : HandState()
+            if hand.tracked && hand.pinching {
+                let at = world(hand.pinch)
+                if sm64unity_object_hold(at.x, at.y, at.z) == 0 { holding = nil }  // (gone: killed, say)
+            } else {
+                holding = nil
+                let v = xyz(worldFromRoom * SIMD4(hand.velocity / 30, 0))  // (a frame's worth, thrown with the hand)
+                sm64unity_object_release(v.x, v.y, v.z)
+            }
+        }
     }
 
     /// The hands' joints (fingertips too, which their surface leaves out) where `inside` says, into the game's

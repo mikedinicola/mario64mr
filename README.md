@@ -255,6 +255,9 @@ An Xbox controller paired with the headset works too (A = A, X / B = B, triggers
 - The level follows Mario up and down, keeping him about 10 cm below your eyes (as they were when you put it down),
   so you always see the ground under him: when he climbs a mountain it sinks into
   the table (whatever falls below the table is cut away), and when he goes down it rises off it.
+- The treasure chest sits on the table beside the base, on your right, and moves with it. What you take out of it
+  goes into the level: pinch a tile and it's in your fingers over the level, to let go of where you like; look at
+  a tile and pinch, and it's put down near Mario.
 - To leave, lift the base up off the table: the level sinks back into it and the window is back in your hand.
   Leaving the course ends the diorama too.
 

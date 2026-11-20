@@ -44,7 +44,8 @@ struct ChestPick: Sendable {
     var at: SIMD3<Float>
 }
 
-/// A treasure chest floating just past the window's lower right corner: the game's own (Jolly Roger Bay's), drawn by
+/// A treasure chest floating just past the window's lower right corner (or, the level a diorama, on the table beside
+/// its base, to your right): the game's own (Jolly Roger Bay's), drawn by
 /// the game in the room where this puts it (native/fullgame/unity_chest.inc.h, sm64unity_chest). A fingertip touching it, or a look at it and
 /// a pinch, opens it (and closes it again); open, what it holds floats above it as tiles: enemies, power-up boxes and
 /// another Mario. A pinch on a tile takes one out held in that hand (MarioCarrier carries it on, into the room or
@@ -91,11 +92,11 @@ final class TreasureChest {
 
     /// Each frame, before the cartridge sees the hands: where it floats, and what touches or picks from it. Returns
     /// what was taken out, and the looks it used (not for the window's frame)
-    func update(window: RoomPlacement, show: Bool, hands: [HandState], gazes: [GazePinch], eye: SIMD3<Float>,
-                time: TimeInterval, dt: Float) -> (picks: [ChestPick], usedGazes: Set<Int>) {
+    func update(window: RoomPlacement, diorama: SIMD3<Float>? = nil, show: Bool, hands: [HandState], gazes: [GazePinch],
+                eye: SIMD3<Float>, time: TimeInterval, dt: Float) -> (picks: [ChestPick], usedGazes: Set<Int>) {
         visible = show
         bob = Float(sin(time * 1.7)) * 0.006
-        pose = Self.pose(window: window, eye: eye, bob: bob)
+        pose = diorama.map { Self.pose(diorama: $0, eye: eye, bob: bob) } ?? Self.pose(window: window, eye: eye, bob: bob)
         let goal: Float = isOpen ? 1 : 0
         openness += (goal - openness) * min(1, dt * 7)
         if abs(goal - openness) < 0.002 { openness = goal }
@@ -161,12 +162,25 @@ final class TreasureChest {
     static func pose(window: RoomPlacement, eye: SIMD3<Float>, bob: Float) -> simd_float4x4 {
         let h = window.halfSize
         let corner = window.roomFromWindow.transform(SIMD3(h.x + size.x * 0.5 + 0.10, -h.y - 0.02 + bob, 0.05))
-        // (level, its front towards you)
-        var toEye = eye - corner
+        return facing(eye, at: corner)
+    }
+
+    /// A diorama's: just over the table, past its base's edge on your right (as you look at its centre), turned towards
+    /// you; moved with the base
+    static func pose(diorama center: SIMD3<Float>, eye: SIMD3<Float>, bob: Float) -> simd_float4x4 {
+        let turned = facing(eye, at: center)
+        let right = SIMD3(turned.columns.0.x, turned.columns.0.y, turned.columns.0.z)
+        let at = center + right * (Diorama.radius + size.x * 0.5 + 0.08) + SIMD3(0, 0.015 + bob, 0)
+        return facing(eye, at: at)
+    }
+
+    /// At `p`, level, its front towards `eye`
+    private static func facing(_ eye: SIMD3<Float>, at p: SIMD3<Float>) -> simd_float4x4 {
+        var toEye = eye - p
         toEye.y = 0
         let forward = simd_length(toEye) > 1e-4 ? simd_normalize(toEye) : SIMD3(0, 0, 1)
         let right = simd_normalize(simd_cross(SIMD3(0, 1, 0), forward))
-        return simd_float4x4(SIMD4(right, 0), SIMD4(0, 1, 0, 0), SIMD4(forward, 0), SIMD4(corner, 1))
+        return simd_float4x4(SIMD4(right, 0), SIMD4(0, 1, 0, 0), SIMD4(forward, 0), SIMD4(p, 1))
     }
 
     /// A point in the chest's space inside it (with a little margin to touch)

@@ -300,13 +300,13 @@ final class ImmersiveRenderer: @unchecked Sendable {
         lastTime = time
         let planes = planeFinder.current + standInPlanes
         let stage = link.current.stage
-        // The treasure chest by the window: in a course, the window open, Mario playing (not in a cutscene) (looks it
-        // used aren't the frame's)
+        // The treasure chest by the window, or beside a diorama's base: in a course, the window open, Mario playing
+        // (not in a cutscene) (looks it used aren't the frame's)
         chest.spawnable = link.current.spawnable
-        let showChest = cartridge.isOpen && diorama == nil && stage == 3 && gameFrame?.title == nil && chest.spawnable != 0
+        let showChest = cartridge.isOpen && stage == 3 && gameFrame?.title == nil && chest.spawnable != 0
         if !showChest, chest.isOpen { chest.close() }
-        let taken = chest.update(window: cartridge.window, show: showChest, hands: hands, gazes: gazes,
-                                 eye: eyePosition, time: time, dt: dt)
+        let taken = chest.update(window: cartridge.window, diorama: diorama?.center, show: showChest, hands: hands,
+                                 gazes: gazes, eye: eyePosition, time: time, dt: dt)
         gazes.removeAll { taken.usedGazes.contains($0.id) }
         let picks = taken.picks
         let chestPose = chest.gamePose
@@ -327,7 +327,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
         }
         if let diorama {
             let width = cartridge.window.halfSize.x * 2
-            diorama.update(hands: hands, gazes: gazes, cameraStick: GamePad.cameraStick(),
+            diorama.update(hands: windowHands, gazes: gazes, cameraStick: GamePad.cameraStick(),
                            recenter: GamePad.cameraStickPressed(), cycleZoom: GamePad.moveStickPressed(), mario: gameFrame?.mario, dt: dt, controls: controls)
             if stage != 3 {  // (left the course: the window back, standing on the base)
                 let h = cartridge.window.halfSize.y
@@ -335,7 +335,8 @@ final class ImmersiveRenderer: @unchecked Sendable {
                                                      facing: eyePosition, width: width), hand: nil, grip: .zero)
                 self.diorama = nil
             }
-            for i in hands.indices { hands[i].pinching = false }  // (hands are for the base, not the game)
+            // (hands are for the base, not the game; but one holding what it took out of the chest, for the game)
+            for i in hands.indices where !(i < 2 && chest.claimed[i]) { hands[i].pinching = false }
         }
         for i in cartridge.holding where i < hands.count { hands[i].pinching = false }
         let placement = cartridge.window
@@ -411,7 +412,7 @@ final class ImmersiveRenderer: @unchecked Sendable {
             return m
         }
         for (slot, drawable) in drawables.enumerated() {
-            let trackingAreas = diorama == nil ? props.chestTrackingAreas(chest, drawable: drawable) : []
+            let trackingAreas = props.chestTrackingAreas(chest, drawable: drawable)
             for (index, view) in drawable.views.enumerated() {
                 let roomFromEye = head * view.transform
                 let eye = GameRenderer.RoomEye(
@@ -430,6 +431,11 @@ final class ImmersiveRenderer: @unchecked Sendable {
                     if let gameFrame {
                         game.encodeDiorama(gameFrame, into: encoder, eye: eye, roomFromWorld: roomFromWorld,
                                            table: diorama.table, xScale: xScale)
+                        // (and the treasure chest beside it: the game's, in the room)
+                        if gameFrame.objectsOutside {
+                            game.encodeRoom(gameFrame, into: encoder, eye: eye, actors: true,
+                                            roomFromClip: roomFromClip, actorFromClip: actorFromClip)
+                        }
                     }
                 } else if cartridge.isOpen {
                     if let gameFrame, let title = gameFrame.title {
