@@ -1,0 +1,51 @@
+--- a/draw_objects.c	2026-11-19 22:20:30
++++ b/draw_objects.c	2026-11-19 22:20:43
+@@ -100,6 +100,9 @@
+ struct GdObj *gMarioFacePicked2;
+ s32 gMarioFaceSecondPass;
+ static void mario_face_second_hand(struct ObjView *view);
++// MarioFace: a hand given as a ray (gd_api_set_hand_ray) picks the point of the face nearest it as you see it
++extern s32 gd_api_ray_on(s32 hand);
++extern struct GdObj *gd_api_ray_pick(s32 hand, struct GdObj *heldByOther);
+ /// Various counters and pointers set in update_view() and used in various `draw_XXX` functions
+ static struct {
+     u8 filler1[4];        // @ 801B9CE0
+@@ -1517,6 +1520,11 @@
+                     }
+                 }
+ 
++                if (gd_api_ray_on(0)) {
++                    sPickedObject = gd_api_ray_pick(0, (struct GdObj *) gMarioFacePicked2);
++                } else if (sPickedObject == gMarioFacePicked2) {
++                    sPickedObject = NULL; // MarioFace: held by the other hand
++                }
+                 if (sPickedObject != NULL) {
+                     sPickedObject->drawFlags |= OBJ_PICKED;
+                     sPickedObject->drawFlags |= OBJ_HIGHLIGHTED;
+@@ -1596,6 +1604,7 @@
+                     }
+                 }
+             }
++            if (gd_api_ray_on(1)) sPickedObject = gd_api_ray_pick(1, view->pickedObj);
+             // The first hand keeps what it holds
+             if (sPickedObject != NULL && sPickedObject != view->pickedObj) {
+                 sPickedObject->drawFlags |= OBJ_PICKED | OBJ_HIGHLIGHTED;
+--- a/objects.c	2026-11-19 22:20:30
++++ b/objects.c	2026-11-19 22:20:43
+@@ -1766,6 +1766,7 @@
+ extern f32 gMarioFaceDragZ2;
+ extern struct GdObj *gMarioFacePicked2;  // MarioFace second hand (draw_objects.c)
+ extern s32 gMarioFaceSecondPass;
++extern s32 gd_api_ray_drag(s32 hand, struct GdObj *obj, struct GdVec3f *displacement);
+ 
+ /* @ 22EDF4 for 0x300; orig name: func_80180624 */
+ void drag_picked_object(struct GdObj *inputObj) {
+@@ -1793,6 +1794,8 @@
+     displacement.y = ((f32) - (ctrl->csrY - ctrl->dragStartY)) * dispMag;
+     // MarioFace: a third drag axis (towards / away from the camera), driven like the stick axes by gd_api
+     displacement.z = (gMarioFaceSecondPass ? gMarioFaceDragZ2 : gMarioFaceDragZ) * dispMag;
++    // MarioFace: a hand given as a ray drags its point with the hand, 1:1 in the camera's space
++    gd_api_ray_drag(gMarioFaceSecondPass ? 1 : 0, inputObj, &displacement);
+ 
+     gd_inverse_mat4f(&gViewUpdateCamera->unkE8, &sp40);
+     gd_mat4f_mult_vec3f(&displacement, &sp40);

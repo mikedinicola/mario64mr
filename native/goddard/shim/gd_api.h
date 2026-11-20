@@ -74,6 +74,13 @@ GD_API void gd_api_set_hand2(int32_t setCursor, float cursorX, float cursorY, in
 GD_API int32_t gd_api_holding2(void);
 GD_API void gd_api_cursor2(float *x, float *y);
 
+// A hand as a ray, in Goddard's eye space (as gd_api_vertices): from your eye (`origin`) through your pinch
+// (`finger`, along `dir`). While on, that hand's pinch (A, or the second hand's a) takes hold of the grabbable point of
+// the face nearest the ray as you see it, and drags it with `finger` 1:1, towards and away from you too (its x/y
+// cursor then only places Goddard's hand sprite, and gd_api_set_drag_z is not used). Off: Goddard's own 2D cursor
+// pick, as on the console. Hand 0 is gd_api_tick's, 1 gd_api_set_hand2's. Set before each tick.
+GD_API void gd_api_set_hand_ray(int32_t hand, int32_t on, const float origin[3], const float dir[3], const float finger[3]);
+
 // The game's own textures are not in the library: before gd_api_init, give each one (name as in the decomp,
 // "hand_open.rgba16") its N64-format bytes. Returns 0 for an unknown name or the wrong size.
 GD_API int32_t gd_api_set_texture(const char *name, const uint8_t *data, int32_t size);

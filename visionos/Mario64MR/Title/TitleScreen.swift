@@ -25,17 +25,18 @@ struct TitleFrame {
     var depth: Float
 }
 
-/// A hand on the title screen's face: where it points in Goddard's 320×240 screen, whether it pinches (A), and how
-/// far it has pulled towards you since it took hold, Goddard's units
+/// A hand on the title screen's face: where it points in Goddard's 320×240 screen (its hand sprite), whether it
+/// pinches (A), and, in Goddard's eye space (as its vertices), your eye and your pinch: the ray it picks the point of
+/// the face nearest, as you see it, and drags with your pinch (gd_api_set_hand_ray)
 struct TitleCursor {
     var x: Float, y: Float
     var pinching: Bool
-    var pull: Float
+    var eye: SIMD3<Float>?, finger: SIMD3<Float>?
 }
 
 /// The title screen's face, Goddard from the decomp (libgoddard), run on the game thread while the window shows
-/// the title in the room: your two pinches are its two hands (gd_api_tick, gd_api_set_hand2), their pull towards
-/// you its depth (gd_api_set_drag_z). Its sounds play through libsm64's audio, mixed into the game's.
+/// the title in the room: your two pinches are its two hands (gd_api_tick, gd_api_set_hand2), each a ray from your eye
+/// through the pinch (gd_api_set_hand_ray). Its sounds play through libsm64's audio, mixed into the game's.
 final class TitleScreen {
     private let device: MTLDevice
     private var textures: [MTLTexture] = []
@@ -77,8 +78,14 @@ final class TitleScreen {
     /// One frame of the face: `hands[0]` drives Goddard's own cursor (with the pad), `hands[1]` its second
     func tick(_ hands: [TitleCursor?], pad: GamePad.State) -> TitleFrame {
         let one = hands.first ?? nil, two = hands.count > 1 ? hands[1] : nil
-        gd_api_set_drag_z(0, one?.pull ?? 0)
-        gd_api_set_drag_z(1, two?.pull ?? 0)
+        for (i, hand) in [one, two].enumerated() {
+            if let eye = hand?.eye, let finger = hand?.finger {
+                let o = [eye.x, eye.y, eye.z], f = [finger.x, finger.y, finger.z], d = finger - eye
+                gd_api_set_hand_ray(Int32(i), 1, o, [d.x, d.y, d.z], f)
+            } else {
+                gd_api_set_hand_ray(Int32(i), 0, nil, nil, nil)
+            }
+        }
         gd_api_set_hand2(two == nil ? 0 : 1, two?.x ?? 0, two?.y ?? 0, two?.pinching == true ? 1 : 0, 0, 0, 0)
         var buttons = pad.buttons & GamePad.a
         if one?.pinching == true { buttons |= GamePad.a }
@@ -157,9 +164,9 @@ final class TitleScreen {
     }
 }
 
-/// Your hands on the title screen (game thread): each pinch takes hold of the face where it is as you see it (from
-/// your eyes, through the pinch, onto the window: at arm's length or at the glass), and pulls it as the hand moves;
-/// a pinch on "PRESS START" presses Start
+/// Your hands on the title screen (game thread): each pinch takes hold of the point of the face you see under it (on
+/// the line from your eyes through the pinch: at arm's length, or right on the face, in front of the window or behind
+/// it), and pulls it with the hand, towards you too; a pinch on "PRESS START" presses Start
 final class TitleHands {
     private var held: [Float?] = [nil, nil]  // (the window-space depth each pinch took hold at)
     private var wasPinching = [false, false]
@@ -176,6 +183,17 @@ final class TitleHands {
         let p00 = frame.map { abs($0.projection.columns.0.x) * xScale } ?? 1
         let distance = h.x * (p00 > 0.01 ? p00 : 1)
         let metresPerUnit = distance / (frame?.depth ?? 1000)
+        // The window's space into Goddard's eye space, as the face is drawn (RoomProps.roomFromTitle, inverted)
+        let shear = frame.map { p -> SIMD2<Float> in
+            abs(p.projection.columns.0.x) > 0.01 && abs(p.projection.columns.1.y) > 0.01
+                ? SIMD2(p.projection.columns.2.x / p.projection.columns.0.x, p.projection.columns.2.y / p.projection.columns.1.y)
+                : .zero
+        }
+        func inGoddard(_ w: SIMD3<Float>) -> SIMD3<Float>? {
+            guard let shear else { return nil }
+            let q = (w - SIMD3(0, 0, distance)) / metresPerUnit
+            return SIMD3(q.x - shear.x * q.z, q.y - shear.y * q.z, q.z)
+        }
         for i in 0..<2 {
             let hand = i < hands.count ? hands[i] : HandState()
             let pinching = hand.tracked && hand.pinching
@@ -199,9 +217,8 @@ final class TitleHands {
             }
             if !pinching { held[i] = nil }
             guard near || held[i] != nil else { continue }
-            let pull = held[i].map { (p.z - $0) / metresPerUnit / 6 } ?? 0
             cursors[i] = TitleCursor(x: 160 + at.x / (h.y * 4 / 3) * 160, y: 120 - at.y / h.y * 120,
-                                     pinching: held[i] != nil, pull: pull)
+                                     pinching: held[i] != nil, eye: inGoddard(from), finger: inGoddard(p))
         }
         return (cursors, start)
     }
