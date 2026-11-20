@@ -235,10 +235,11 @@ static int room_wall(s16 *t, float x0, float z0, float x1, float z1, float y0, f
     memcpy(t, v, sizeof(v));
     return 4;
 }
-/* A table 60 cm by 29 cm (x -2400..2400, z -1500..800: Mario put down 10 cm in from its near side), 3 cm thick, and
+/* A table 60 cm by 26 cm (x -2400..2400, z -1300..800: Mario put down 10 cm in from its near side; the picture, from
+ * 200 to 1520 ahead of him, past its far edge), 3 cm thick, and
  * the room's floor 75 cm below it */
 #define ROOM_TABLE_X 2400.f
-#define ROOM_TABLE_FAR -1500.f
+#define ROOM_TABLE_FAR -1300.f
 #define ROOM_TABLE_NEAR 800.f
 static int room_table(void) {
     int n = 0;
