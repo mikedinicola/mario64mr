@@ -65,8 +65,9 @@ final class RoomProps {
               let quad = device.makeBuffer(bytes: Self.quadVertices, length: Self.quadVertices.count * 4)
         else { print("Mario 64 MR: the room's props didn't build"); return nil }
         (self.depthWrite, self.depthTestOnly, self.depthOff, self.quad) = (depthWrite, depthTestOnly, depthOff, quad)
-        let gloves = ["LeftGlove", "RightGlove"].compactMap { name in
-            Bundle.main.url(forResource: name, withExtension: "glove").flatMap { GloveMesh(device: device, url: $0) }
+        let gloves = ["LeftGlove", "RightGlove"].enumerated().compactMap { side, name in
+            Bundle.main.url(forResource: name, withExtension: "glove")
+                .flatMap { GloveMesh(device: device, url: $0, right: side == 1) }
         }
         if gloves.count < 2 { print("Mario 64 MR: Mario's gloves didn't load") }
         self.gloves = gloves.count == 2 ? gloves : nil
