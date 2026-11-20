@@ -359,6 +359,8 @@ struct GloveVaryings {
     float4 position [[position]];
     float3 room;
     float3 normal;
+    float3 bound;        // the point on the glove at rest (its own space): where the dots are drawn
+    float3 boundNormal;
 };
 
 vertex GloveVaryings glove_vertex(uint vid [[vertex_id]], const device GloveVertex *vertices [[buffer(0)]],
@@ -371,13 +373,36 @@ vertex GloveVaryings glove_vertex(uint vid [[vertex_id]], const device GloveVert
     out.position = eye.viewProjection * float4(room, 1);
     out.room = room;
     out.normal = (m * float4(float3(v.normal), 0)).xyz;  // (the joints turn and scale evenly)
+    out.bound = float3(v.position);
+    out.boundNormal = float3(v.normal);
     return out;
 }
 
 // White cloth, softly lit from above and from where you look (what faces you is never in shadow, its edges turning
 // a cool grey). Blended by what's already there (RoomProps.encodeGloves): only over the game, the passthrough left
 // showing your own hand everywhere else
-fragment float4 glove_fragment(GloveVaryings in [[stage_in]], constant RoomEye &eye [[buffer(2)]]) {
+// The three black dots on the back of the hand (GloveMesh.Dots), as on the game's menu hand: discs seen from the
+// back of the glove at rest, drawn only where it faces that way, so the palm stays white
+struct GloveDots {
+    float4 center[3];
+    float4 across, along, up;
+    float4 size;  // x: radius across the hand, y: along it
+};
+
+static float gloveDots(GloveVaryings in, constant GloveDots &dots) {
+    float facing = smoothstep(0.25, 0.5, dot(normalize(in.boundNormal), dots.up.xyz));
+    float ink = 0;
+    for (int i = 0; i < 3; i++) {
+        float3 d = in.bound - dots.center[i].xyz;
+        float r = length(float2(dot(d, dots.across.xyz) / dots.size.x, dot(d, dots.along.xyz) / dots.size.y));
+        float edge = max(fwidth(r), 1e-4);
+        ink = max(ink, 1 - smoothstep(1 - edge, 1 + edge, r));
+    }
+    return ink * facing;
+}
+
+fragment float4 glove_fragment(GloveVaryings in [[stage_in]], constant RoomEye &eye [[buffer(2)]],
+                               constant GloveDots &dots [[buffer(3)]]) {
     float3 origin = (eye.roomFromWindow * float4(eye.eye.xyz, 1)).xyz;
     float3 ray = normalize(in.room - origin);
     float3 n = normalize(in.normal);
@@ -386,6 +411,7 @@ fragment float4 glove_fragment(GloveVaryings in [[stage_in]], constant RoomEye &
     float facing = saturate(dot(n, -ray));
     float light = saturate(0.45 * above * above + 0.6 * sqrt(facing));
     float3 color = mix(float3(0.40, 0.43, 0.52), float3(0.98), light);
+    color = mix(color, float3(0.012, 0.012, 0.014) + 0.03 * light, gloveDots(in, dots));
     return float4(color * 0.92, 1);  // (linear)
 }
 
